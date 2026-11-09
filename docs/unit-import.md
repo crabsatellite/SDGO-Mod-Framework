@@ -543,6 +543,11 @@ The skill profile verifies the 882-to-1132-byte projection, explicit ID changes
 and an optional typed linked-skill ID change; the 732-byte funnel profile
 preserves every byte outside its ID word. The native catalog checks fixed
 sizes and typed unit-to-skill, weapon-to-funnel and linked-skill references.
+A weapon's special feature (offset 132) names a kind-12 record from the client's own
+`gdrs` special-feature tables. A publication may carry kind-12 records in the same 1559-byte
+layout; the native catalog refuses to load when an imported weapon names a special feature
+that is neither native nor carried, instead of letting the client crash when the feature
+triggers in battle. These rows are client data: servers keep only the weapon's number.
 Manager cannot publish these new dependency definitions yet: even with server data
 and scoped resources prepared, ID-specific behavior, scripts and the full actor
 lifecycle are not supported.

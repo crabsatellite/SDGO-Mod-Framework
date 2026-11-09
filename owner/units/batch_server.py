@@ -43,7 +43,7 @@ MAX_CATALOG_BYTES = 64 * 1024 * 1024 + 32
 MAX_FAMILIES = 4096
 _FAMILY_FIELDS = {'family_key', 'root_unit_id', 'item_template_id', 'units', 'weapons', 'item', 'names'}
 _FAMILY_OPTIONAL = {'shared_form_ids', 'shared_weapon_ids', 'behavior_profile'}
-_RECORD_BYTES = {2: 4976, 10: 1871, 11: 732, 13: 1132}
+_RECORD_BYTES = {2: 4976, 10: 1871, 11: 732, 12: 1559, 13: 1132}
 _IN_CHUNK = 500
 
 Progress = Callable[[dict], None]

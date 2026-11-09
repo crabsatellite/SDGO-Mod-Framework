@@ -106,6 +106,8 @@ Entry MakeRecord(uint32_t kind, uint32_t id) {
         PutUtf16(result.bytes.data()+5,100,"Fixture Skill");
         PutUtf16(result.bytes.data()+0x213,600,
                  "Fixture Skill\\nDescription\\tTabbed");
+    } else if (kind == kSpecialFeatureType) {
+        PutUtf16(result.bytes.data()+5,100,"Fixture Feature");
     } else if (kind == kItemCategoryType) {
         PutUtf16(result.bytes.data() + kItemCategoryNameOffset,
                  kItemCategoryNameBytes, "Fixture Item Category");
@@ -410,14 +412,18 @@ std::vector<uint8_t> MakeNativeFixture(const std::string& scenario) {
         Put32(blueprintCategory.bytes.data()+kItemCategoryRefOffset,999998);
     if(scenario=="skill_reference_missing")Put32(first.bytes.data()+kUnitSkillOffsets[0],999998);
     if(scenario=="funnel_reference_missing")Put32(weapon.bytes.data()+kWeaponFunnelOffset,999998);
+    if(scenario=="special_feature_reference_missing")
+        Put32(weapon.bytes.data()+kWeaponSpecialFeatureOffset,999998);
     if(scenario=="dependency_records_success" || scenario=="linked_skill_reference_missing") {
         Entry skill=MakeRecord(kSkillType,9000001);
         Entry linkedSkill=MakeRecord(kSkillType,9000002);
         Entry funnel=MakeRecord(kFunnelType,198131);
+        Entry feature=MakeRecord(kSpecialFeatureType,59051);
         Put32(first.bytes.data()+kUnitSkillOffsets[0],skill.id);
         Put32(weapon.bytes.data()+kWeaponFunnelOffset,funnel.id);
+        Put32(weapon.bytes.data()+kWeaponSpecialFeatureOffset,feature.id);
         Put32(skill.bytes.data()+kSkillLinkedSkillOffset,linkedSkill.id);
-        std::vector<Entry> entries={first,second,weapon,funnel,blueprint,category,blueprintCategory,index,skill};
+        std::vector<Entry> entries={first,second,feature,weapon,funnel,blueprint,category,blueprintCategory,index,skill};
         if(scenario=="dependency_records_success")entries.push_back(linkedSkill);
         return Encode(entries);
     }
@@ -451,6 +457,7 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
           scenario=="index_reference_missing" || scenario=="index_conflict" ||
           scenario=="blueprint_output_missing" || scenario=="skill_reference_missing" ||
           scenario=="funnel_reference_missing" || scenario=="dependency_records_success" ||
+          scenario=="special_feature_reference_missing" ||
           scenario=="linked_skill_reference_missing" ||
           scenario=="blueprint_material_missing" ||
           scenario=="blueprint_item_reference_missing" ||
@@ -591,7 +598,7 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
     reinterpret_cast<Detour>(g_loadDetour)(g_grid, nullptr, L"gdrs\\0280.gdt", 0x0d);
     Check(g_loadCalls == 2, "original native table loader called before both detours");
     if (scenario == "success" || scenario=="dependency_records_success" || scenario=="large_catalog") {
-        const size_t expected=scenario=="dependency_records_success" ? 10u:
+        const size_t expected=scenario=="dependency_records_success" ? 11u:
                               scenario=="large_catalog" ? static_cast<size_t>(kMaxRecords) : 7u;
         Check(g_nodes.size() == expected && static_cast<size_t>(g_integrityRecords) == expected,
                "all unit, weapon, blueprint, item-category and encyclopedia records entered the native tree");
@@ -827,6 +834,13 @@ int ParserFixture() {
         }
         funnel.bytes.pop_back();
         Check(!catalog.Parse(Encode({funnel}),error),"incomplete funnel rejected");
+        Entry feature=MakeRecord(kSpecialFeatureType,59051);
+        Check(catalog.Parse(Encode({feature}),error) && catalog.Contains(59051,kSpecialFeatureType),
+              "1559-byte special feature parsed and typed");
+        Entry unnamed=feature;std::fill(unnamed.bytes.begin()+5,unnamed.bytes.begin()+105,uint8_t(0));
+        Check(!catalog.Parse(Encode({unnamed}),error),"special feature without a name rejected");
+        feature.bytes.pop_back();
+        Check(!catalog.Parse(Encode({feature}),error),"incomplete special feature rejected");
     }
     {
         const Entry validBlueprint = MakeRecord(kBlueprintType, 200001);
