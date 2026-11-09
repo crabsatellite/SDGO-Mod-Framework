@@ -28,7 +28,7 @@ uint32_t __fastcall Original(void* self,void*,uintptr_t,uintptr_t,uintptr_t,uint
     if(opcode==0x7BD || opcode==0x7BE || opcode==0x7E8 || opcode==0xA23)
         originalReplySequences.push_back(g_testObserver.replySequence);
     if(opcode==0x4E7 || opcode==0x722){++nativeChecks;return 0;}
-    if(opcode==0x8DA || opcode==0x53E || opcode==0x5D9 || opcode==0x814){++nativeErrors;return 0;}
+    if(opcode==0x8DA || opcode==0x53E || opcode==0x5D9 || opcode==0x814 || opcode==0x8AF || opcode==0x8B0){++nativeErrors;return 0;}
     if(opcode==0x7E8 || opcode==0xA23){++grants;return 0;}
     if(opcode==0x7BD || opcode==0x7BE) {
         const auto tab=opcode==0x7BD?Tab::Items:Tab::Gifts;const auto stride=tab==Tab::Items?28u:402u;
@@ -99,6 +99,11 @@ int main() {
     assert(sends==3+12+12+1 && g_batch.collected()==12);
     // The World may answer concurrent preflights out of send order.
     fixture::Setup();newestFirst=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && !g_batch.Outstanding());
+    // A stock list reload answered with a list error while claims run is absorbed.
+    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Claim);});
+    {std::vector<uint8_t> error(64,0);storage_fixture::Put<uint16_t>(error.data(),6,2110);const int before=nativeErrors;
+     Receive(service.data(),nullptr,0,0,0,0x8AF,error.data());assert(nativeErrors==before && g_batch.Busy());}
+    Run();assert(g_batch.phase()==Phase::Complete && grants==12);
     fixture::Setup(Tab::Gifts);rewards[0].claimed=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==11 && nativeChecks==0);
     // Stop while preflights are out: nothing is claimed, late preflights are absorbed.
     fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});Click();

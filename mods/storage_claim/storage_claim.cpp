@@ -336,6 +336,11 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
         }
     }
     const bool owned=OwnsReply(self);const auto tab=g_batch.tab();
+    // During a batch the stock grant handler reloads the item list by itself when
+    // the granted item is not on the cached page. Once fewer items remain, that
+    // page no longer exists and the server answers with a list error, which the
+    // stock handler shows as an empty message box. It is not a batch result.
+    if(self==g_owner && g_batch.Busy() && !g_batch.Waiting(Operation::List) && op==(tab==Tab::Items?0x8AF:0x8B0))return 0;
     const bool list=owned && g_batch.Waiting(Operation::List) && op==(tab==Tab::Items?0x7BD:0x7BE);
     const bool claim=owned && g_batch.Waiting(Operation::Claim) && op==(tab==Tab::Items?0x7E8:0xA23);
     const auto result=g_packet(self,a,b,c,command,data); // native grants, inventory/UI refresh and ownership checks

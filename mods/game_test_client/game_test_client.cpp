@@ -2724,6 +2724,8 @@ int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
         char message[96];sprintf_s(message,"native inventory after positive claim before=%u after=%u added=%u",static_cast<unsigned>(beforeClaim.size()),static_cast<unsigned>(current.size()),added);context->Observe(message);
         return SDGO_GAME_TEST_PASS;
     }
+    static uint32_t popupsBefore=UINT32_MAX;
+    if(popupsBefore==UINT32_MAX)popupsBefore=nativePopupProbe.Sequence();
     const auto result=storage.Claim(context);const auto state=storage.State();
     static uint32_t previous=UINT32_MAX,previousReplies=UINT32_MAX;
     if(previous!=static_cast<uint32_t>(result) || previousReplies!=state.reply_sequence) {
@@ -2758,6 +2760,8 @@ int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
             state.collected,state.completed,state.skipped,state.manual,state.rounds,state.total);context->Observe(batch);
         context->Assert(state.completed+state.skipped+state.manual==state.collected && state.rounds>=1,
             "one confirmation settles every reward collected from all pages: claimed, refused or left for manual selection");
+        char popups[96];sprintf_s(popups,"native error popups during the batch=%u",nativePopupProbe.Sequence()-popupsBefore);context->Observe(popups);
+        context->Assert(nativePopupProbe.Sequence()==popupsBefore,"the batch opens no native error message box");
         if(state.current_tab==SDGO_STORAGE_GAME_TEST_TAB_ITEMS)
             context->Assert(state.total==state.skipped,"after the single refresh only refused items remain in the item tab");
     }
