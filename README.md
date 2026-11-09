@@ -18,7 +18,7 @@ Server owners and maintainers install, configure and [update](docs/mod-manager.m
 Players with a compatible original client can install the server owner's profile (the owner's chosen Mods, shared
 settings and assets) in Manager in one step. Once bound, players keep opening `GOnline.exe`: Manager first
 synchronizes and verifies the owner's content, then starts the game. Personal settings and existing content are kept
-during updates.
+during updates. [Startup checks](docs/owner-updates.md#updates-before-launch) connect directly to the local Manager even when an internet proxy is configured.
 
 Installations follow the official curated starter pack by default. Owners who take over maintenance choose DIY in
 Manager and then maintain its configuration, scripts, resources, compatibility and releases;
