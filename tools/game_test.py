@@ -3363,8 +3363,8 @@ def prepare(
             raise GameTestError('the storage_gift page group requires an existing test account with gift_origin units')
         sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
         parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
-        if not parsed or tuple(map(int,parsed.groups())) < (0,1,30):
-            raise GameTestError('the storage_gift page group requires native GameTest client 0.1.30 or newer')
+        if not parsed or tuple(map(int,parsed.groups())) < (0,1,31):
+            raise GameTestError('the storage_gift page group requires native GameTest client 0.1.31 or newer')
     if login_recovery_min_retries is None:
         if login_recovery_hold_after_completion:
             raise GameTestError('login recovery hold requires a sealed recovery scenario')

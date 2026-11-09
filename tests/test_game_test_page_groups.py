@@ -33,10 +33,10 @@ class PageGroupTests(unittest.TestCase):
 
     def test_storage_gift_group_claims_once_then_checks_gift_origins(self):
         manifest=self.fixture.stage/'client/sdgo/mods/game_test_client/mod.ini'
-        data=gt.read_ini(manifest);data['mod']['version']='0.1.29';gt.write_ini(manifest,data)
-        with self.assertRaisesRegex(gt.GameTestError,'0.1.30'):
+        data=gt.read_ini(manifest);data['mod']['version']='0.1.30';gt.write_ini(manifest,data)
+        with self.assertRaisesRegex(gt.GameTestError,'0.1.31'):
             self.fixture.prepare('storage-gift-old',pages_only=True,page_group='storage_gift')
-        data['mod']['version']='0.1.30';gt.write_ini(manifest,data)
+        data['mod']['version']='0.1.31';gt.write_ini(manifest,data)
         prepared=self.fixture.prepare('storage-gift',pages_only=True,page_group='storage_gift')
         plan=json.loads((prepared/'run.json').read_text())
         self.assertEqual(

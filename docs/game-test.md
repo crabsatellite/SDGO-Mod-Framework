@@ -398,7 +398,7 @@ gift origins on the unit-information page. The claim must settle every reward co
 (granted, refused or left for manual selection) and leave only refused items in the item tab, so seed a
 multi-page tab first. The account profile names two existing units in a `[gift_origin]` section:
 `gifted_uid` with an accepted friend-gift record and an ordinary `plain_uid`; the gifted unit must show
-its sender and date strip, the ordinary one nothing. Requires GameTest client 0.1.30. `--capture-native-frames`
+its sender and date strip, the ordinary one nothing. Requires GameTest client 0.1.31. `--capture-native-frames`
 saves two native frames after each passing page case under the run's `visual` folder for visual review.
 It also opens native storage, waits for its real message loop and server list
 reply, and confirms one claim batch. An empty batch only covers the empty-storage path.
