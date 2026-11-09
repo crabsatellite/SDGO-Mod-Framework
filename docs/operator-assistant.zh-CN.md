@@ -2,6 +2,8 @@
 
 [English](operator-assistant.md) · [返回功能目录](../README.zh-CN.md) · [分享包与扩展协议](operator-pack-protocol.zh-CN.md)
 
+![副官管理：修改显示名称并保存配置草稿](operator-manager-demo.webp)
+
 副官模块在 SDGO Mod Manager 中提供服主界面：修改副官定义名，选择原有、上传 PNG 或分享包外观，
 配置数值能力、任务部件与扩展效果，设置互斥物品掉落，选择“全员免费获得”或“注册为商品”，并保存商城
 草稿预填。配置保存、服务端应用、客户端内容安装、BattleServer 能力运行时生效和商城上架是不同操作。

@@ -435,6 +435,51 @@ bool Busy(const State& s) { return s.outstanding != Pending::none || s.queued !=
 bool G1Busy() {
     return g_g1.want_rules || g_g1.want_categories || g_g1.want_loadout || g_g1.action != Pending::none;
 }
+// Stat graph ranges of the client's six-dimension charts (grid type 7, ids
+// 27501..27506: stat index at +5, minimum +6, maximum +10), the scale of the
+// OC client's hexagon. The defaults are that table's values.
+struct GraphRange {
+    float minimum;
+    float maximum;
+};
+std::array<GraphRange, stat_count> g_graph = {{{1, 100}, {4000, 23800}, {70, 169}, {70, 169}, {1, 100}, {3000, 7950}}};
+bool g_graph_read = false;
+
+bool ReadGraphRow(const std::uint8_t* record, std::uint8_t* stat, float* minimum, float* maximum) noexcept {
+    __try {
+        *stat = record[5];
+        std::memcpy(minimum, record + 6, sizeof(float));
+        std::memcpy(maximum, record + 10, sizeof(float));
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void ReadGraphRanges() {
+    if (g_graph_read) return;
+    g_graph_read = true;
+    unsigned found = 0;
+    for (std::int32_t id = 27501; id <= 27506; ++id) {
+        std::int32_t type = 0;
+        const auto* record = GridEntry(id, &type);
+        std::uint8_t stat = 0;
+        float minimum = 0, maximum = 0;
+        if (!record || type != 7 || !ReadGraphRow(record, &stat, &minimum, &maximum)) continue;
+        if (stat < stat_count && maximum > minimum) {
+            g_graph[stat] = {minimum, maximum};
+            ++found;
+        }
+    }
+    LogF(SDGO_LOG_INFO, "oc chart: %u of 6 stat graph ranges read from the client table", found);
+}
+
+float GraphScale(std::size_t stat, float value) {
+    ReadGraphRanges();
+    const auto& range = g_graph[stat];
+    return (std::clamp(value, range.minimum, range.maximum) - range.minimum) / (range.maximum - range.minimum);
+}
+
 std::int32_t StatValue(const State& s, std::size_t stat, int extra_normal, int extra_over) {
     const auto& p = s.profile;
     return p.base[stat] + (p.normal[stat] + extra_normal) * p.normal_stat[stat] +
@@ -481,6 +526,7 @@ void ForgetHidden() noexcept;
 void SetTabLook(bool oc) noexcept;
 bool OcModeActive(bool active);
 bool UpgradeTabSelected() noexcept;
+bool OcTabPending() noexcept; // the OC tab was clicked; the menu has not switched yet
 void ApplyOcTitle(bool oc_tab) noexcept;
 bool g_oc_page_shown = false; // the OC tab page is on screen (factory actions hidden)
 
@@ -585,6 +631,11 @@ void Render() {
     // OC tab shows only OC content (0800 in the upgrade page's place with the
     // OVER CUSTOM entry, 0794 beside it), as in the dual-system factory.
     const bool oc_tab = oc && OcModeActive(active);
+    // From the OC tab click until the menu has switched to the slot the OC
+    // page takes, the native page there and the dialogs under the OC areas
+    // are not shown, and the tabs and title already show the OC tab, so no
+    // native page flashes up in between.
+    const bool pending = active && OcTabPending();
     // The page's arrows only change local picks; saves and resets wait for the
     // G改 1.0 requests, not for the OC page's background refreshes.
     const ui::G1View g1 = BuildG1View(oc_tab, s.confirm == Confirm::none, s.confirm == Confirm::none && !G1Busy());
@@ -630,12 +681,19 @@ void Render() {
             info.item_text[slot] = ItemLabel(item, true) + L" x" + std::to_wstring(item.count);
             info.item_model[slot] = ItemModelPath(item.item);
         }
-        // All six dimensions on the 0794 hexagon: the unit's native stats and
-        // the stats with its OC points, each against the OC stat cap.
+        // All six dimensions on the 0794 hexagon as the OC client drew them
+        // (radar.h): the unit's own stats, with the normal points, with the
+        // normal and Over points (the pending layer equals it: points are
+        // saved one by one), each stat scaled by its stat graph range.
         for (std::size_t stat = 0; stat < stat_count; ++stat) {
-            const float cap = static_cast<float>(kStatCaps[stat]);
-            shape.base[stat] = cap > 0 ? static_cast<float>(s.profile.base[stat]) / cap : 0.0f;
-            shape.total[stat] = cap > 0 ? static_cast<float>(StatValue(s, stat, 0, 0)) / cap : 0.0f;
+            const auto& p = s.profile;
+            const float base = static_cast<float>(p.base[stat]);
+            const float normal = base + static_cast<float>(p.normal[stat]) * static_cast<float>(p.normal_stat[stat]);
+            const float with_over = normal + static_cast<float>(p.over[stat]) * static_cast<float>(p.over_stat[stat]);
+            shape.layer[3][stat] = GraphScale(stat, base);
+            shape.layer[2][stat] = GraphScale(stat, normal);
+            shape.layer[1][stat] = GraphScale(stat, with_over);
+            shape.layer[0][stat] = shape.layer[1][stat];
         }
     }
     radar::Set(shape);
@@ -666,13 +724,25 @@ void Render() {
     confirm.cancel = s.confirm != Confirm::message;
     RenderWindows(active, entry, over, info, challenge, confirm, g1);
     if (active) {
-        SetTabLook(oc_tab);
-        HideUnderWindows(oc_tab);
+        SetTabLook(oc_tab || pending);
+        HideUnderWindows(oc_tab || pending);
     } else {
         RestoreHidden();
     }
-    ApplyOcTitle(active && oc_tab);
-    g_oc_page_shown = active && oc_tab;
+    // The chart draws right after the unit model while the OC tab shows; the
+    // native page in its slot is not drawn from the click on.
+    radar::SetDrawOrder(active && oc_tab, active && (oc_tab || pending));
+    if (active && oc_tab) {
+        static ULONGLONG last = 0;
+        const auto now = GetTickCount64();
+        if (now - last >= 5000) {
+            last = now;
+            LogF(SDGO_LOG_INFO, "oc chart: %u frame(s) after the unit model, %u in the window's own turn",
+                 radar::AfterModelFrames(), radar::NativeTurnFrames());
+        }
+    }
+    ApplyOcTitle(active && (oc_tab || pending));
+    g_oc_page_shown = active && (oc_tab || pending);
 }
 
 // --- Requests ---------------------------------------------------------------
@@ -1278,6 +1348,7 @@ void AdoptRecord(void* component) {
     auto& s = g_state_data;
     const auto uid = Read<std::uint64_t>(record, 8);
     if (uid != s.unit_uid) {
+        radar::Restart();
         s.profile_present = false;
         s.challenge_open = false;
         s.confirm = Confirm::none;
@@ -1468,6 +1539,9 @@ void AttachUnsafe() {
     }
     const char* chart_failure = nullptr;
     const bool chart = radar::Install(g_ui.window_dialog(ui::window_over), &chart_failure);
+    // The native page whose slot the OC tab takes (radar.h).
+    const bool replaced = radar::SetReplacedPage(g_ui.page_dialog());
+    LogF(SDGO_LOG_INFO, "oc draw order: native page %s", replaced ? "held back while the OC tab shows" : "not adopted");
     auto& s = g_state_data;
     char trace[320];
     std::snprintf(trace, sizeof(trace),
@@ -1988,12 +2062,58 @@ void RestoreFactoryActions() noexcept {
 
 void ExitButtonOf(void* service);
 void** g_service_list = nullptr; // flow.service_managed_pointer
+std::size_t FactoryDialogs(void* service, void** out, std::size_t capacity) noexcept;
+
+void* FindControl(void* dialog, const ui::NativeString* name, int type) noexcept {
+    __try {
+        return g_bindings.find ? g_bindings.find(dialog, name, type) : nullptr;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+// The factory's unit model (uirs\0803.uir Multi3DRender, control type 16):
+// the chart draws right after it (radar.h).
+void FindModelDialog(void* service) noexcept {
+    static void* searched = nullptr;
+    static unsigned tries = 0;
+    static bool found = false;
+    static const std::wstring name = L"Multi3DRender";
+    if (service != searched) {
+        searched = service;
+        tries = 0;
+        found = false;
+    }
+    if (found || tries >= 600) return;
+    ++tries;
+    const auto native = ui::ViewOf(name);
+    void* dialogs[16] = {};
+    const std::size_t count = FactoryDialogs(service, dialogs, 16);
+    for (std::size_t index = 0; index < count; ++index) {
+        void* control = dialogs[index] ? FindControl(dialogs[index], &native, 16) : nullptr;
+        if (!control) continue;
+        found = true;
+        radar::SetModelControl(control);
+        LogF(SDGO_LOG_INFO, "oc draw order: unit model control %p found; the chart draws after it", control);
+        return;
+    }
+    if (tries == 600) Log(SDGO_LOG_INFO, "oc draw order: no unit model control in the factory main service");
+}
+
+using Multi3DDraw = void(__thiscall*)(void*);
+Multi3DDraw g_multi3d_draw_original = nullptr;
+
+void __fastcall Multi3DDrawHook(void* control, void*) {
+    g_multi3d_draw_original(control);
+    radar::AfterModelDraw(control);
+}
 
 void __fastcall FactoryUpdateHook(void* service, void*) {
     g_factory_update_original(service);
     ExitButtonOf(service);
     __try {
         if (Read<void*>(service) != g_factory_vtable) return;
+        FindModelDialog(service);
         if (!g_oc_page_shown) {
             RestoreFactoryActions();
             return;
@@ -2189,10 +2309,17 @@ bool OcModeActive(bool active) {
             shown = g_ui.page_hidden() || (g_ui.page_dialog() && Read<std::uint8_t>(g_ui.page_dialog(), 0x162));
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
-        if (shown) g_tab.mode = true;
+        if (shown) {
+            g_tab.mode = true;
+            // The menu wrote the slot's native title while the OC tab was
+            // pending; the OC title goes on again.
+            g_title_applied = false;
+        }
     }
     return g_tab.mode && active;
 }
+
+bool OcTabPending() noexcept { return g_tab.requested && !g_tab.mode; }
 
 // Leaving the OC tab: the native page and the hidden native dialogs come back
 // before the menu switches pages, so the menu's own hide/show applies to them.
@@ -2410,6 +2537,23 @@ void UpdateAttributePage() noexcept {
     ApplyAttributeTitle(shown && page);
 }
 
+// Outside the OC tab the radio the menu shows checked is the page on screen,
+// also before any click (the factory opens on its default page after the tab
+// bar was read).
+void SyncSelectedTab() noexcept {
+    if (!g_tab.service || g_tab.requested || g_tab.mode) return;
+    __try {
+        for (std::size_t index = 0; index < kTabRadioCount; ++index) {
+            void* radio = Read<void*>(g_tab.service, kTabRadios + index * sizeof(void*));
+            if (radio && Read<std::uint8_t>(radio, 0x21C)) {
+                g_tab.selected = radio;
+                return;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 void __fastcall TabUpdateHook(void* service, void*) {
     g_tab_update_original(service);
     const DWORD error = GetLastError();
@@ -2424,6 +2568,7 @@ void __fastcall TabUpdateHook(void* service, void*) {
                 const auto& s = g_state_data;
                 if (s.mode_known && s.server_oc_mode) CreateTab(service);
             }
+            SyncSelectedTab();
             UpdateAttributePage();
             if (g_ui.Alive()) l10n::InfoPage(g_ui.window_dialog(ui::window_info), g_ui.window_shown(ui::window_info));
         }
@@ -2684,8 +2829,8 @@ int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
     for (std::size_t slot = 0; slot < kCustomSkillCount; ++slot) snapshot.battle_skills[slot] = g_battle_skills[slot];
     const auto& shape = radar::Current();
     for (std::size_t stat = 0; stat < stat_count; ++stat) {
-        snapshot.radar_base[stat] = shape.base[stat];
-        snapshot.radar_total[stat] = shape.total[stat];
+        snapshot.radar_base[stat] = shape.layer[3][stat];  // the unit's own stats
+        snapshot.radar_total[stat] = shape.layer[1][stat]; // with the normal and Over points
     }
     if (g_profile && *g_profile) {
         std::uint8_t record[kUnitRecordBytes];
@@ -3006,6 +3151,9 @@ SDGO_MOD_ENTRY {
         !api->HookCode(mod, "oc_custom.client_factory_update", reinterpret_cast<void*>(&FactoryUpdateHook),
                        reinterpret_cast<void**>(&g_factory_update_original)))
         Log(SDGO_LOG_WARN, "oc: the factory main hook is unavailable; its page actions stay on the OC tab");
+    if (!api->HookCode(mod, "oc_custom.client_multi3d_draw", reinterpret_cast<void*>(&Multi3DDrawHook),
+                       reinterpret_cast<void**>(&g_multi3d_draw_original)))
+        Log(SDGO_LOG_WARN, "oc: the unit model draw hook is unavailable; the chart draws in the window's own turn");
     g_header_vtable = api->Symbol(mod, "oc_custom.client_header_vtable");
     if (!g_header_vtable ||
         !api->HookCode(mod, "oc_custom.client_header_update", reinterpret_cast<void*>(&HeaderUpdateHook),

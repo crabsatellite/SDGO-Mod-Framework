@@ -2,6 +2,10 @@
 
 [简体中文](unit-import.zh-CN.md) · [Back to the feature index](../README.md)
 
+Parse a unit authoring package, save an offline draft and review its generated shop and capsule icons.
+
+![Unit import: parse an authoring package, save a draft and review generated icons](unit-import-demo.webp)
+
 Packages prepared from any source can be submitted through the documented import protocols. Whether a package can be used depends on protocol validation and the currently supported runtime capabilities. Source extraction and source-format conversion are outside the public framework.
 
 Import a unit archive (RAR/ZIP) in SDGO Mod Manager, fill in missing definitions, generate the shop, capsule and

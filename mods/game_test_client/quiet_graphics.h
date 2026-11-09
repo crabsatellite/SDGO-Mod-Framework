@@ -23,6 +23,17 @@ public:
     }
     uint64_t LostPresentTimings()const{return presentTimings_.Lost();}
     bool FailedPresentTimings()const{return presentTimings_.Failed();}
+    // How cooperative checks were answered: from the cached present state or by
+    // the driver on the graphics worker; and how often a present or a real
+    // check returned a success code other than D3D_OK (e.g. S_PRESENT_OCCLUDED).
+    struct CooperativeCounters {
+        uint32_t cached,dispatched,non_ok_success_presents,non_ok_success_checks;
+        HRESULT last_present_hresult;
+    };
+    CooperativeCounters CooperativeDiagnostics()const {
+        return {Read(cachedCooperativeChecks_),Read(dispatchedCooperativeChecks_),
+                Read(nonOkSuccessPresents_),Read(nonOkSuccessChecks_),ReadResult(lastPresentResult_)};
+    }
     bool RequestFrameCapture(const wchar_t* path) { return frameCapture_.Request(path); }
     LONG FrameCaptureState(HRESULT* result = nullptr) const { return frameCapture_.State(result); }
     using Create9Fn=IDirect3D9*(WINAPI*)(UINT);
@@ -1064,16 +1075,25 @@ private:
         // last real check instead of blocking the game thread on the graphics
         // worker. A battle start can hold the device lock on a loader thread
         // that waits for the game thread, so a dispatched check deadlocks there.
-        // A failed present makes the next check ask the driver again.
-        if (InterlockedCompareExchange(&owner->lastPresentResult_,0,0)==D3D_OK &&
-            InterlockedCompareExchange(&owner->lastCooperativeResult_,0,0)==D3D_OK) {
+        // Success codes other than D3D_OK (S_PRESENT_OCCLUDED on the hidden
+        // desktop) are not a lost device either; only a failed present or a
+        // failed check makes the next check ask the driver again.
+        const HRESULT lastPresent=static_cast<HRESULT>(InterlockedCompareExchange(&owner->lastPresentResult_,0,0));
+        const HRESULT lastCheck=static_cast<HRESULT>(InterlockedCompareExchange(&owner->lastCooperativeResult_,0,0));
+        if (SUCCEEDED(lastPresent) && SUCCEEDED(lastCheck)) {
             InterlockedIncrement(&owner->cachedCooperativeChecks_);
             return D3D_OK;
         }
+        const LONG dispatched=InterlockedIncrement(&owner->dispatchedCooperativeChecks_);
+        if (SUCCEEDED(lastPresent) && owner->api_ && owner->api_->Log && (dispatched<=8 || dispatched%500==0))
+            owner->api_->Log(owner->mod_,SDGO_LOG_INFO,
+                "quiet D3D9 TestCooperativeLevel #%ld asks the driver: last present 0x%08lX, last check 0x%08lX",
+                callNumber,static_cast<unsigned long>(lastPresent),static_cast<unsigned long>(lastCheck));
         struct R{IDirect3DDevice9* device;DeviceCooperativeFn original;HRESULT result;};
         R r{device,record.cooperative,D3DERR_NOTAVAILABLE};
         if (!owner->Dispatch(r,[](QuietGraphics*,R* v){v->result=v->original(v->device);}))
             r.result=D3DERR_NOTAVAILABLE;
+        if (SUCCEEDED(r.result) && r.result!=D3D_OK)InterlockedIncrement(&owner->nonOkSuccessChecks_);
         InterlockedExchange(&owner->lastCooperativeResult_,r.result);
         if (FAILED(r.result) && owner->api_ && owner->api_->Log)
             owner->api_->Log(owner->mod_,SDGO_LOG_WARN,
@@ -1329,7 +1349,10 @@ private:
             owner->ObserveSuccessfulPresent(invocation.QuadPart,frequency.QuadPart);
         }
         InterlockedExchange(&owner->lastPresentResult_,result);
-        if (owner->api_ && owner->api_->Log && (presentNumber<=4 || FAILED(result)))
+        LONG nonOkSuccess=0;
+        if (SUCCEEDED(result) && result!=D3D_OK)nonOkSuccess=InterlockedIncrement(&owner->nonOkSuccessPresents_);
+        if (owner->api_ && owner->api_->Log &&
+            (presentNumber<=4 || FAILED(result) || (nonOkSuccess && (nonOkSuccess<=4 || nonOkSuccess%1000==0))))
             owner->api_->Log(owner->mod_,FAILED(result) ? SDGO_LOG_WARN:SDGO_LOG_INFO,
                 "quiet D3D9 Present #%ld caller=%p hr=0x%08lX",presentNumber,
                 reinterpret_cast<void*>(returnAddress),static_cast<unsigned long>(result));
@@ -1409,7 +1432,8 @@ private:
     mutable PVOID volatile lastRenderTargetReturnAddress_=nullptr;
     mutable volatile LONG lastCreateResult_=E_PENDING,lastResetResult_=E_PENDING,lastPresentResult_=E_PENDING;
     mutable volatile LONG lastCooperativeResult_=E_PENDING,lastBackbufferResult_=E_PENDING;
-    mutable volatile LONG cachedCooperativeChecks_=0;
+    mutable volatile LONG cachedCooperativeChecks_=0,dispatchedCooperativeChecks_=0;
+    mutable volatile LONG nonOkSuccessPresents_=0,nonOkSuccessChecks_=0;
     mutable volatile LONG lastRenderTargetResult_=E_PENDING;
     alignas(8) mutable volatile LONG64 presentQpcFrequency_=0,lastSuccessfulPresentQpc_=0;
     alignas(8) mutable volatile LONG64 successfulPresentMinGap_=0,successfulPresentMaxGap_=0;

@@ -5,9 +5,27 @@ Unofficial fan project; no game files are included. [简体中文](README.zh-CN.
 
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
-| [PvP AI: teammates and opponents](docs/pvp-ai.md) | [Mission AI: cooperative wingmen](docs/coop-wingmen.md) |
+## Feature highlights
+
+| [Three enhancement systems, one client](docs/over-custom.md) | [Capsule machine editor](docs/capsule-catalog.md) |
 |:---:|:---:|
-| [![AI teammates and opponents in battle](docs/pvp-ai-demo.webp)](docs/pvp-ai.md) | [![AI wingmen in cooperative missions](docs/coop-wingmen-demo.webp)](docs/coop-wingmen.md) |
+| [![Three enhancement systems, one client](docs/room-systems-demo.webp)](docs/over-custom.md) | [![Capsule machine editor](docs/capsule-editor-demo.webp)](docs/capsule-catalog.md) |
+| OC, G改 1.0 and G改 2.0 coexist, selected per room. G改 1.0 requires owner rules. | Edit machine names, prices and pool weights; preview cards and save configuration. |
+
+| [Unit import](docs/unit-import.md) | [Shop catalog management](docs/shop-catalog.md) |
+|:---:|:---:|
+| [![Unit import](docs/unit-import-demo.webp)](docs/unit-import.md) | [![Shop catalog management](docs/shop-catalog-demo.webp)](docs/shop-catalog.md) |
+| Parse authoring packages, check forms and dependencies, and review shop and capsule icons. | Create offers from native items, adjust prices and sale options, and save drafts. |
+
+| [PvP AI](docs/pvp-ai.md) | [Mission AI wingmen](docs/coop-wingmen.md) |
+|:---:|:---:|
+| [![PvP AI](docs/pvp-ai-demo.webp)](docs/pvp-ai.md) | [![Mission AI wingmen](docs/coop-wingmen-demo.webp)](docs/coop-wingmen.md) |
+| AI opponents and teammates in native battles. | Cooperate with AI wingmen in missions. |
+
+| [Operator and ability management](docs/operator-assistant.md) | [Hangar management](docs/hangar-manager.md) |
+|:---:|:---:|
+| [![Operator and ability management](docs/operator-manager-demo.webp)](docs/operator-assistant.md) | [![Hangar management](docs/hangar-manager-demo.webp)](docs/hangar-manager.md) |
+| Configure operator appearance, abilities, supply drops and delivery. | Sort the hangar and preview duplicate-unit exchange on the unit-management page. |
 
 [Gameplay](#gameplay-extensions) · [Player assistance](#player-assistance-and-interface) · [Owner content tools](#owner-management-and-content-editing) · [Networking and updates](#networking-and-updates) · [Core fixes](#core-fixes) · [Developer tools](#developer-tools)
 
@@ -42,7 +60,7 @@ Battle rules, AI, progression, rewards and interactions between players.
 | [AI pilot dialogue (optional)](docs/ai-dialogue.md) <!-- catalog: `ai_dialogue` --> | AI pilots speak lines and suggest tactics based on the battle and their character; your own DeepSeek key, off by default |
 | [Per-round random loadouts](docs/room-random.md) <!-- catalog: `room_random`, `room_random_client` --> | Use `!rand` in the room title to draw each player’s sortie unit or deck from their own hangar every round |
 | [Complete PvP All Map](docs/all-maps.md) <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions |
-| [Over-custom six-stat enhancement](docs/over-custom.md) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | OC stat allocation, challenges and resets; rooms choose OC, G改 2.0 or owner-provided G改 1.0 while existing custom-parts data is preserved separately |
+| [Three enhancement systems, one client](docs/over-custom.md) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | OC stat allocation, challenges and resets; rooms choose OC, G改 2.0 or owner-provided G改 1.0 while existing custom-parts data is preserved separately |
 | [Friend unit gifts (optional)](docs/friend-unit-gift.md) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it |
 | [Collection capsule](docs/collection-capsule.md) <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, an owner exclusion list, and encyclopedia acquisition hints that follow the live pool; 15 per week by default |
 | [Battle contribution rewards](docs/battle-rewards.md) <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards |

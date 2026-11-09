@@ -708,6 +708,19 @@ int main(int argc,char** argv) {
         Sleep(4);
         if (device->Present(nullptr,nullptr,gameWindow,nullptr)!=presentResult ||
             GetLastError()!=presentLastError || quiet.State().successful_presents!=3)++failures;
+        {
+            // Presents and the last real check returned success codes other than
+            // D3D_OK (as S_PRESENT_OCCLUDED does on the hidden desktop). The device
+            // is not lost, so the check is answered without the graphics worker,
+            // which a battle-start loader thread can block on the device lock.
+            const auto before=quiet.CooperativeDiagnostics();
+            lastWorkerThread=0;
+            if (device->TestCooperativeLevel()!=D3D_OK || lastWorkerThread!=0)++failures;
+            const auto after=quiet.CooperativeDiagnostics();
+            if (after.cached!=before.cached+1 || after.dispatched!=before.dispatched ||
+                after.non_ok_success_presents!=3 || after.non_ok_success_checks!=4 ||
+                after.last_present_hresult!=presentResult)++failures;
+        }
         const auto presentTiming=quiet.State();
         if (presentTiming.present_timing_version!=1 || !presentTiming.present_qpc_frequency ||
             !presentTiming.successful_present_min_gap_ticks ||
@@ -812,7 +825,7 @@ int main(int argc,char** argv) {
     state=quiet.State();
     if (state.factory_calls!=2 || state.factories!=1 || state.create_attempts!=4 ||
         state.created_devices!=1 || state.failed_devices!=3 || state.resets!=14 ||
-        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=5 || state.last_create_hresult!=S_OK ||
+        state.presents!=4 || state.successful_presents!=3 || state.cooperative_checks!=6 || state.last_create_hresult!=S_OK ||
         state.last_reset_hresult!=resetResult || state.last_present_hresult!=presentResult ||
         state.last_cooperative_hresult!=cooperativeResult || state.last_backbuffer_hresult!=S_OK ||
         state.last_actual_width!=640 || state.last_actual_height!=480 ||
