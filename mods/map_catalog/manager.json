@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "map_catalog",
+  "title": "地图与任务导入",
+  "description": "登记按地图包协议编译的对战地图与任务：地图表行、任务记录、任务脚本（过场/阶段事件）和地形/模型/贴图资源。不改动原有地图与任务。",
+  "hosts": [
+    "client"
+  ],
+  "category": "gameplay",
+  "provider": "maps",
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "Enabled",
+      "label": "导入地图功能",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "native_debug_log",
+      "key": "NativeDebugLog",
+      "label": "写入游戏原生调试日志（排查任务用）",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "configuration_files": [
+    "catalog.bin",
+    "definitions.json",
+    "resource-overlay.ini",
+    "resources.zdx",
+    "resources.zpk",
+    "missions.lua"
+  ],
+  "retirement": {
+    "content_files": [
+      "catalog.bin",
+      "definitions.json",
+      "resource-overlay.ini",
+      "resources.zdx",
+      "resources.zpk",
+      "missions.lua"
+    ]
+  },
+  "runtime_enabled_setting": "enabled"
+}

@@ -326,6 +326,11 @@ sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
                      support/native_resource_overlay/native_resource_overlay.cpp
                      support/native_resource_overlay/native_resource_overlay.def
              FILES symbols.fragment.ini LIBS sdgo_script_registration)
+sdgo_add_mod(map_catalog DESCRIPTION "imported maps and missions"
+             SOURCES mods/map_catalog/client.cpp
+                     support/native_resource_overlay/native_resource_overlay.cpp
+                     support/native_resource_overlay/native_resource_overlay.def
+             FILES symbols.fragment.ini)
 sdgo_add_mod(unit_catalog_server SERVER DESCRIPTION "owned imported-unit runtime bindings"
              SOURCES mods/unit_catalog_server/server.cpp mods/unit_catalog_server/human_build_capture.cpp mods/unit_catalog_server/native_form_gate.cpp
              FILES symbols.fragment.ini LIBS sdgo_skill_identity sdgo_human_unit_capture sdgo_unit_form_preflight

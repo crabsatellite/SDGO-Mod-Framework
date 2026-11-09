@@ -427,6 +427,36 @@ namespace
         return UnitResourcePath(path);
     }
 
+    // Imported maps: terrain and navigation plus the resource domains their
+    // objects and effects load through the same pack open function. Scripts are
+    // registered through the program broker, never served by this overlay.
+    bool MapResourcePath(const std::wstring& path)
+    {
+        static constexpr std::pair<const wchar_t*, const wchar_t*> domains[] = {
+            {L"trns", L".trn"}, {L"sol", L".sol"}, {L"mdrs", L".mod"},
+            {L"anrs", L".ani"}, {L"txrs", L".txr"}, {L"fxrs", L".zfx"},
+            {L"sprs", L".spr"}, {L"sdrs", L".zsd"},
+        };
+        const size_t slash = path.find(L'\\');
+        if (slash == std::wstring::npos || slash == 0 || slash + 1 >= path.size())
+            return false;
+        const std::wstring root = path.substr(0, slash);
+        for (const auto& domain : domains) {
+            if (root != domain.first)
+                continue;
+            const size_t extensionLength = wcslen(domain.second);
+            return path.size() > extensionLength &&
+                   path.compare(path.size() - extensionLength, extensionLength,
+                                domain.second) == 0;
+        }
+        return false;
+    }
+
+    bool MapResourcePathCheck(const std::wstring& path, uint32_t)
+    {
+        return MapResourcePath(path);
+    }
+
     bool OperatorResourcePathCheck(const std::wstring& path, uint32_t operatorId)
     {
         return OperatorResourcePath(path, operatorId);
@@ -529,21 +559,19 @@ namespace
         return true;
     }
 
-    bool ParseUnitIndex(const std::vector<uint8_t>& bytes, uint64_t archiveSize,
-                        sdgo::resource_overlay::BundleRegistration& bundle,
-                        std::string& error, uint32_t partChunks = 0)
-    {
-        return ParseNativeIndex(bytes, archiveSize, false, false,
-                                &UnitResourcePathCheck, 0, bundle, error, partChunks);
-    }
+    using SealedPathCheck = bool (*)(const std::wstring&, uint32_t);
 
-    bool LoadUnitBundle(const wchar_t* modDirectory, const wchar_t* configName,
-                        sdgo::resource_overlay::BundleRegistration& bundle,
-                        std::string& error)
+    // Sealed provider bundles (unit_catalog, map_catalog): one resource-overlay.ini
+    // naming resources.zdx/.zpk with pinned SHA-256 values; the owner fixes the
+    // allowed resource domains.
+    bool LoadSealedBundle(const wchar_t* modDirectory, const wchar_t* configName,
+                          const char* owner, SealedPathCheck pathCheck,
+                          sdgo::resource_overlay::BundleRegistration& bundle,
+                          std::string& error)
     {
         if (!modDirectory || !*modDirectory || !configName ||
             wcscmp(configName, L"resource-overlay.ini") != 0) {
-            error = "unit_catalog requires resource-overlay.ini";
+            error = std::string(owner) + " requires resource-overlay.ini";
             return false;
         }
         const std::wstring root(modDirectory);
@@ -614,14 +642,15 @@ namespace
         std::vector<uint8_t> index;
         if (!ReadFileLimited(indexPath, kMaxIndexBytes, index, error))
             return false;
-        bundle.owner = "unit_catalog";
+        bundle.owner = owner;
         bundle.identity = indexHash + ":" + archiveHash;
         bundle.archivePath = partPaths.front();
         if (parts > 1) {
             bundle.archiveParts = partPaths;
             bundle.partChunks = partChunks;
         }
-        if (!ParseUnitIndex(index, archiveSize, bundle, error, partChunks))
+        if (!ParseNativeIndex(index, archiveSize, false, false, pathCheck, 0,
+                              bundle, error, partChunks))
             return false;
         return true;
     }
@@ -837,7 +866,11 @@ namespace sdgo::resource_overlay
             return false;
         }
         if (std::strcmp(owner, "unit_catalog") == 0)
-            return LoadUnitBundle(modDirectory, configName, bundle, error);
+            return LoadSealedBundle(modDirectory, configName, "unit_catalog",
+                                    &UnitResourcePathCheck, bundle, error);
+        if (std::strcmp(owner, "map_catalog") == 0)
+            return LoadSealedBundle(modDirectory, configName, "map_catalog",
+                                    &MapResourcePathCheck, bundle, error);
         uint32_t operatorId = 0;
         if (ParseOperatorOwner(owner, operatorId))
             return LoadOperatorBundle(modDirectory, configName, owner, bundle, error);
@@ -848,7 +881,8 @@ namespace sdgo::resource_overlay
     bool InspectUnitBundleFiles(const wchar_t* modDirectory, BundleRegistration& bundle, std::string& error)
     {
         bundle = {}; error.clear();
-        return LoadUnitBundle(modDirectory, L"resource-overlay.ini", bundle, error);
+        return LoadSealedBundle(modDirectory, L"resource-overlay.ini", "unit_catalog",
+                                &UnitResourcePathCheck, bundle, error);
     }
 
     bool ResolveArchivePart(const std::vector<std::wstring>& parts, uint32_t partChunks,
