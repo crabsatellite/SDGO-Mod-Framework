@@ -1,0 +1,252 @@
+"""Map and mission import protocol: package validation, compile, checks, install and workspace (no client/SQL)."""
+import hashlib
+import io
+import json
+import struct
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from PIL import Image  # noqa: E402
+
+from owner.maps import bundle, compiler, deployment, mission as M, occlusion, package as P  # noqa: E402
+from owner.maps.workspace import MapWorkspace, WorkspaceError  # noqa: E402
+
+
+def png(image):
+    out = io.BytesIO()
+    image.save(out, format='PNG')
+    return out.getvalue()
+
+
+def spawn(x, z, y=100.0):
+    return {'position': [x, y, z], 'facing': [0, 1]}
+
+
+def write_package(root: Path, *, key='test.flat-plain', mission=None, extra_objects=()) -> Path:
+    files = {
+        'terrain/height.png': png(Image.new('L', (257, 257), 0)),
+        'terrain/ground.png': png(Image.new('RGBA', (64, 64), (90, 120, 60, 255))),
+        'images/preview.png': png(Image.new('RGB', (64, 64), (80, 80, 80))),
+        'images/minimap.png': png(Image.new('RGB', (128, 128), (60, 90, 60))),
+    }
+    if mission is not None:
+        files['missions/m.json'] = json.dumps(mission, ensure_ascii=False).encode('utf-8')
+    manifest = {
+        'schema': 'sdgo.map-package', 'schema_version': 1, 'map_key': key,
+        'name': {'zh': '测试平原', 'en': 'Test Plain'}, 'modes': ['normal'], 'servers': ['beginner'],
+        'terrain': {'half_extent': 4096, 'height': {'image': 'terrain/height.png', 'min': 0, 'max': 0},
+                    'layers': [{'texture': 'terrain/ground.png', 'tiling': 32}],
+                    'lighting': {'bake_shadows': False}},
+        'objects': list(extra_objects),
+        'spawns': {'team_a': [spawn(-1500, -300 + 120 * i) for i in range(6)],
+                   'team_b': [spawn(1500, -300 + 120 * i) for i in range(6)],
+                   'shared': [spawn(0, 0)]},
+        'presentation': {'preview': 'images/preview.png', 'minimap': 'images/minimap.png',
+                         'bgm': {'native': 'BGM\\0001.mp3'}},
+    }
+    for name, raw in files.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_bytes(raw)
+    manifest['files'] = {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}
+    (root / 'map.json').write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
+    return root
+
+
+def templates():
+    def row(size, ident):
+        raw = bytearray(size)
+        struct.pack_into('<I', raw, 0, ident)
+        return bytes(raw)
+    npc_data = {500: {'NpcDataID': 500, 'NpcName': 'Base', 'UseUnitID': 1001, 'UseUnitHP': 3000, 'NpcPoint': 10,
+                      'ObjectHpUp': 0, 'NpcType': 2, 'AddUnitEXP': 10, 'AddPoint': 10, 'BossFlag': 0,
+                      'NpcUnitLevel': 1, 'ItemBuffNumber': 0, 'CreateUnitHp': 0, 'DestroyUnitHp': 0}}
+    npc = bytearray(598)
+    struct.pack_into('<I', npc, 0, 500)
+    struct.pack_into('<I', npc, 105, 1001)
+    return M.Templates(game_mode=row(1090, 88006), clear=row(391, 610001), routes={1: row(34, 195001)},
+                       objective=row(634, 197001), catalogue=row(1309, 191001), speech=row(506, 3229001),
+                       npc_templates={500: bytes(npc)}, npc_data=npc_data, spawn=row(152, 620001),
+                       unit_labels=lambda unit: {'wait_01', 'win'})
+
+
+def mission_spec():
+    return {
+        'schema': 'sdgo.map-mission', 'schema_version': 1, 'mission_key': 'test.flat-plain.drill',
+        'name': {'zh': '演习'}, 'description': {'zh': '击破靶机'}, 'briefing': {'zh': ['击破全部靶机']},
+        'difficulties': [{'level': 1, 'required_rank': 1, 'time_limit': 600, 'lives': 3}],
+        'bgm': {'native': 'BGM\\0001.mp3'},
+        'npcs': {'target': {'template': 500}, 'ally': {'template': 500, 'hp': 5000}},
+        'lines': {'l1': {'portrait': 'sprs\\0001.spr', 'speaker': {'zh': '教官'}, 'text': {'zh': '开始演习。'}}},
+        'phases': [
+            {'key': 'one', 'objective': {'zh': '击破靶机'}, 'slots': {'ally': 1, 'enemy': 4},
+             'spawns': [{'npc': 'ally', 'side': 'ally', 'positions': [[-200, 150, 0]], 'at': 1},
+                        {'npc': 'target', 'positions': [[300, 150, 300], [-300, 150, 300]], 'at': 1, 'every': 2}],
+             'goal': {'kill': [{'npc': 'target', 'count': 2}]}, 'fail': [{'time_limit': 300}]},
+            {'key': 'two', 'objective': {'zh': '坚守'}, 'enter': {'lines': ['l1']},
+             'spawns': [{'npc': 'target', 'positions': [[0, 150, 600]], 'at': 2}],
+             'goal': {'survive': 30}}],
+        'opening': 'intro',
+        'cutscenes': {'intro': {'length': 3.0, 'actors': {'a': {'npc': 'target', 'at': [0, 50, 200]}},
+                                'camera': [{'t': 0, 'pos': [0, 300, -600], 'look': [0, 50, 200]},
+                                           {'t': 3, 'pos': [200, 250, -400], 'look': [0, 50, 200]}],
+                                'events': [{'t': 0.5, 'line': 'l1'}, {'t': 1.0, 'actor': 'a', 'anim': 'win'}]}},
+    }
+
+
+def ids():
+    return M.MissionIds(group=40, catalogue=191040, route_first=195129, objective_first=197128,
+                        game_mode_first=88072, clear_first=610142, spawn_first=2910001, mode_start_first=2900031,
+                        npc_first=97621, speech_first=3229324, lua_prefix='SDGOM1')
+
+
+class PackageTests(unittest.TestCase):
+    def test_valid_package_loads_and_digest_is_enforced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp))
+            pkg = P.load(root)
+            self.assertEqual(pkg.map_key, 'test.flat-plain')
+            self.assertEqual(len(pkg.spawns['team_a']), 6)
+            (root / 'terrain/ground.png').write_bytes(png(Image.new('RGBA', (64, 64), (1, 2, 3, 255))))
+            with self.assertRaises(P.MapPackageError):
+                P.load(root).read('terrain/ground.png')
+
+    def test_spawn_outside_terrain_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp))
+            manifest = json.loads((root / 'map.json').read_text(encoding='utf-8'))
+            manifest['spawns']['shared'] = [spawn(9000, 0)]
+            (root / 'map.json').write_text(json.dumps(manifest), encoding='utf-8')
+            with self.assertRaises(P.MapPackageError):
+                P.load(root)
+
+
+class CompileTests(unittest.TestCase):
+    def test_pvp_map_compiles_to_one_contiguous_row_and_server_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = P.load(write_package(Path(tmp)))
+            build = compiler.compile_map(pkg, map_no=143, map_id=500, variant='pvp')
+            self.assertEqual([(k, i) for k, i, _ in build.rows], [(0x0F, 100001 + 143)])
+            self.assertEqual(len(build.rows[0][2]), 0x34C)
+            compiler.verify_trn(build.resources[build.report['trn'].replace('\\', '/').lower()])
+            self.assertEqual(build.server['tbl_MapFile'][0]['MapNo'], 143)
+
+    def test_mission_compile_links_spawn_mirrors_and_lays_out_objective_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = P.load(write_package(Path(tmp), mission=mission_spec()))
+            built = M.compile_mission(pkg, json.loads(pkg.read('missions/m.json')), map_no=144,
+                                      terrain_path='Trns\\m143x.trn', ids=ids(), templates=templates())
+            rows = {(k, i): r for k, i, r in built.rows}
+            game_mode = rows[(M.GAME_MODE_KIND, 88072)]
+            spawns = sorted(i for k, i in rows if k == M.SPAWN_KIND)
+            self.assertEqual(spawns, [r['MissionNpcID'] for r in built.server['tbl_MissionNpc']])
+            enemy_first = struct.unpack_from('<I', game_mode, 1054)[0]
+            ally_first = struct.unpack_from('<I', game_mode, 1058)[0]
+            self.assertEqual(struct.unpack_from('<i', rows[(M.SPAWN_KIND, enemy_first)], 5)[0], 88072)
+            self.assertEqual(rows[(M.SPAWN_KIND, enemy_first)][21], 2)
+            self.assertEqual(rows[(M.SPAWN_KIND, ally_first)][21], 1)
+            objective = rows[(M.OBJECTIVE_KIND, 197128)]
+            self.assertEqual(objective[114:114 + 100].decode('utf-16-le').split('\0')[0], '击破全部靶机')
+            for kind, _, raw in built.rows:
+                self.assertEqual(len(raw), M.SIZES[kind])
+            self.assertIn('function SDGOM1_C0_LuaInit', built.lua)
+            self.assertIn('hide=1', built.lua)
+            self.assertTrue(all(ord(c) < 128 for c in built.lua))
+
+    def test_missing_enemy_wave_is_refused(self):
+        spec = mission_spec()
+        for phase in spec['phases']:
+            phase['spawns'] = [s for s in phase['spawns'] if s.get('side') == 'ally']
+        spec['phases'] = spec['phases'][1:]
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = P.load(write_package(Path(tmp), mission=spec))
+            with self.assertRaises(M.MissionError):
+                M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                  templates=templates())
+
+
+class CheckTests(unittest.TestCase):
+    def test_camera_and_placement_checks(self):
+        box = ((0.0, 100.0, 0.0), ((1, 0, 0), (0, 1, 0), (0, 0, 1)), (100.0, 100.0, 100.0))
+        flat = lambda p: 0.0  # noqa: E731
+        self.assertIsNone(occlusion.shot_problem(flat, [box], (500, 150, -500), (500, 50, 500)))
+        self.assertEqual(occlusion.shot_problem(flat, [box], (0, 150, -500), (0, 100, 500)), '视线被物件遮挡')
+        self.assertEqual(occlusion.shot_problem(flat, [box], (0, 100, 0), (0, 100, 500)), '镜头位于物件内部')
+        self.assertEqual(occlusion.shot_problem(flat, [], (0, 10, 0), (0, 100, 500)), '镜头低于地面')
+        self.assertTrue(occlusion.blocked([box], (50, 150, 0)))
+        self.assertFalse(occlusion.blocked([box], (300, 150, 0)))
+
+    def test_cutscene_through_an_object_is_refused(self):
+        wall = {'model': 'models/wall.glb', 'position': [0, 0, 0], 'rotation_y': 0,
+                'collision': [{'center': [0, 200, -200], 'half_extents': [400, 200, 30]}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp), mission=mission_spec())
+            pkg = P.load(root)
+            obj = P.MapObject((0.0, 0.0, 0.0), 0.0, (1.0, 1.0, 1.0), collision=wall['collision'])
+            obj.model = 'models/wall.glb'
+            pkg.objects.append(obj)
+            boxes = occlusion.object_boxes(pkg, 'mission', None)
+            with self.assertRaises(M.MissionError) as raised:
+                M.compile_mission(pkg, json.loads(pkg.read('missions/m.json')), map_no=144,
+                                  terrain_path='Trns\\m143x.trn', ids=ids(), templates=templates(), occluders=boxes)
+            self.assertIn('cutscenes.intro', str(raised.exception))
+
+
+class InstallTests(unittest.TestCase):
+    def test_install_writes_content_and_removes_stale_mission_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            pkg = P.load(write_package(tmp / 'pkg', mission=mission_spec()))
+            build = compiler.compile_map(pkg, map_no=143, map_id=500, variant='pvp')
+            mission_build = M.compile_mission(pkg, json.loads(pkg.read('missions/m.json')), map_no=144,
+                                              terrain_path='Trns\\m143x.trn', ids=ids(), templates=templates())
+            client = tmp / 'client'
+            (client / 'sdgo/mods/map_catalog').mkdir(parents=True)
+            (client / 'GOnline.exe').write_bytes(b'MZ')
+            (client / 'sdgo/mods/map_catalog/mod.ini').write_text('[mod]\nid=map_catalog\n', encoding='utf-8')
+            bundle.build_publication([build], tmp / 'pub1', missions=[mission_build])
+            first = deployment.install_package(client, (tmp / 'pub1/SDGO-MapImport-Client.zip').read_bytes())
+            self.assertTrue((client / 'sdgo/mods/map_catalog/missions.lua').is_file())
+            self.assertEqual(first['removed'], [])
+            bundle.build_publication([build], tmp / 'pub2')
+            second = deployment.install_package(client, (tmp / 'pub2/SDGO-MapImport-Client.zip').read_bytes())
+            self.assertFalse((client / 'sdgo/mods/map_catalog/missions.lua').exists())
+            self.assertEqual(second['removed'], ['sdgo/mods/map_catalog/missions.lua'])
+            self.assertTrue((client / 'sdgo/mods/map_catalog/mod.ini').is_file())
+            with zipfile.ZipFile(tmp / 'pub2/SDGO-MapImport-Client.zip') as archive:
+                self.assertNotIn('client/sdgo/mods/map_catalog/missions.lua', archive.namelist())
+
+
+class WorkspaceTests(unittest.TestCase):
+    def test_register_edit_reorder_and_remove(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            write_package(tmp / 'a', key='test.alpha')
+            write_package(tmp / 'b', key='test.beta', mission=mission_spec())
+            ws = MapWorkspace(tmp / 'ws')
+            ws.add(tmp / 'a')
+            entry = ws.add(tmp / 'b')
+            self.assertEqual(entry['available_missions'], ['missions/m.json'])
+            edited = ws.update('test.alpha', {'name_zh': '新名字', 'modes': ['normal', 'deathmatch'],
+                                              'servers': ['expert']})
+            self.assertEqual(edited['name']['zh'], '新名字')
+            self.assertEqual(edited['modes'], ['normal', 'deathmatch'])
+            ws.update('test.beta', {'position': 0})
+            self.assertEqual([m['key'] for m in ws.load()], ['test.beta', 'test.alpha'])
+            with self.assertRaises(WorkspaceError):
+                ws.update('test.alpha', {'modes': ['bogus']})
+            # re-registering keeps the owner's edits
+            ws.add(tmp / 'a')
+            self.assertEqual(ws.describe_entry(ws._entry(ws.load(), 'test.alpha'))['name']['zh'], '新名字')
+            ws.remove('test.beta')
+            self.assertEqual([m['key'] for m in ws.load()], ['test.alpha'])
+            self.assertFalse((tmp / 'ws/packages/test.beta').exists())
+
+
+if __name__ == '__main__':
+    unittest.main()
