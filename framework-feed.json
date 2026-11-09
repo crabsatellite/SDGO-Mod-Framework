@@ -3,12 +3,12 @@
   "kind": "sdgo-framework-runtime",
   "source_id": "af01a76ab7ecb52ac0730657308e7aaf",
   "repository": "crabsatellite/SDGO-Mod-Framework",
-  "version": "1.16.1-beta.3111",
+  "version": "1.16.3-beta.3131",
   "channel": "beta",
-  "source_commit": "38e41bea00a69946c5e74b629a56f5de918238a5",
+  "source_commit": "43f3f67c7ef9b20375b7f2ecc274ad49068ecc14",
   "asset": {
-    "path": "releases/SDGO-ModFramework-1.16.1-beta.3111.zip",
-    "bytes": 28628989,
-    "sha256": "c6a947227f33bd63c46cee93586b9475aec1df693d1f5abb8d6b00889bb92a3b"
+    "path": "releases/SDGO-ModFramework-1.16.3-beta.3131.zip",
+    "bytes": 28632662,
+    "sha256": "c286314cdc3d554093dade3d082eb13a9eb86008e215a8804df28caa5fd86058"
   }
 }
