@@ -5,9 +5,27 @@
 
 [安装说明](docs/setup.zh-CN.md) · [SDGO Mod Manager](docs/mod-manager.zh-CN.md) · [最新发布](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
-| [对战 AI：队友与对手](docs/pvp-ai.zh-CN.md) | [任务 AI：合作僚机](docs/coop-wingmen.zh-CN.md) |
+## 重点功能
+
+| [三种强化体系，一个客户端](docs/over-custom.zh-CN.md) | [扭蛋机编辑器](docs/capsule-catalog.zh-CN.md) |
 |:---:|:---:|
-| [![对战中的 AI 队友与对手](docs/pvp-ai-demo.webp)](docs/pvp-ai.zh-CN.md) | [![参与合作任务的 AI 僚机](docs/coop-wingmen-demo.webp)](docs/coop-wingmen.zh-CN.md) |
+| [![三种强化体系，一个客户端](docs/room-systems-demo.webp)](docs/over-custom.zh-CN.md) | [![扭蛋机编辑器](docs/capsule-editor-demo.webp)](docs/capsule-catalog.zh-CN.md) |
+| 同一客户端共存 OC、G改 1.0 与 G改 2.0，按房间选择体系。G改 1.0 需配套规则。 | 编辑机台名称、价格与奖池权重，预览卡面并保存配置。 |
+
+| [机体导入](docs/unit-import.zh-CN.md) | [商城商品管理](docs/shop-catalog.zh-CN.md) |
+|:---:|:---:|
+| [![机体导入](docs/unit-import-demo.webp)](docs/unit-import.zh-CN.md) | [![商城商品管理](docs/shop-catalog-demo.webp)](docs/shop-catalog.zh-CN.md) |
+| 解析机体制作包，核对形态与依赖，预览商城和扭蛋图标。 | 从原生物品创建商品，调整售价与销售选项，保存草稿。 |
+
+| [对战 AI](docs/pvp-ai.zh-CN.md) | [任务 AI 僚机](docs/coop-wingmen.zh-CN.md) |
+|:---:|:---:|
+| [![对战 AI](docs/pvp-ai-demo.webp)](docs/pvp-ai.zh-CN.md) | [![任务 AI 僚机](docs/coop-wingmen-demo.webp)](docs/coop-wingmen.zh-CN.md) |
+| AI 对手与队友，在原生对战中交战。 | 任务中与 AI 僚机协同作战。 |
+
+| [副官与能力管理](docs/operator-assistant.zh-CN.md) | [机库管理](docs/hangar-manager.zh-CN.md) |
+|:---:|:---:|
+| [![副官与能力管理](docs/operator-manager-demo.webp)](docs/operator-assistant.zh-CN.md) | [![机库管理](docs/hangar-manager-demo.webp)](docs/hangar-manager.zh-CN.md) |
+| 配置副官显示、能力、补给掉落与发放方式。 | 在机体管理页整理机库，预览并兑换重复机体。 |
 
 [玩法扩展](#玩法扩展) · [玩家辅助与界面](#玩家辅助与界面) · [服主管理与内容编辑](#服主管理与内容编辑) · [联机与更新](#联机与更新) · [基础修复](#基础修复) · [开发诊断](#开发诊断)
 
@@ -40,7 +58,7 @@
 | [AI 机师互动台词（可选）](docs/ai-dialogue.zh-CN.md) <!-- catalog: `ai_dialogue` --> | AI 机师按战况和机体人设说台词、给队友建议；需自填 DeepSeek 密钥，默认关闭 |
 | [每局随机机体](docs/room-random.zh-CN.md) <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机选择出击机体或卡组 |
 | [完整对战 All Map](docs/all-maps.zh-CN.md) <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 |
-| [OC 六维强化](docs/over-custom.zh-CN.md) <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | OC 六维加点、挑战与洗点，房间可选择 OC、G改 2.0 或服主提供的 G改 1.0；原改造数据独立保留 |
+| [三种强化体系，一个客户端](docs/over-custom.zh-CN.md) <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | OC 六维加点、挑战与洗点，房间可选择 OC、G改 2.0 或服主提供的 G改 1.0；原改造数据独立保留 |
 | [好友机体赠送（可选）](docs/friend-unit-gift.zh-CN.md) <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；默认关闭，由服主开启 |
 | [收藏扭蛋](docs/collection-capsule.zh-CN.md) <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台；服主可设除外名单，图鉴获取说明随实际奖池自动更新；价格和次数可配置，默认每周 15 次 |
 | [战斗贡献奖励](docs/battle-rewards.zh-CN.md) <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 |

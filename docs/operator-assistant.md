@@ -2,6 +2,8 @@
 
 [简体中文](operator-assistant.zh-CN.md) · [Back to the feature index](../README.md) · [Pack and extension protocol](operator-pack-protocol.md)
 
+![Operator management: change a display name and save the configuration draft](operator-manager-demo.webp)
+
 The **副官与能力** panel in SDGO Mod Manager configures operator names, native/uploaded/package
 portraits, abilities, mutually exclusive item drops, free access or product registration, and shop-draft
 defaults. Saving a draft, applying server rules, installing client content, activating the BattleServer

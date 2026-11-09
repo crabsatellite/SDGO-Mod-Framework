@@ -2,6 +2,10 @@
 
 [简体中文](capsule-catalog.zh-CN.md) · [Back to the feature index](../README.md)
 
+Change a machine’s name, price and pool weights, then save the configuration.
+
+![Capsule editor: save machine names, prices and weights](capsule-editor-demo.webp)
+
 Owners manage fixed and custom capsule machines through the capsule panel in SDGO Mod Manager.
 Create, inspect, edit, retire, restore and reorder machines; choose native six-slot
 templates; set prices and weights; add or remove custom candidates; preview unit

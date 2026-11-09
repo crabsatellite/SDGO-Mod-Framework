@@ -68,8 +68,8 @@
       "mods": [
         "oc_custom_client"
       ],
-      "title_zh": "整备室：终极强化（OC）页面与强化部件页面的 G改 2.0 / G改 1.0 切换",
-      "title_en": "Factory: the OC page and the 强化部件 page switching between G改 2.0 and G改 1.0",
+      "title_zh": "三种强化体系，一个客户端：OC、G改 1.0 与 G改 2.0",
+      "title_en": "Three enhancement systems, one client: OC, G改 1.0 and G改 2.0",
       "guide_zh": "docs/over-custom.zh-CN.md",
       "guide_en": "docs/over-custom.md"
     },
@@ -84,6 +84,56 @@
       "title_en": "Native capsule UI: Chinese controls with original artwork",
       "guide_zh": "docs/ui-localization.zh-CN.md",
       "guide_en": "docs/ui-localization.md"
+    },
+    {
+      "id": "capsule-editor",
+      "path": "docs/capsule-editor-demo.webp",
+      "since": "1.16.1",
+      "mods": [
+        "capsule_catalog"
+      ],
+      "title_zh": "扭蛋机编辑：修改名称、价格与权重并保存配置",
+      "title_en": "Capsule editor: save machine names, prices and weights",
+      "guide_zh": "docs/capsule-catalog.zh-CN.md",
+      "guide_en": "docs/capsule-catalog.md"
+    },
+    {
+      "id": "unit-import",
+      "path": "docs/unit-import-demo.webp",
+      "since": "1.16.1",
+      "mods": [
+        "unit_catalog",
+        "unit_catalog_server"
+      ],
+      "title_zh": "机体导入：解析制作包、保存草稿并核对生成图标",
+      "title_en": "Unit import: parse an authoring package, save a draft and review generated icons",
+      "guide_zh": "docs/unit-import.zh-CN.md",
+      "guide_en": "docs/unit-import.md"
+    },
+    {
+      "id": "shop-catalog",
+      "path": "docs/shop-catalog-demo.webp",
+      "since": "1.16.1",
+      "mods": [
+        "shop_catalog"
+      ],
+      "title_zh": "商城商品：新增商品、调整售价并保存草稿",
+      "title_en": "Shop catalog: create an offer, adjust its price and save the draft",
+      "guide_zh": "docs/shop-catalog.zh-CN.md",
+      "guide_en": "docs/shop-catalog.md"
+    },
+    {
+      "id": "operator-manager",
+      "path": "docs/operator-manager-demo.webp",
+      "since": "1.16.1",
+      "mods": [
+        "operator_catalog",
+        "operator_catalog_server"
+      ],
+      "title_zh": "副官管理：修改显示名称并保存配置草稿",
+      "title_en": "Operator management: change a display name and save the configuration draft",
+      "guide_zh": "docs/operator-assistant.zh-CN.md",
+      "guide_en": "docs/operator-assistant.md"
     }
   ]
 }

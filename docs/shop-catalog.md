@@ -2,6 +2,8 @@
 
 [简体中文（完整说明）](shop-catalog.zh-CN.md)
 
+![Shop catalog: create an offer, adjust its price and save the draft](shop-catalog-demo.webp)
+
 Owners manage their own native shop offers in the **商城商品** (shop) panel of SDGO Mod Manager:
 add, search, edit, list/unlist, retire and restore. Players keep buying in the native in-game shop.
 Chinese option names and rental labels come from the separate [shop labels fix](shop-labels.md).

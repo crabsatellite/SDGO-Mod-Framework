@@ -1,6 +1,10 @@
-# Over-custom six-stat enhancement
+# Three enhancement systems, one client
 
 [简体中文](over-custom.zh-CN.md) · [Back to the feature index](../README.md) · [Friend unit gifts](friend-unit-gift.md)
+
+Use **OC, G改 1.0 and G改 2.0 in the same client**. The server owner chooses a system for the whole server or lets each room choose. G改 1.0 requires an owner-provided rule file.
+
+![OC and G改 2.0 / G改 1.0 switching in the same client](room-systems-demo.webp)
 
 Allocation, the OVER CUSTOM challenge and reset are available, OC values apply in battle, and both data sets survive a mode switch; one server can also let each room choose OC, G改 2.0 (the current custom parts) or G改 1.0 (see [Room systems](#room-systems)). The feature is on the Stable channel from 1.15.14. The OC-era EX abilities are not implemented yet (see [Scope and compatibility](#scope-and-compatibility)).
 
@@ -53,8 +57,6 @@ Every save refreshes the active-unit record, so it applies from the next battle.
 ## Room systems
 
 With **生效的强化体系** set to `room`, several systems run on one server and each room decides which one its battles use:
-
-![The OC page and the custom-parts page switching between G改 2.0 and G改 1.0](room-systems-demo.webp)
 
 | Title command | System | In battle |
 | --- | --- | --- |
