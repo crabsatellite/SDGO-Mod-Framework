@@ -2387,6 +2387,22 @@ int __cdecl ConfigureDeck(const SdgoGameTestContextV1* context) {
 const SdgoGameTestCaseV1 deckCase{"setup.deck",180000,&ConfigureDeck};
 const SdgoGameTestCaseV1 battleshipCase{"flow.battleship",180000,&AcquireBattleship};
 const SdgoGameTestCaseV1 giftCase{"setup.gift_requests",360000,&SendGiftRequests};
+// Review recordings can keep a completed native page visible before the next
+// test action. This delays only the developer test scheduler; the game keeps
+// rendering and all original page assertions are still evaluated afterwards.
+bool HoldReviewPage(const SdgoGameTestContextV1* context) {
+    static const DWORD hold=[] {
+        wchar_t folder[MAX_PATH]{},value[16]{};
+        if(!GetEnvironmentVariableW(L"SDGO_GAME_TEST_RECORD_DIR",folder,MAX_PATH) ||
+           !GetEnvironmentVariableW(L"SDGO_GAME_TEST_REVIEW_HOLD_MS",value,16))return DWORD(0);
+        wchar_t* end=nullptr;const auto n=wcstoul(value,&end,10);
+        return end && !*end && n<=5000 ? static_cast<DWORD>(n):DWORD(0);
+    }();
+    if(!hold || !context || !context->case_id)return false;
+    static std::string previous;static ULONGLONG ready=0;
+    if(previous!=context->case_id){previous=context->case_id;ready=GetTickCount64();}
+    return GetTickCount64()-ready<hold;
+}
 int PageResult(const SdgoGameTestContextV1* context,PageTestActions::Result result,
                PageTestActions::Result expected) {
     const auto state=pages.State();
@@ -2404,6 +2420,7 @@ int PageResult(const SdgoGameTestContextV1* context,PageTestActions::Result resu
         return SDGO_GAME_TEST_FAIL;
     }
     if (result!=expected)return SDGO_GAME_TEST_WAIT;
+    if (expected!=PageTestActions::kCancelled && HoldReviewPage(context))return SDGO_GAME_TEST_WAIT;
     context->Assert(state.snapshot.loaded && state.snapshot.visible && state.current_unit_count>0,
         "the authenticated native unit-management page exposes genuine inventory through the Mod observer");
     context->Assert(state.layout_unchanged && state.active_slot_unchanged,
@@ -2504,6 +2521,7 @@ int __cdecl ReadStoragePage(const SdgoGameTestContextV1* context) {
         clicked=false;
         const auto state=storage.State();
         if(!state.timer_observed)return SDGO_GAME_TEST_WAIT;
+        if(HoldReviewPage(context))return SDGO_GAME_TEST_WAIT;
         char message[192];
         sprintf_s(message,"native storage tab=%u total=%u entries=%u loaded=%u visible=%u generation=%u",
             state.current_tab,state.total,state.page_entry_count,state.loaded,state.visible,state.generation);
