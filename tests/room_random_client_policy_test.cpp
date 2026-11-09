@@ -4,6 +4,7 @@
 #include "../mods/room_random/loadout_sync.h"
 #include "../mods/room_random_client/cache_sync.h"
 #include "../mods/room_random_client/pending_start.h"
+#include "../mods/room_random_client/skill_part_notice.h"
 namespace {
 int checks=0,failures=0;
 void Check(bool ok,const char* text){++checks;if(!ok){++failures;std::printf("FAIL %s\n",text);}}
@@ -19,6 +20,26 @@ void TagStart(std::array<uint8_t,0xCD4>& packet,uint8_t count,uint8_t epoch) {
 }
 int main() {
     using namespace room_random_client;
+    {
+        SkillPartSnapshot before{1001,0x100000001ULL,765432};
+        Check(DifferentSkillPartInstance(before,1001,765432,0x200000001ULL,0),
+              "switching inventory instances cannot consume the previous instance's skill part");
+        Check(!DifferentSkillPartInstance(before,1001,765432,before.unit,0),
+              "real removal on the same 64-bit inventory UID retains the native notice");
+        Check(!DifferentSkillPartInstance(before,1002,765432,0x200000001ULL,0),
+              "another account cannot reuse a pending consumption comparison");
+        Check(!DifferentSkillPartInstance(before,1001,765431,0x200000001ULL,0),
+              "a stale native skill-part snapshot remains native");
+        Check(!DifferentSkillPartInstance(before,1001,765432,0,0) &&
+              !DifferentSkillPartInstance(before,1001,765432,0x200000001ULL,111),
+              "unknown units and still-equipped parts are never treated as the false-removal case");
+        SkillPartReads reads;int reader=0;
+        reads.Begin(&reader,before);
+        Check(reads.Take(&reader).unit==before.unit && !reads.Take(&reader).unit,
+              "each refresh consumes its captured identity only once");
+        reads.Begin(&reader,before);reads.Begin(&reader,{});
+        Check(!reads.Take(&reader).unit,"a reused request cannot retain an older identity");
+    }
     std::array<uint8_t,0x5DA8> profile{};std::array<uint8_t,0x4000> room{};
     Context c{profile.data(),room.data(),1001};CacheSync sync;
     Put<uint32_t>(room.data(),0,7);room[4]=2;room[5]=8;
