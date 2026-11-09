@@ -2512,8 +2512,15 @@ std::size_t AnyServiceDialogs(void* service, void** out, std::size_t capacity) n
 // that run with the factory; it is looked up once per factory visit.
 void ExitButtonOf(void* service) {
     static void* done = nullptr;
+    static std::uint64_t last = 0;
+    static std::uint32_t tries = 0;
     if (!service || service == done) return;
-    done = service;
+    // The exit button's service can start after the factory; look again about
+    // once a second for a while.
+    const auto now = GetTickCount64();
+    if (now - last < 1000 || tries >= 120) return;
+    last = now;
+    ++tries;
     void* services[256] = {};
     const std::size_t count = LiveServices(services, 256);
     const std::wstring name = L"ExitBtn";
@@ -2524,11 +2531,13 @@ void ExitButtonOf(void* service) {
         for (std::size_t at = 0; at < dialog_count; ++at) {
             if (void* control = FindButton(dialogs[at], &native)) {
                 l10n::ExitButton(control);
+                done = service;
+                tries = 0;
                 return;
             }
         }
     }
-    Log(SDGO_LOG_INFO, "factory l10n: no exit button among the live services");
+    if (tries == 120) Log(SDGO_LOG_INFO, "factory l10n: no exit button among the live services");
 }
 
 // --- Observer ---------------------------------------------------------------------

@@ -777,9 +777,14 @@ def configure_sfx_only(root: Path) -> dict:
 
 
 REVIEW_FOOTAGE_SCREEN_RES = 12   # the native 1920x1080 battle resolution
+# Quiet sessions that play several battles keep the hidden device's battle
+# resets small: the template's desktop-sized level resets a 2389x1344 back
+# buffer at every battle start, and the second such reset can stall the
+# driver's TestCooperativeLevel on the graphics worker.
+SEVERAL_BATTLES_SCREEN_RES = 0
 
 
-def configure_muted_audio(root: Path, *, review_footage: bool = False) -> dict:
+def configure_muted_audio(root: Path, *, review_footage: bool = False, battle_screen_res: int | None = None) -> dict:
     path=root/'config.xml'
     try:
         tree=ET.parse(path)
@@ -788,12 +793,12 @@ def configure_muted_audio(root: Path, *, review_footage: bool = False) -> dict:
         screen=video.find('ScreenMode')
         if screen is None:screen=ET.SubElement(video,'ScreenMode',{'width':'1024','height':'768','bpp':'32'})
         screen.set('mode','window');screen.set('windowFull','0')
-        if review_footage:
+        if review_footage or battle_screen_res is not None:
             # Review footage keeps the template's post-processing and plays battles at 1920x1080.
             resolution=video.find('GameScreenRes')
             if resolution is None:resolution=ET.SubElement(video,'GameScreenRes')
-            resolution.set('level',str(REVIEW_FOOTAGE_SCREEN_RES))
-        else:
+            resolution.set('level',str(REVIEW_FOOTAGE_SCREEN_RES if review_footage else battle_screen_res))
+        if not review_footage:
             effects=video.find('PostEffect')
             if effects is None:effects=ET.SubElement(video,'PostEffect')
             for key,level in (('MotionBlur','MotionBlurLevel'),('HeatHaze','HeatHazeLevel'),
@@ -3831,7 +3836,8 @@ def prepare(
             }:
                 raise GameTestError('installed operator inputs differ from their sealed plan')
         recording = configure_sfx_only(client) if sfx_only else None
-        if quiet:configure_muted_audio(client,review_footage=review_footage)
+        if quiet:configure_muted_audio(client,review_footage=review_footage,
+                                       battle_screen_res=SEVERAL_BATTLES_SCREEN_RES if room_switch else None)
         if fps_only:configure_fps_test(client, fps_cap)
         if room_titles_only:
             # Bind protocol diagnostics before collecting immutable hashes.

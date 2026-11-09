@@ -339,6 +339,10 @@ public:
             return SDGO_GAME_TEST_WAIT;
         }
         if(!wcscmp(op,L"snapshot")){++completed_;Write(context,true);return SDGO_GAME_TEST_WAIT;}
+        if(!wcscmp(op,L"messenger_close")) {
+            if(!actions_||!actions_->CloseMessenger()){context->Assert(0,"the messenger closes through its CloseBtn");return SDGO_GAME_TEST_FAIL;}
+            ++completed_;Write(context,true);return SDGO_GAME_TEST_WAIT;
+        }
         storageCommand_=!wcscmp(op,L"storage_open")||!wcscmp(op,L"storage_claim")||!wcscmp(op,L"storage_hangar");
         if(storageCommand_) {
             if(!storageAction_){context->Assert(0,"native storage adapter is absent");return SDGO_GAME_TEST_FAIL;}

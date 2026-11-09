@@ -42,6 +42,22 @@ class RoomSwitchPlanTests(unittest.TestCase):
             game_test.required_flow_cases('1,3', play_unit_uid=UID, oc_allocate='1:1', room_switch=True)
 
 
+class RoomSwitchClientSettingsTests(unittest.TestCase):
+    def test_quiet_room_switch_plays_battles_at_the_lowest_resolution(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / 'config.xml'
+            config.write_text('<?xml version="1.0" encoding="utf-8"?><Config><Video><GameScreenRes level="13" />'
+                              '</Video><Sound><BGMVolume Value="50" use="true" /><EffectVolume Value="50" use="true" />'
+                              '<VoiceVolume Value="50" use="true" /></Sound></Config>', encoding='utf-8')
+            game_test.configure_muted_audio(Path(folder), battle_screen_res=game_test.SEVERAL_BATTLES_SCREEN_RES)
+            text = config.read_text(encoding='utf-8')
+            self.assertIn('<GameScreenRes level="0" />', text)
+            self.assertIn('MotionBlurLevel="0"', text)
+            config.write_text(text.replace('level="0"', 'level="13"'), encoding='utf-8')
+            game_test.configure_muted_audio(Path(folder))
+            self.assertIn('<GameScreenRes level="13" />', config.read_text(encoding='utf-8'))
+
+
 class RoomSwitchReportTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
