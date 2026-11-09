@@ -53,7 +53,9 @@ resources and stops no services.
    definition, or choose a stock unit as a template. Templates only fill empty fields and never overwrite decoded data.
    Every field shows its source and stays editable.
 4. Choose a native permanent unit-item template. The tool assigns a category ID in its managed range and registers only
-   the unit category.
+   the unit category. Then fill in **性能说明** (description) and **使用说明** (usage). They appear in the 「性能」 and
+   「使用」 fields of shop details and capsule results, up to 99 characters each. The template item's own text describes
+   another unit and is not kept; an empty field stays empty in the game, and the panel shows a notice.
 5. Review the dependency list. BIN, model, animation, effect, texture and SPR files can be uploaded separately; a
    missing weapon needs both a client record and a server definition.
 6. Choose or upload the shop and capsule images and review the generated output, see [Images](#images).
@@ -332,6 +334,11 @@ The game does not read new models from the working directory. Client packages ca
 With the capsule catalog also enabled, both share one resource reader. A large archive may be split into parts
 (`resources.zpk`, `resources.1.zpk`, ...) to keep each file small; the index and the archive SHA-256 still describe
 the parts as one archive.
+
+The item category (kind 34, 614 bytes) is copied from the chosen template. The compiler replaces its ID (`+0`), name
+(`+5`, 50 UTF-16 units), root unit (`+105`) and the two text fields: 「性能」 at `+0xD6` and 「使用」 at `+0x19E`, each
+100 UTF-16 units including the terminator. Other bytes stay the template's. Of the item's text, the runtime declares
+only the name as content-owned to localization consumers.
 
 `registrations.json` and Manager's `/api/providers/units/api/units/registrations` expose stable `unit:<root ID>`
 identities, categories, names, forms and the matching `shop_sprite` / `capsule_sprite`. Capsule machine cards are

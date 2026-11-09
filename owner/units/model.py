@@ -73,6 +73,32 @@ def text(value, label, maximum=48):
     return value.strip()
 
 
+# The client item category (kind 34) shows these as 「性能」 (+0xD6) and 「使用」 (+0x19E) in shop
+# details and capsule results. Each native field holds 100 UTF-16 units including the terminator.
+ITEM_TEXT_FIELDS = {'description': '性能说明', 'usage': '使用说明'}
+ITEM_TEXT_MAXIMUM = 99
+
+
+def item_text(value):
+    """Authored item text. Empty fields stay empty: the template's text describes another unit."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict) or set(value) - set(ITEM_TEXT_FIELDS):
+        raise ValueError('物品文字只接受 description 与 usage')
+    result = {}
+    for key, label in ITEM_TEXT_FIELDS.items():
+        entry = value.get(key, '')
+        if not isinstance(entry, str):
+            raise ValueError(label + '必须是文字')
+        if any(ord(ch) < 32 for ch in entry):
+            raise ValueError(label + '不能包含控制字符或换行')
+        entry = entry.strip()
+        if len(entry.encode('utf-16-le')) // 2 > ITEM_TEXT_MAXIMUM:
+            raise ValueError(f'{label}最多 {ITEM_TEXT_MAXIMUM} 个 UTF-16 字符')
+        result[key] = entry
+    return result
+
+
 def field_value(name, value):
     if name in TEXT_FIELDS:
         value=text(value, LABELS[name])
@@ -149,7 +175,7 @@ def content_revision(draft):
 
 
 def update(draft, patch, catalog):
-    if not isinstance(patch,dict) or set(patch)-{'name','root_unit_id','behavior_profile','forms','weapons','presentation','item_template_id','blueprints','metadata','media'}:
+    if not isinstance(patch,dict) or set(patch)-{'name','root_unit_id','behavior_profile','forms','weapons','presentation','item_template_id','item_text','blueprints','metadata','media'}:
         raise ValueError('草稿更新包含未知字段')
     result=copy.deepcopy(draft)
     if 'name' in patch:result['name']=text(patch['name'],'机体名称')
@@ -180,6 +206,7 @@ def update(draft, patch, catalog):
         if identity is not None and (type(identity) is not int or identity not in catalog.get('items',{}) or identity//100000!=11):
             raise ValueError('请选择有效的原生机体物品模板')
         result['item_template_id']=identity
+    if 'item_text' in patch:result['item_text']=item_text(patch['item_text'])
     if 'blueprints' in patch:
         from .blueprints import normalize
         rows=patch['blueprints']
@@ -231,10 +258,10 @@ def update(draft, patch, catalog):
 
 
 def definitions(plan):
-    if not isinstance(plan,dict) or set(plan)-{'schema_version','root_unit_id','behavior_profile','item_template_id','units','weapons','blueprints','metadata','media'}:
+    if not isinstance(plan,dict) or set(plan)-{'schema_version','root_unit_id','behavior_profile','item_template_id','item_text','units','weapons','blueprints','metadata','media'}:
         raise ValueError('定义文件只接受 schema_version、形态/武器定义和根形态设置')
     if plan.get('schema_version')!=1:raise ValueError('不支持的定义文件版本')
-    patch={key:plan[key] for key in ('root_unit_id','behavior_profile','item_template_id','blueprints','metadata','media') if key in plan}
+    patch={key:plan[key] for key in ('root_unit_id','behavior_profile','item_template_id','item_text','blueprints','metadata','media') if key in plan}
     for src,target,identity in (('units','forms','UnitNumber'),('weapons','weapons','WeaponNo')):
         rows=plan.get(src,[])
         if not isinstance(rows,list):raise ValueError('定义文件记录必须是列表')

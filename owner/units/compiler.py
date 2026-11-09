@@ -172,6 +172,10 @@ def publish(workspace,state,selected,transaction):
         template=workspace.baseline.record('item',family['item_template_id'])
         if not template or len(template)!=614 or template[4]!=0:raise ValueError('客户端缺少已发布的原生物品类别模板')
         item=bytearray(template);struct.pack_into('<I',item,0,family['category_id']);wchar(item,5,50,family['name'])
+        # 「性能」(+0xD6) and 「使用」(+0x19E) in shop details and capsule results. The template's
+        # text describes another unit, so only the author's text (or an empty field) is kept.
+        text=model.item_text(family.get('item_text'))
+        wchar(item,214,100,text['description']);wchar(item,414,100,text['usage'])
         struct.pack_into('<I',item,105,root);records.append((34,family['category_id'],bytes(item)))
         if workspace.baseline.any_id(next_index):
             raise ValueError('机体图鉴连续编号被其他原生记录占用，拒绝覆盖或跳号')

@@ -587,6 +587,9 @@ class Workspace:
             item=self.repository.catalog.get('items',{}).get(draft['item_template_id'],{})
             if (item.get('TimeLimit'),item.get('Option1'),item.get('Option2'))!=(0,1,2):
                 need('item_template_permanent','请选择永久机体物品模板；机体的租赁售价由商城选项另行配置','item_template_id')
+        if draft.get('item_template_id') is not None and not model.item_text(draft.get('item_text'))['description']:
+            need('item_text','未填写性能说明：商城详情和扭蛋结果的「性能」栏会显示为空；物品模板自带的文字属于另一台机体，不会沿用',
+                 'item_text.description','warning')
         if root and draft.get('item_template_id') and draft.get('category_id') is None:
             need('item_identity','本地物品类别待分配，请保存草稿','category_id')
         for role,label in (('shop','商城'),('capsule','扭蛋')):

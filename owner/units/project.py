@@ -131,6 +131,10 @@ def export_project(workspace,draft):
         'units':[r['server'] for r in draft.get('forms',[])],
         'weapons':[r['server'] for r in draft.get('weapons',[])],
         'blueprints':draft.get('blueprints',[])}
+    from .model import item_text
+    text=item_text(draft.get('item_text'))
+    # Written only when authored, so projects without item text stay readable by earlier Managers.
+    if any(text.values()):definitions['item_text']=text
     from .blueprint_templates import validate_project_bindings
     validate_project_bindings(definitions,files=files)
     manifest={'protocol':PROTOCOL,'schema_version':SCHEMA_VERSION,'name':draft['name'],
