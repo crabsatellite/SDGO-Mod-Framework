@@ -62,11 +62,12 @@ def select_demos(root,registry,release_version,mods):
     return selected
 
 
-def render(root,manifest,mods,registry):
+def render(root,manifest,mods,registry,require_authored=False):
     label=manifest['version'];repo=manifest['repository'];commit=manifest['source_commit'];version(label)
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repo)or not re.fullmatch('[0-9a-f]{40}',commit):raise ValueError('Invalid public release identity')
     demos=select_demos(root,registry,label,mods);stable=manifest['channel']=='stable'
     fragment=root/'docs/releases'/('.'.join(map(str,version(label)))+'.md')
+    if require_authored and not fragment.is_file():raise ValueError('Add bilingual authored notes for this release series: '+str(fragment))
     if fragment.is_file():body=fragment.read_text(encoding='utf-8').strip()
     else:body=('## 中文\n\n本包更新 SDGO Mod Manager、框架与清单声明的公共 Mod 程序。玩家配置和自定义内容由服主配置入口维护。\n\n'
                '## English\n\nThis package updates SDGO Mod Manager, the framework and its declared public Mod programmes. Owner profiles maintain shared settings and custom content.')
@@ -86,8 +87,9 @@ def render(root,manifest,mods,registry):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--asset',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True);parser.add_argument('--media-list',type=Path,required=True)
+    parser.add_argument('--require-authored',action='store_true',help='require the version-series bilingual notes used by publication CI')
     args=parser.parse_args();manifest,mods=package(args.asset)
-    notes,demos=render(ROOT,manifest,mods,json.loads((ROOT/'docs/feature-demos.json').read_bytes()))
+    notes,demos=render(ROOT,manifest,mods,json.loads((ROOT/'docs/feature-demos.json').read_bytes()),args.require_authored)
     args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(notes,encoding='utf-8')
     args.media_list.parent.mkdir(parents=True,exist_ok=True);args.media_list.write_text(json.dumps(demos,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     print(json.dumps({'version':manifest['version'],'languages':['zh-CN','en'],'demos':len(demos),'output':str(args.output)},ensure_ascii=False))

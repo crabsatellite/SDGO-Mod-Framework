@@ -103,7 +103,7 @@ jobs:
       - name: Build and validate exact release bytes
         run: python tools/build_release.py --build --channel $env:RELEASE_CHANNEL --version $env:RELEASE_VERSION
       - name: Prepare bilingual notes and applicable demonstrations
-        run: python tools/release_notes.py --asset "dist/SDGO-ModFramework-$env:RELEASE_VERSION.zip" --output dist/release-notes.md --media-list dist/release-media.json
+        run: python tools/release_notes.py --asset "dist/SDGO-ModFramework-$env:RELEASE_VERSION.zip" --output dist/release-notes.md --media-list dist/release-media.json --require-authored
       - name: Mission profile configuration and native contracts
         shell: pwsh
         run: |

@@ -40,8 +40,12 @@ class ReleaseNotes(unittest.TestCase):
         with self.assertRaises(ValueError):notes.render(self.root,self.manifest,{'visible'},self.registry)
 
     def test_authored_notes_must_include_both_languages(self):
+        with self.assertRaises(ValueError):notes.render(self.root,self.manifest,{'visible'},self.registry,require_authored=True)
         p=self.root/'docs/releases/1.15.7.md';p.parent.mkdir();p.write_text('English only',encoding='utf-8')
         with self.assertRaises(ValueError):notes.render(self.root,self.manifest,{'visible'},self.registry)
+        p.write_text('## 中文\n\n本版改动。\n\n## English\n\nRelease changes.',encoding='utf-8')
+        body,_=notes.render(self.root,self.manifest,{'visible'},self.registry,require_authored=True)
+        self.assertIn('本版改动',body)
 
     def test_owner_programmes_cannot_be_presented_as_public_framework(self):
         asset=self.root/'programme.zip'
