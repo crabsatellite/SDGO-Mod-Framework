@@ -13,6 +13,10 @@ the following confirmation pages show translated product titles; numeric purchas
 Prices, currencies, durations and billing keep their original definitions. Rental/permanent labels are handled by
 the separate [shop rental and Chinese option fix](shop-labels.md).
 
+Adds original-client unit-name aliases. Verified hangar, unit-information and preview callers use the unit ID and source text. Existing Chinese is retained; an ambiguous foreign label can use the same original record's Chinese primary name. Custom unit, weapon and skill names and descriptions are authored and distributed with custom-unit content packages, outside this Mod's stock dictionary. Content-owned records and matching text bypass translation; unresolved ownership preserves the source.
+
+Original Thai controls and longer system messages use [Chinese native interface text](ui-localization.md).
+
 ## Use
 
 `shop_localization` is a client Mod that players receive with the server owner's client package or update;

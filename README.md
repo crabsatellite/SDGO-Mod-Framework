@@ -63,6 +63,7 @@ Everyday frame-rate, display, hangar and claim controls.
 | [Storage claim all](docs/storage-claim.md) <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation |
 | [Automatic hangar capacity](docs/hangar-capacity.md) <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) |
 | [Chinese shop localization and search](docs/shop-localization.md) <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters |
+| [Chinese native interface text](docs/ui-localization.md) <!-- catalog: `ui_localization` --> | Translate original Thai controls and longer system messages; retain simple English and original artwork; custom text stays in content packages |
 | [Extended room titles](docs/room-titles.md) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls |
 | [Login unit showcase](docs/login-showcase.md) <!-- catalog: `login_showcase` --> | Choose which units appear on the login screen: by grade, all, recently registered or a chosen list; SS/SR/SU by default |
 

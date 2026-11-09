@@ -61,6 +61,7 @@
 | [保管库一键领取](docs/storage-claim.zh-CN.md) <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 |
 | [自动机库容量](docs/hangar-capacity.zh-CN.md) <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） |
 | [商城汉化与中文检索](docs/shop-localization.zh-CN.md) <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 |
+| [原生界面中文汉化](docs/ui-localization.zh-CN.md) <!-- catalog: `ui_localization` --> | 汉化原版泰文按钮与较长系统提示，保留简单英语和原版图片；自定义内容随内容包分发 |
 | [长房名](docs/room-titles.zh-CN.md) <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 |
 | [登录机体展示](docs/login-showcase.zh-CN.md) <!-- catalog: `login_showcase` --> | 选择登录页面展示哪些机体：按等级、全部、最近注册或指定名单，默认 SS/SR/SU |
 

@@ -20,6 +20,8 @@ real battles on a test server to check its weapons, skills and transformation.
 The generic release contains only the tools, never units. Owner drafts, images, publications and install receipts stay
 in the owner's workspace.
 
+Unit, weapon and skill names and descriptions belong to unit content. Edit them in the content authoring source and distribute them with the custom-unit package; public interface dictionaries do not carry those dedicated translations. The runtime reports content ownership to optional localization consumers so matching stock phrases do not replace authored wording.
+
 ## Setup
 
 Open `SDGO Mod Manager.exe`, choose **机体导入** in the sidebar and set:
