@@ -5711,6 +5711,10 @@ void PublishQuietSocketReceipt(bool force) {
         graphics.ime_disabled,graphics.last_requested_width,graphics.last_requested_height,graphics.last_client_width,graphics.last_client_height,
         graphics.last_resolved_width,graphics.last_resolved_height,graphics.last_actual_width,graphics.last_actual_height,
         static_cast<long>(graphics.last_backbuffer_hresult),graphics.cooperative_checks,static_cast<long>(graphics.last_cooperative_hresult));
+    const auto cooperative=quietGraphics.CooperativeDiagnostics();
+    fprintf(file,"cached_cooperative_checks=%u\ndispatched_cooperative_checks=%u\nnon_ok_success_presents=%u\nnon_ok_success_checks=%u\npresent_hresult=%ld\n",
+        cooperative.cached,cooperative.dispatched,cooperative.non_ok_success_presents,cooperative.non_ok_success_checks,
+        static_cast<long>(cooperative.last_present_hresult));
     fprintf(file,"named_desktop_fallback=%u\ndispatch_message_pumps=%u\n",
         graphics.named_desktop_fallback,graphics.dispatch_message_pumps);
     fprintf(file,"worker_messages=%u\nworker_last_message=%u\nworker_requests=%u\nworker_busy=%u\n",
