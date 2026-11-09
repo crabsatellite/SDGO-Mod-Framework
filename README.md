@@ -30,7 +30,7 @@ This page is a feature index. Configuration, gameplay instructions, compatibilit
 Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:
 
 - **Stable**: the basic workflow works; later problems are fixed in new versions. Manager updates install Stable by default.
-- **Beta**: the basic workflow is still under development. Current Beta features include unit family import and over-custom six-stat enhancement. Switch Manager updates to the Beta channel to install them.
+- **Beta**: the basic workflow is still under development. Current Beta features include unit family import. Switch Manager updates to the Beta channel to install them.
 - **Experimental**: development diagnostics. Development tools are not installed by Manager updates.
 
 ## Core fixes
@@ -88,7 +88,7 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
 | Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
 | Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
-| Over-custom six-stat enhancement (Beta) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | Adds an Ultimate Enhancement (终极强化) tab beside unit customization with OC levels, six-stat points and resets that apply in battle; kept alongside the current parts data (G改 2.0), with the owner choosing the set for the whole server or letting each room choose OC, G改 2.0 or, with the owner's rule file, G改 1.0 (the create window's 体系 row or `!oc` / `!g1` in the title; the room list and the room show the system); G改 1.0 is edited on the original 强化部件 page through its G改 2.0 / G改 1.0 switch, and the factory pages show Chinese in place of their English labels | [Use](docs/over-custom.md) |
+| Over-custom six-stat enhancement <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | Adds an Ultimate Enhancement (终极强化) tab beside unit customization with OC levels, six-stat points and resets that apply in battle; kept alongside the current parts data (G改 2.0), with the owner choosing the set for the whole server or letting each room choose OC, G改 2.0 or, with the owner's rule file, G改 1.0 (the create window's 体系 row or `!oc` / `!g1` in the title; the room list and the room show the system); G改 1.0 is edited on the original 强化部件 page through its G改 2.0 / G改 1.0 switch, and the factory pages show Chinese in place of their English labels | [Use](docs/over-custom.md) |
 | Unit family import (Beta) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import protocol unit packages or whole rosters from any source in Mod Manager, completing definitions and generating paired data, encyclopedia and shop/capsule resources | [Use](docs/unit-import.md) |
 
 <!-- /mod-category:gameplay -->

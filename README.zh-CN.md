@@ -26,7 +26,7 @@
 功能名后的 Beta、Experimental 表示发布阶段，未标注的为 Stable：
 
 - **Stable**：基本功能可以正常使用，之后的问题通过新版本修复。Manager 更新默认只安装 Stable。
-- **Beta**：基本流程仍在开发。当前 Beta 功能包括机体族导入与 OC 六维强化；在 Manager 更新中切换到 Beta 通道后安装。
+- **Beta**：基本流程仍在开发。当前 Beta 功能包括机体族导入；在 Manager 更新中切换到 Beta 通道后安装。
 - **Experimental**：开发诊断工具。开发诊断类功能不随 Manager 更新安装。
 
 ## 基础修复
@@ -84,7 +84,7 @@
 | 保管库一键领取 <!-- catalog: `storage_claim` --> | 保管库页内一键领取当前页签的全部物品或礼物 | [使用说明](docs/storage-claim.zh-CN.md) |
 | 商城汉化与中文检索 <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 | [使用说明](docs/shop-localization.zh-CN.md) |
 | 好友机体赠送（可选） <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；默认关闭，由服主开启 | [使用说明](docs/friend-unit-gift.zh-CN.md) |
-| OC 六维强化（Beta） <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 在机体改造页旁增加「终极强化」标签，提供 OC 等级、六维加点与洗点并在战斗中生效；与现行改造部件（G改 2.0）数据并存，由服主选择整服使用哪一套，或按房间选择 OC、G改 2.0，以及服主提供规则文件后的 G改 1.0（建房窗口的「体系」行或房名 `!oc`、`!g1`，房间列表和房内标出体系）；G改 1.0 在原版「强化部件」页面上通过「G改 2.0 / G改 1.0」切换编辑，工厂页面的英文标签显示为中文 | [使用说明](docs/over-custom.zh-CN.md) |
+| OC 六维强化 <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 在机体改造页旁增加「终极强化」标签，提供 OC 等级、六维加点与洗点并在战斗中生效；与现行改造部件（G改 2.0）数据并存，由服主选择整服使用哪一套，或按房间选择 OC、G改 2.0，以及服主提供规则文件后的 G改 1.0（建房窗口的「体系」行或房名 `!oc`、`!g1`，房间列表和房内标出体系）；G改 1.0 在原版「强化部件」页面上通过「G改 2.0 / G改 1.0」切换编辑，工厂页面的英文标签显示为中文 | [使用说明](docs/over-custom.zh-CN.md) |
 | 机体族导入（Beta） <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入任何来源按协议制作的机体包或整套阵容，补齐定义并生成两端数据、图鉴和商城／扭蛋资源 | [使用说明](docs/unit-import.zh-CN.md) |
 
 <!-- /mod-category:gameplay -->
