@@ -15,7 +15,7 @@ from .capsule_ui_layout import patch_capsule_price_defaults
 
 
 TABLE_BASES = {"0033": 155001, "0101": 135001, "0154": 3519001, "0155": 3520001}
-COMPILER_VERSION = 13
+COMPILER_VERSION = 14
 
 
 def resident_activity_ownership(client):
@@ -89,6 +89,7 @@ def resident_extensions(client, reader):
         if actual_size != size:
             raise ValueError('Unsupported shared native table layout: ' + table)
         tables[table] = (raw, len(rows))
+    resources = _extension_resources(resources, tables['0099'][0])
     ui = None
     configured = runtime.get('ui', '1161', fallback=None)
     if configured:
@@ -110,6 +111,27 @@ def resident_extensions(client, reader):
         metadata={**(metadata or {}),'collection_acquisition':{'bytes_hex':raw.hex(),
             'manifest':read_json(root/'manifest.json').get('collection_acquisition')}}
     return resources, tables, metadata, ui
+
+
+def _extension_resources(resident, table_0099):
+    """Keep only the reserved-range art that an extension row still shows.
+
+    Every compile gives its generated unit cards fresh reserved IDs, so carrying the whole 60000-65535 range kept
+    each superseded card set forever: the overlay grew by one card set per compile and would run out of IDs.
+    Event posters and activity covers are the sprites the 0099 rows name, together with each sprite's texture.
+    """
+    kept = {}
+    _, rows = gdt_records(table_0099)
+    for row in rows:
+        path = row[19:179].decode('utf-16-le').split('\0')[0].replace('\\', '/').lower()
+        raw = resident.get(path)
+        if raw is None:
+            continue
+        kept[path] = raw
+        texture = sprite_frame(raw)['texture'].replace('\\', '/').lower()
+        if texture in resident:
+            kept[texture] = resident[texture]
+    return kept
 
 
 def _extension_digest(resources, tables, metadata, reader):
