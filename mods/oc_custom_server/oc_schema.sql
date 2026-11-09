@@ -15,7 +15,7 @@ IF OBJECT_ID(N'dbo.sdgo_mod_oc_UnitRev', N'U') IS NULL
 CREATE TABLE dbo.sdgo_mod_oc_UnitRev (
     UnitNumber INT NOT NULL PRIMARY KEY,
     CustomNumber INT NOT NULL,      -- tbl_CustomRev key
-    Source TINYINT NOT NULL         -- 1 original OC-era catalogue, 2 reconstructed (balanced family at grade)
+    Source TINYINT NOT NULL         -- 1 original OC-era catalogue, 2 grade formula, 3 server owner's growth file
 );
 GO
 IF OBJECT_ID(N'dbo.sdgo_mod_oc_UserUnitCustom', N'U') IS NULL
@@ -75,7 +75,7 @@ CREATE PROCEDURE dbo.sdgo_mod_oc_EnsureProfile
 AS
 SET NOCOUNT ON
 DECLARE @UnitNumber INT, @UnitLevel TINYINT, @NormalMaxLv TINYINT, @Owner INT
-DECLARE @OcLevel TINYINT, @NormalPnt TINYINT
+DECLARE @OcLevel TINYINT, @NormalPnt TINYINT, @Grade INT
 SET @v_RetVal = 0
 SELECT @Owner = AccountNumber, @UnitNumber = UnitNumber, @UnitLevel = UnitLevelNumber, @NormalMaxLv = Normal_MaxLv
 FROM dbo.tbl_UserUnits WHERE UserUnitNumber = @v_UserUnitNum
@@ -83,6 +83,19 @@ IF @@ROWCOUNT = 0 OR @Owner <> @v_AccountNum
 BEGIN
     SET @v_RetVal = 1
     RETURN
+END
+-- A unit added to tbl_Units while the World runs gets the grade formula row
+-- (CustomNumber 1010000 + grade 1..4); the next World start checks it against
+-- the catalogue and the owner's growth file.
+IF NOT EXISTS (SELECT 1 FROM dbo.sdgo_mod_oc_UnitRev WHERE UnitNumber = @UnitNumber)
+BEGIN
+    SELECT @Grade = UnitGradeNumber FROM dbo.tbl_Units WHERE UnitNumber = @UnitNumber
+    IF @Grade < 1 SET @Grade = 1
+    IF @Grade > 4 SET @Grade = 4
+    IF @Grade IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.tbl_CustomRev WHERE CustomNumber = 1010000 + @Grade)
+        INSERT INTO dbo.sdgo_mod_oc_UnitRev (UnitNumber, CustomNumber, Source)
+        SELECT @UnitNumber, 1010000 + @Grade, 2
+        WHERE NOT EXISTS (SELECT 1 FROM dbo.sdgo_mod_oc_UnitRev WITH (UPDLOCK, HOLDLOCK) WHERE UnitNumber = @UnitNumber)
 END
 IF NOT EXISTS (SELECT 1 FROM dbo.sdgo_mod_oc_UnitRev WHERE UnitNumber = @UnitNumber)
 BEGIN

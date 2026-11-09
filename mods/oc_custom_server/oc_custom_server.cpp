@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -49,7 +50,9 @@ using sdgo::oc_custom::server::TextRow;
 using sdgo::friend_unit_gift::WireStatus;
 
 constexpr char kWorldHost[] = "WorldServer-548A86E3-0010C000";
-constexpr std::uint16_t kSchemaVersion = 1;
+constexpr std::uint16_t kSchemaVersion = 2; // 2: units without a growth row get the grade formula
+// The server owner's optional growth file in the Mod directory (see SyncGrowthRows).
+constexpr wchar_t kGrowthOverrideFile[] = L"oc_growth_overrides.tsv";
 
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
@@ -439,6 +442,148 @@ bool InstallSchema(Session& session) {
     return true;
 }
 
+// The server owner's growth file (optional, UTF-8, tab separated, # comments,
+// an optional header line): UnitNumber, CustomNumber (a tbl_CustomRev row).
+// Returns false when the file exists but cannot be used.
+bool ReadGrowthOverrides(std::vector<UnitRevRow>* rows, bool* present, std::string* error) {
+    rows->clear();
+    const std::wstring path = g_mod_directory + L"\\" + std::wstring(kGrowthOverrideFile);
+    *present = GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    if (!*present) return true;
+    std::string text;
+    if (!ReadFileUtf8(path, &text)) {
+        *error = "unreadable";
+        return false;
+    }
+    std::set<std::int64_t> seen;
+    std::size_t start = 0;
+    unsigned line_number = 0;
+    while (start < text.size()) {
+        auto end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(start, end - start);
+        start = end + 1;
+        ++line_number;
+        if (line_number == 1 && line.size() >= 3 && line.compare(0, 3, "\xEF\xBB\xBF") == 0) line.erase(0, 3);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        if (line[0] < '0' || line[0] > '9') {
+            if (rows->empty() && seen.empty()) continue; // header
+            *error = "line " + std::to_string(line_number) + " is not a unit row";
+            return false;
+        }
+        const auto tab = line.find('\t');
+        if (tab == std::string::npos) {
+            *error = "line " + std::to_string(line_number) + " has no CustomNumber column";
+            return false;
+        }
+        const auto next = line.find('\t', tab + 1);
+        const std::string unit = line.substr(0, tab);
+        const std::string custom = line.substr(tab + 1, next == std::string::npos ? std::string::npos : next - tab - 1);
+        char* unit_end = nullptr;
+        char* custom_end = nullptr;
+        UnitRevRow row;
+        row.unit = std::strtoll(unit.c_str(), &unit_end, 10);
+        row.custom = std::strtoll(custom.c_str(), &custom_end, 10);
+        row.source = 3;
+        if (unit.empty() || custom.empty() || *unit_end || *custom_end || row.unit <= 0 || row.unit > INT32_MAX ||
+            row.custom <= 0 || row.custom > INT32_MAX) {
+            *error = "line " + std::to_string(line_number) + " has an invalid number";
+            return false;
+        }
+        if (!seen.insert(row.unit).second) {
+            *error = "unit " + std::to_string(row.unit) + " is listed twice";
+            return false;
+        }
+        rows->push_back(row);
+    }
+    return true;
+}
+
+// Every World start brings the growth table to its defined state for every unit
+// in tbl_Units. The Mod's own rule is the original OC catalogue row, else the
+// grade formula (CustomNumber 1010000 + grade 1..4); a unit the server owner
+// lists in the growth file uses that row instead. A unit removed from the file
+// returns to the Mod's rule. Rows for unknown units or naming a CustomNumber
+// that tbl_CustomRev lacks are rejected; a growth file that cannot be read
+// leaves the table as it is. sdgo_mod_oc_EnsureProfile applies the formula to a
+// unit added while the World runs.
+void SyncGrowthRows(Session& session) {
+    std::vector<UnitRevRow> overrides;
+    bool present = false;
+    std::string error;
+    if (!ReadGrowthOverrides(&overrides, &present, &error)) {
+        Log(SDGO_LOG_ERROR, "%ls rejected (%s); the OC growth table is left unchanged",
+            kGrowthOverrideFile, error.c_str());
+        return;
+    }
+    std::vector<UnitRevRow> catalogue;
+    std::string mapping;
+    if (ReadFileUtf8(g_mod_directory + L"\\oc_unit_rev.tsv", &mapping))
+        for (const auto& row : ParseUnitRev(mapping))
+            if (row.source == 1) catalogue.push_back(row);
+    std::wstring sql =
+        L"SET NOCOUNT ON; SET XACT_ABORT ON; "
+        L"DECLARE @o TABLE (UnitNumber INT PRIMARY KEY, CustomNumber INT NOT NULL); "
+        L"DECLARE @c TABLE (UnitNumber INT PRIMARY KEY, CustomNumber INT NOT NULL); "
+        L"DECLARE @changes TABLE (Act NVARCHAR(10)); ";
+    const auto insert_rows = [&sql](const wchar_t* table, const std::vector<UnitRevRow>& rows) {
+        for (std::size_t first = 0; first < rows.size(); first += 900) {
+            sql += L"INSERT INTO ";
+            sql += table;
+            sql += L" (UnitNumber, CustomNumber) VALUES ";
+            const auto last = (std::min)(rows.size(), first + 900);
+            for (std::size_t index = first; index < last; ++index) {
+                if (index != first) sql += L",";
+                sql += L"(" + std::to_wstring(rows[index].unit) + L"," + std::to_wstring(rows[index].custom) + L")";
+            }
+            sql += L"; ";
+        }
+    };
+    insert_rows(L"@o", overrides);
+    insert_rows(L"@c", catalogue);
+    sql +=
+        L"DECLARE @listed INT = (SELECT COUNT(*) FROM @o); "
+        L"DELETE v FROM @o v WHERE NOT EXISTS (SELECT 1 FROM dbo.tbl_Units U WHERE U.UnitNumber = v.UnitNumber) "
+        L"OR NOT EXISTS (SELECT 1 FROM dbo.tbl_CustomRev C WHERE C.CustomNumber = v.CustomNumber); "
+        L"DECLARE @rejected INT = @listed - (SELECT COUNT(*) FROM @o); "
+        L"DELETE v FROM @c v WHERE NOT EXISTS (SELECT 1 FROM dbo.tbl_CustomRev C WHERE C.CustomNumber = v.CustomNumber); "
+        L"DECLARE @replacing INT = (SELECT COUNT(*) FROM @o o JOIN @c c ON c.UnitNumber = o.UnitNumber); "
+        L"BEGIN TRAN; "
+        L"MERGE dbo.sdgo_mod_oc_UnitRev WITH (HOLDLOCK) AS t USING ("
+        L"SELECT w.UnitNumber, w.CustomNumber, w.Source FROM (SELECT U.UnitNumber, "
+        L"COALESCE(o.CustomNumber, c.CustomNumber, 1010000 + CASE WHEN U.UnitGradeNumber < 1 THEN 1 "
+        L"WHEN U.UnitGradeNumber > 4 THEN 4 ELSE U.UnitGradeNumber END) AS CustomNumber, "
+        L"CASE WHEN o.UnitNumber IS NOT NULL THEN 3 WHEN c.UnitNumber IS NOT NULL THEN 1 ELSE 2 END AS Source "
+        L"FROM dbo.tbl_Units U LEFT JOIN @o o ON o.UnitNumber = U.UnitNumber LEFT JOIN @c c ON c.UnitNumber = U.UnitNumber "
+        L"WHERE U.UnitGradeNumber IS NOT NULL) w "
+        L"WHERE EXISTS (SELECT 1 FROM dbo.tbl_CustomRev C WHERE C.CustomNumber = w.CustomNumber)) AS s "
+        L"ON t.UnitNumber = s.UnitNumber "
+        L"WHEN MATCHED AND (t.CustomNumber <> s.CustomNumber OR t.Source <> s.Source) THEN "
+        L"UPDATE SET CustomNumber = s.CustomNumber, Source = s.Source "
+        L"WHEN NOT MATCHED THEN INSERT (UnitNumber, CustomNumber, Source) VALUES (s.UnitNumber, s.CustomNumber, s.Source) "
+        L"OUTPUT $action INTO @changes; "
+        L"COMMIT; "
+        L"SELECT @rejected, @replacing, "
+        L"(SELECT COUNT(*) FROM dbo.sdgo_mod_oc_UnitRev r JOIN dbo.tbl_Units U ON U.UnitNumber = r.UnitNumber WHERE r.Source = 3), "
+        L"(SELECT COUNT(*) FROM dbo.sdgo_mod_oc_UnitRev r JOIN dbo.tbl_Units U ON U.UnitNumber = r.UnitNumber WHERE r.Source = 1), "
+        L"(SELECT COUNT(*) FROM dbo.sdgo_mod_oc_UnitRev r JOIN dbo.tbl_Units U ON U.UnitNumber = r.UnitNumber WHERE r.Source = 2), "
+        L"(SELECT COUNT(*) FROM @changes WHERE Act = N'INSERT'), (SELECT COUNT(*) FROM @changes WHERE Act = N'UPDATE'), "
+        L"(SELECT COUNT(*) FROM dbo.tbl_Units U WHERE NOT EXISTS (SELECT 1 FROM dbo.sdgo_mod_oc_UnitRev r WHERE r.UnitNumber = U.UnitNumber));";
+    ResultSets sets;
+    if (!session.Query(sql, &sets) || sets.empty() || sets.back().size() != 1 || sets.back()[0].size() != 8) {
+        Log(SDGO_LOG_ERROR, "oc growth table could not be synchronized");
+        return;
+    }
+    const auto& row = sets.back()[0];
+    const auto value = [&row](std::size_t column) { return static_cast<long long>(Int64Or(row, column)); };
+    Log(SDGO_LOG_INFO,
+        "oc growth: %lld from the original catalogue, %lld from %ls%s (%lld rejected, %lld replacing catalogue "
+        "rows), %lld by the grade formula; %lld added, %lld changed, %lld without a growth row",
+        value(3), value(2), kGrowthOverrideFile, present ? "" : " (no file)", value(0), value(1), value(4), value(5),
+        value(6), value(7));
+}
+
 // Opens the request's game session, validates its database and makes sure the
 // owned schema exists. Returns false when OC must stay inactive.
 bool OpenGameSession(void* connection, Session& session) {
@@ -456,6 +601,7 @@ bool OpenGameSession(void* connection, Session& session) {
     Session installer(120);
     if (!installer.Open(connection)) return false;
     const bool ready = SchemaPresent(installer) || (InstallSchema(installer) && SchemaPresent(installer));
+    if (ready) SyncGrowthRows(installer);
     g_schema_state.store(ready ? 1 : 2, std::memory_order_release);
     if (!ready) Log(SDGO_LOG_ERROR, "oc schema unavailable; over-custom stays inactive until restart");
     return ready;

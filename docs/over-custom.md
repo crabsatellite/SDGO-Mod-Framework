@@ -72,7 +72,7 @@ With **生效的强化体系** set to `room`, several systems run on one server 
 - In the factory each system has its own page and none overlaps another: the 终极强化 tab shows only the OC profile; the 强化部件 tab is the original attribute page, and the two buttons 「G改 2.0」 and 「G改 1.0」 under its left panel choose which system it edits (the current one is marked ●), with the factory title reading 「强化部件 · G改 2.0」 or 「强化部件 · G改 1.0」. Leaving the tab or the factory puts the page's data back to G改 2.0; the choice is kept for the next visit.
 - Neither the unit records nor the database lose their custom parts. OC and G改 1.0 rooms only build their battle units with other skills; in the next G改 2.0 room the parts apply again.
 - Custom parts act on the Battle server's battle units, and the Battle server swaps them per room. Clients still receive each unit record with its G改 2.0 parts in the room data; the battle packets themselves carry no custom parts. Whether the client uses those parts itself (for example, part icons in the battle HUD) is unconfirmed.
-- Requires client Mod 0.6.1, World Mod 0.5.0 and Battle Mod 0.3.0 or later (client 0.5.0 had the G改 1.0 page inside the 终极强化 tab; from 0.6.0 it is the original 强化部件 page; client 0.6.0 could miss the OC speed and agility gains when the native room data changed while the battle was loading); choosing only between OC and G改 2.0 works from client 0.4.0, World 0.4.0 and Battle 0.2.0. An older client Mod still offers the OC pages in `room` mode but adds no speed or agility in any room and shows no system marks.
+- Requires client Mod 0.6.1, World Mod 0.5.1 and Battle Mod 0.3.0 or later (World Mod 0.5.0 had no OC profile for units added to the unit table after its growth table was seeded; client 0.5.0 had the G改 1.0 page inside the 终极强化 tab; from 0.6.0 it is the original 强化部件 page; client 0.6.0 could miss the OC speed and agility gains when the native room data changed while the battle was loading); choosing only between OC and G改 2.0 works from client 0.4.0, World 0.4.0 and Battle 0.2.0. An older client Mod still offers the OC pages in `room` mode but adds no speed or agility in any room and shows no system marks.
 
 ### The G改 1.0 page
 
@@ -108,13 +108,35 @@ skill	<skill id>	<type index>	<kind>	<unit level>	<user level>	<premium 0/1>	<re
 - When the file changes, the World Mod rewrites `sdgo_mod_g1_Rule` on its next request. Equipped skills stay and keep applying; changing them under the new rules needs a reset.
 - A faulty file is logged with its line and reason (`g1_attributes.tsv rejected`); G改 1.0 stays unavailable and the other systems keep running.
 
+### Unit growth rows
+
+A unit's OC allocation effect (how much speed, HP, attack, defense, agility and special each point adds) comes from one growth row, a row of the game database's `tbl_CustomRev` (numbers 1010001–1010012). From World Mod 0.5.1, every World server start sets the growth row of every unit in the unit table by these rules:
+
+1. A unit listed in the server owner's growth file uses the row the file names.
+2. Otherwise a unit of the original OC catalogue (472 units) uses its original row.
+3. Every other unit uses the grade formula: row number = 1010000 + the unit's grade (1–4).
+
+A unit added to the unit table while the server runs gets the grade formula when its OC profile is first opened and is checked against the rules above at the next start.
+
+The growth file is the optional `oc_growth_overrides.tsv` in the World Mod folder (UTF-8, tab separated, lines starting with `#` are comments, one optional header line), one unit per line:
+
+```
+UnitNumber	CustomNumber
+15100	1010008
+```
+
+- Restart the World server after changing it. A unit removed from the file (or the whole file removed) returns to its original or formula row at the next start.
+- Units missing from the unit table and row numbers missing from `tbl_CustomRev` are skipped and counted as rejected in the log. A malformed file (a non-number, a missing column, a unit listed twice) is not used at all and the growth table stays as it was; the World log reports `oc_growth_overrides.tsv rejected` with the line.
+- After a unit's row changes, its allocated points stay and apply with the new row.
+- Every start logs one `oc growth:` line with the number of units from the original catalogue, the growth file and the grade formula, the rows added and changed, and the units still without a row (normally 0).
+
 ## Scope and compatibility
 
 - A saved allocation, reset or challenge applies from the next battle without logging in again, including when the player is already in a room.
 - The Battle server applies HP (first form), attack, defense and special damage per form. Speed and agility are client-side movement values: when a battle starts the client Mod adds the active record's deltas to the local unit's dash level and motive power, at the same place the current system's stat bonus lands, for both forms of a transformable unit. Each unit's movement is computed by its own client, so other players see the result of that player's client.
 - The OC-era EX abilities (extra abilities at OVER CUSTOM EX) are not implemented yet, and the Ex button of the allocation window stays disabled. The current game database keeps only an unused `ExtraBonus` column. The OC-era rule for setting one was: at the EX level, spend one EX ability modifier to pick one of eight abilities, never the one already set. The client table `gdrs\0121.gdt` keeps the eight abilities' names, values and icons (attack, defense, mobility, speed and movement speed 3 each, evasion speed 7, lock-on range 700, booster recovery 7), but how those values translate in battle (percentages or flat amounts, computed by the Battle server or the client) is not confirmed. The Mod does not enable EX until it is.
 - GP shown in the client refreshes on the next native GP update after a reset.
-- The per-unit growth rows come from the original OC catalogue for 472 units; the remaining current units use the balanced row of their grade.
+- Growth rows: the 472 units of the original OC catalogue use the original data, every other unit uses the balanced row of its grade, and the server owner can set any unit's row (see [Unit growth rows](#unit-growth-rows)).
 
 ## Troubleshooting
 
@@ -125,6 +147,7 @@ skill	<skill id>	<type index>	<kind>	<unit level>	<user level>	<premium 0/1>	<re
 - No G改 1.0 step in the create window and the 强化部件 page's 「G改 1.0」 button disabled: the World server has no usable G改 1.0 rule file. The World log's `ready:` line lists the skills and types it read; a faulty file adds a `g1_attributes.tsv rejected` line.
 - The 强化部件 page still lists the G改 2.0 types after switching to G改 1.0: the client log's `g1 native:` lines record the rule set read, the data manager reload (types and entries) and the switch back; while the page is saving, resetting or dragging, the switch applies once it is idle.
 - G改 1.0 skills do not apply in a G改 1.0 room: the Battle server's `oc room system=g1 ... g1 skills=...` lines show the G改 1.0 slots each unit brought into the battle (all 0: nothing equipped yet). The World log's `oc carrier filled ... with a G1 loadout` lines show whether the records it sent carried them.
+- Clicking 终极强化 only selects 经验值转换 and the OC page never appears: the server sent no OC profile for the active unit. With World Mod 0.5.0 this happens for units added to the unit table after the growth table was seeded; update the World Mod to 0.5.1 or later and restart the World server; the World log's `oc growth:` line should report 0 units without a growth row (see [Unit growth rows](#unit-growth-rows)).
 - The OVER CUSTOM entry stays dim: the unit has not reached its normal maximum level, or it is already OVER CUSTOM EX.
 - The ITEM box is empty although the account holds OC items: the World Mod is older than the client Mod and does not answer the item list request.
 - An ITEM box slot shows its label but no model: the client log's `oc item model slot` lines report each model path and whether it loaded; the model files must be in the client package.
