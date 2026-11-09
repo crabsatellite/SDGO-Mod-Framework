@@ -1,128 +1,130 @@
 # SDGO mod framework
 
-Core fixes and optional extensions for SD Gundam Online clients and private servers.
+Core fixes, gameplay extensions and management tools for SD Gundam Online clients and private servers.
 Unofficial fan project; no game files are included. [简体中文](README.zh-CN.md)
-
-The game version is the client and server of the **SD Gundam Online Ultimate Repack** published by Bilibili
-uploader 屮仔丿 ([video BV1Qa4y1z7eW](https://www.bilibili.com/video/BV1Qa4y1z7eW/)). The framework is verified and tested against that pack's
-executables; supported builds are listed under [Installation](docs/setup.md#supported-game-builds). This project
-does not distribute the pack.
 
 [Installation](docs/setup.md) · [SDGO Mod Manager](docs/mod-manager.md) · [Latest release](https://github.com/crabsatellite/SDGO-Mod-Framework/releases/latest)
 
-Server owners and maintainers install, configure and [update](docs/mod-manager.md#updates) features with
-**SDGO Mod Manager**; the **0_更新与管理** entry at the top of the client folder opens it.
+| [PvP AI: teammates and opponents](docs/pvp-ai.md) | [Mission AI: cooperative wingmen](docs/coop-wingmen.md) |
+|:---:|:---:|
+| [![AI teammates and opponents in battle](docs/pvp-ai-demo.webp)](docs/pvp-ai.md) | [![AI wingmen in cooperative missions](docs/coop-wingmen-demo.webp)](docs/coop-wingmen.md) |
 
-[Owner programme packages](docs/owner-programmes.md) keep official programmes, private owner patches and shared content separate. Players follow one configuration address and subsequent game launches update the approved combination automatically.
+[Gameplay](#gameplay-extensions) · [Player assistance](#player-assistance-and-interface) · [Owner content tools](#owner-management-and-content-editing) · [Networking and updates](#networking-and-updates) · [Core fixes](#core-fixes) · [Developer tools](#developer-tools)
 
-Players with a compatible original client can install the server owner's profile (the owner's chosen Mods, shared
-settings and assets) in Manager in one step. Once bound, players keep opening `GOnline.exe`: Manager first
-synchronizes and verifies the owner's content, then starts the game. Personal settings and existing content are kept
-during updates. [Startup checks](docs/owner-updates.md#updates-before-launch) connect directly to the local Manager even when an internet proxy is configured.
+## Get started
 
-Installations follow the official curated starter pack by default. Owners who take over maintenance choose DIY in
-Manager and then maintain its configuration, scripts, resources, compatibility and releases;
-[owner-managed updates](docs/owner-updates.md) explains reviewing upstream components and publishing to players.
-Owners can also manage their own **local-only** addons in Manager; those are never packaged or exported.
+**Players:** obtain a compatible original client, install the framework in Manager and import the server owner's profile to receive its selected Mods, shared settings and assets.
+Then open `GOnline.exe` as usual: Manager shows update progress, verifies the installation and starts the game.
+Updates preserve personal settings. See [installation and updates before launch](docs/owner-updates.md).
 
-This page is a feature index. Configuration, gameplay instructions, compatibility and troubleshooting are in each feature's documentation.
+**Server owners:** open **0_更新与管理** at the top of the client folder or **SDGO Mod Manager.exe** from the framework package.
+The official starter pack is the default; choose DIY to take over configuration, content and compatibility.
+[Owner programme packages](docs/owner-programmes.md) and [owner profiles](docs/owner-updates.md) maintain programmes and content separately while players follow one configuration address.
+Local-only addons stay on the owner's machine and are never packaged for players.
 
-Beta and Experimental after a feature name mark its release channel; unlabeled features are Stable:
+Compatibility is based on the **SD Gundam Online Ultimate Repack** published by Bilibili uploader 屮仔丿
+([video BV1Qa4y1z7eW](https://www.bilibili.com/video/BV1Qa4y1z7eW/)). See [supported game builds](docs/setup.md#supported-game-builds) for executable versions.
+This project does not distribute the original client or server.
 
-- **Stable**: the basic workflow works; later problems are fixed in new versions. Manager updates install Stable by default.
-- **Beta**: the basic workflow is still under development. Current Beta features include unit family import. Switch Manager updates to the Beta channel to install them.
-- **Experimental**: development diagnostics. Development tools are not installed by Manager updates.
-
-## Core fixes
-
-<!-- mod-category:fixes -->
-
-| Feature | Overview | Documentation |
-|---|---|---|
-| IME candidates and commit fix <!-- catalog: `ime_fix` --> | Restore Chinese candidates and replace the old preedit range without residual letters | [Use](docs/ime-fix.md) |
-| Activity capsule currency <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation | [Use](docs/capsule-currency-fix.md) |
-| Input method freeze fix <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client | [Use](docs/findwindow-fix.md) |
-| Startup crash fix <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start | [Use](docs/startup-crash-fix.md) |
-| First login lobby music <!-- catalog: `lobby_music_fix` --> | Restore the lobby music on first login | [Use](docs/lobby-music-fix.md) |
-| Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created | [Use](docs/waitroom-window-fix.md) |
-| Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
-| Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
-| Multiplayer loading synchronization <!-- catalog: `loading_sync_fix` --> | Fix multiplayer starts that occasionally hang on the loading screen (BattleServer) | [Use](docs/loading-sync-fix.md) |
-| Native login recovery <!-- catalog: `login_recovery`, `login_recovery_client` --> | When a reconnect after a dropped connection is refused or stalls, clear the old session and retry a limited number of times | [Use](docs/login-recovery.md) |
-| Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |
-| Agent relay log fix <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory | [Use](docs/agent-relay-log-fix.md) |
-| Agent room-view error forwarding <!-- catalog: `agent_room_view_error_fix` --> | Fix unrelated error pop-ups during room actions (AgentServer) | [Use](docs/agent-room-view-error-fix.md) |
-| Battle rank regression fix <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) | [Use](docs/rank-progression-fix.md) |
-| Friend list fix <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Keep offline friends, current names and ranks; Chinese actions in the home USER LIST and the built-in messenger | [Use](docs/friend-list-fix.md) |
-| New-account starter profile <!-- catalog: `new_account_profile` --> | Configurable starting GP, cash, rank and unit gifts instead of the stock 9,999,999 / rank 15 | [Use](docs/new-account-profile.md) |
-| Shop rental and Unicode labels <!-- catalog: `shop_labels` --> | Readable rental/permanent labels, numeric quantities and Chinese shop options | [Use](docs/shop-labels.md) |
-| Chinese shop artwork labels <!-- catalog: `shop_art_localization` --> | Translate rank text baked into supported paint artwork | [Use](docs/shop-art-localization.md) |
-
-<!-- /mod-category:fixes -->
+Unlabeled features are **Stable**, the default Manager update channel. **Beta** means the basic workflow is still under development and requires the Beta update channel.
+**Experimental** tools are developer diagnostics and are excluded from normal updates. Each guide covers settings, compatibility and troubleshooting.
 
 ## Gameplay extensions
 
-<!-- mod-category:gameplay -->
+Battle rules, AI, progression, rewards and interactions between players.
 
-| Feature | Overview | Documentation |
-|---|---|---|
-| Announcements <!-- catalog: `announcements` --> | Show a news digest once at login; optional in-game owner notices by time and event | [Use](docs/announcements.md) |
-| Mission AI wingmen <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns | [Use](docs/coop-wingmen.md) |
-| Mission behavior profiles <!-- catalog: `mission_behavior`, `mission_behavior_server` --> | Choose original OC or current mission AI and spawn behavior, applied together to the client and every Battle channel | [Use](docs/mission-behavior.md) |
-| PvP AI <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts | [Use](docs/pvp-ai.md) |
-| AI mech catalog (optional) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools | [Use](docs/ai-catalog.md) |
-| AI pilot dialogue (optional) <!-- catalog: `ai_dialogue` --> | AI pilots speak lines and suggest tactics based on the battle and their character; your own DeepSeek key, off by default | [Use](docs/ai-dialogue.md) |
-| Battle contribution rewards <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards | [Use](docs/battle-rewards.md) |
-| Collection capsule <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, an owner exclusion list, and encyclopedia acquisition hints that follow the live pool; 15 per week by default | [Use](docs/collection-capsule.md) |
-| Per-round random loadouts <!-- catalog: `room_random`, `room_random_client` --> | `!rand` in a room title draws each player's unit or deck from their own hangar every round; inventory identity checks prevent false skill-part exhaustion notices when returning | [Use](docs/room-random.md) |
-| Complete PvP All Map <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions | [Use](docs/all-maps.md) |
-| Login unit showcase <!-- catalog: `login_showcase` --> | Choose which units appear on the login screen: by grade, all, recently registered or a chosen list; SS/SR/SU by default | [Use](docs/login-showcase.md) |
-| FPS cap <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed | [Use](docs/fps-limit.md) |
-| Extended room titles <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls | [Use](docs/room-titles.md) |
-| Battle AI difficulty <!-- catalog: `battle_ai`, `battle_ai_server` --> | Easy / Medium / Hard for PvP AI, chosen in the room title; special completion handles delayed server results | [Use](docs/battle-ai.md) |
-| Automatic hangar capacity <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) | [Use](docs/hangar-capacity.md) |
-| Hangar manager <!-- catalog: `hangar_manager` --> | One-click sorting and duplicate exchange on the unit-management page, with server-side GB batches; imported units included | [Use](docs/hangar-manager.md) |
-| Operator supplies, resources, and abilities <!-- catalog: `operator_catalog`, `operator_catalog_server` --> | Five free supply officers plus independent resource packs, numeric abilities, drops, and shop drafts | [Use](docs/operator-assistant.md) |
-| Capsule catalog editor <!-- catalog: `capsule_catalog` --> | Create, edit and retire machines, pools, prices and weights; renumber unused dedicated activities in the Manager | [Use](docs/capsule-catalog.md) |
-| Daily double rewards <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) | [Use](docs/daily-rewards.md) |
-| Storage claim all <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation | [Use](docs/storage-claim.md) |
-| Chinese shop localization and search <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters | [Use](docs/shop-localization.md) |
-| Friend unit gifts (optional) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it | [Use](docs/friend-unit-gift.md) |
-| Over-custom six-stat enhancement <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | Adds an Ultimate Enhancement (终极强化) tab beside unit customization with OC levels, six-stat points and resets that apply in battle; kept alongside the current parts data (G改 2.0), with the owner choosing the set for the whole server or letting each room choose OC, G改 2.0 or, with the owner's rule file, G改 1.0 (the create window's 体系 row or `!oc` / `!g1` in the title; the room list and the room show the system); G改 1.0 is edited on the original 强化部件 page through its G改 2.0 / G改 1.0 switch, and the factory pages show Chinese in place of their English labels | [Use](docs/over-custom.md) |
-| Unit family import (Beta) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import protocol unit packages or whole rosters from any source in Mod Manager, completing definitions and generating paired data, encyclopedia and shop/capsule resources | [Use](docs/unit-import.md) |
-
-<!-- /mod-category:gameplay -->
-
-Owners can also use the separate Manager module [holiday and birthday gifts](docs/calendar-gifts.md) to put units and items into every eligible player's Storage on 14 common holidays, birthdays or chosen dates.
+| Feature | Overview |
+|---|---|
+| [PvP AI](docs/pvp-ai.md) <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` in a room title adds AI opponents and teammates; optionally group all humans, fill both sides, fill opponents only or add exact counts |
+| [Mission AI wingmen](docs/coop-wingmen.md) <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns |
+| [Battle AI difficulty](docs/battle-ai.md) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Choose Easy, Medium or Hard PvP AI in the room title |
+| [Mission behavior profiles](docs/mission-behavior.md) <!-- catalog: `mission_behavior`, `mission_behavior_server` --> | Choose original OC or current mission AI and spawn behavior, applied together to the client and every Battle channel |
+| [AI pilot dialogue (optional)](docs/ai-dialogue.md) <!-- catalog: `ai_dialogue` --> | AI pilots speak lines and suggest tactics based on the battle and their character; your own DeepSeek key, off by default |
+| [Per-round random loadouts](docs/room-random.md) <!-- catalog: `room_random`, `room_random_client` --> | Use `!rand` in the room title to draw each player’s sortie unit or deck from their own hangar every round |
+| [Complete PvP All Map](docs/all-maps.md) <!-- catalog: `all_maps` --> | Make the room's All Map choice draw from the complete native PvP map catalog while keeping mission-only maps in missions |
+| [Over-custom six-stat enhancement](docs/over-custom.md) <!-- catalog: `oc_custom_client`, `oc_custom_server`, `oc_custom_battle` --> | OC stat allocation, challenges and resets; rooms choose OC, G改 2.0 or owner-provided G改 1.0 while existing custom-parts data is preserved separately |
+| [Friend unit gifts (optional)](docs/friend-unit-gift.md) <!-- catalog: `friend_unit_gift_client`, `friend_unit_gift_server` --> | Right-click a friend (online or offline), pick a unit in unit management, and the friend accepts or returns it in Storage. Off until the owner enables it |
+| [Collection capsule](docs/collection-capsule.md) <!-- catalog: `collection_capsule` --> | Missing-unit activity machine with configurable price and limits, an owner exclusion list, and encyclopedia acquisition hints that follow the live pool; 15 per week by default |
+| [Battle contribution rewards](docs/battle-rewards.md) <!-- catalog: `battle_rewards` --> | Contribution GB/MB, configurable human multipliers and optional per-account gathering rewards |
+| [Daily double rewards](docs/daily-rewards.md) <!-- catalog: `daily_rewards` --> | Double battle GB and EXP in a daily window (default 18:00–22:00) |
 
 <a id="long-room-title-commands"></a>
 
-Additional reference: [room-title commands](docs/room-commands.md).
+Combine gameplay and AI options in the room title; see [room-title commands](docs/room-commands.md).
 
-## Networking and hosting
+## Player assistance and interface
 
-<!-- mod-category:network -->
+Everyday frame-rate, display, hangar and claim controls.
 
-| Feature | Overview | Documentation |
-|---|---|---|
-| FRP connectivity <!-- catalog: `net_route`, `agent_udp_pool` --> | Connect through the owner's Sakura FRP or other TCP/UDP forwarding | [Use](docs/frp-distribution.md) |
-| Shop catalog manager <!-- catalog: `shop_catalog` --> | List, price and retire the owner's own shop offers from the Manager (WorldServer) | [Use](docs/shop-catalog.md) |
+| Feature | Overview |
+|---|---|
+| [FPS cap](docs/fps-limit.md) <!-- catalog: `fps_limit` --> | Raise the rendering ceiling while keeping native gameplay speed |
+| [Hangar manager](docs/hangar-manager.md) <!-- catalog: `hangar_manager` --> | Sort the hangar, preview and exchange duplicate units on the unit-management page; imported units included |
+| [Storage claim all](docs/storage-claim.md) <!-- catalog: `storage_claim` --> | Claim every item or gift in the current storage tab with one confirmation |
+| [Automatic hangar capacity](docs/hangar-capacity.md) <!-- catalog: `hangar_capacity` --> | Raise every account to at least 1200 hangar slots at login (WorldServer) |
+| [Chinese shop localization and search](docs/shop-localization.md) <!-- catalog: `shop_localization` --> | Translate shop names, descriptions, options and paint-page unit previews; search by Chinese name combined with rank and payment filters |
+| [Extended room titles](docs/room-titles.md) <!-- catalog: `room_titles`, `room_titles_agent`, `room_titles_server` --> | Enter up to 128 characters in normal, AI, team and mission room creation, settings and rename controls |
+| [Login unit showcase](docs/login-showcase.md) <!-- catalog: `login_showcase` --> | Choose which units appear on the login screen: by grade, all, recently registered or a chosen list; SS/SR/SU by default |
 
-<!-- /mod-category:network -->
+## Owner management and content editing
+
+Edit and publish server content in SDGO Mod Manager for players to install.
+
+| Feature | Overview |
+|---|---|
+| [Shop catalog manager](docs/shop-catalog.md) <!-- catalog: `shop_catalog` --> | List, price and retire the owner's own shop offers from the Manager (WorldServer) |
+| [Capsule catalog editor](docs/capsule-catalog.md) <!-- catalog: `capsule_catalog` --> | Create, edit and retire machines, pools, prices and weights; renumber unused dedicated activities in the Manager |
+| [Unit family import (Beta)](docs/unit-import.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import protocol unit packages or whole rosters from any source in Mod Manager, completing definitions and generating paired data, encyclopedia and shop/capsule resources |
+| [Operator and ability management](docs/operator-assistant.md) <!-- catalog: `operator_catalog`, `operator_catalog_server` --> | Edit operator appearance, abilities, supply drops and shop drafts in Manager; import shareable packs and publish matching content |
+| [AI mech catalog (optional)](docs/ai-catalog.md) <!-- catalog: `ai_catalog` --> | Add the server's sortie-ready units to the AI unit pools |
+| [Announcements](docs/announcements.md) <!-- catalog: `announcements` --> | Show a news digest once at login; optional in-game owner notices by time and event |
+| [New-account starter settings](docs/new-account-profile.md) <!-- catalog: `new_account_profile` --> | Set starting currency, rank and unit gifts for new accounts |
+| [Holiday and birthday gifts](docs/calendar-gifts.md) | Configure unit and item gifts for holidays, birthdays or chosen dates in Manager, delivered to eligible players through Storage |
+
+## Networking and updates
+
+Connect to a server, install programmes and follow the owner’s selected settings and content.
+
+| Feature | Overview |
+|---|---|
+| [FRP connectivity](docs/frp-distribution.md) <!-- catalog: `net_route`, `agent_udp_pool` --> | Connect through the owner's Sakura FRP or other TCP/UDP forwarding |
+| [Mod installation and updates](docs/mod-manager.md) | Install, enable and configure official or imported Mods in Manager; choose Stable or Beta updates |
+| [Owner profiles and automatic updates](docs/owner-updates.md) | Import an owner configuration address for shared settings and custom content; launch only after update progress and verification finish |
+| [Owner programme packages](docs/owner-programmes.md) | Lock the official baseline and owner patch versions, then deliver them with the owner’s content |
+
+## Core fixes
+
+Repairs for crashes, freezes, disconnected sessions and incorrect displays in existing features.
+
+| Feature | Overview |
+|---|---|
+| [IME candidates and commit fix](docs/ime-fix.md) <!-- catalog: `ime_fix` --> | Restore Chinese candidates and replace the old preedit range without residual letters |
+| [Input method freeze fix](docs/findwindow-fix.md) <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client |
+| [Startup crash fix](docs/startup-crash-fix.md) <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start |
+| [Wait-room window initialization guard](docs/waitroom-window-fix.md) <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created |
+| [Native data and lifecycle guards](docs/native-data-guard.md) <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate |
+| [Scene registration lifecycle fix](docs/scene-lifecycle-fix.md) <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area |
+| [Multiplayer loading synchronization](docs/loading-sync-fix.md) <!-- catalog: `loading_sync_fix` --> | Fix multiplayer starts that occasionally hang on the loading screen (BattleServer) |
+| [Native login recovery](docs/login-recovery.md) <!-- catalog: `login_recovery`, `login_recovery_client` --> | When a reconnect after a dropped connection is refused or stalls, clear the old session and retry a limited number of times |
+| [Friend list fix](docs/friend-list-fix.md) <!-- catalog: `friend_list_fix`, `friend_list_client_fix` --> | Keep offline friends, current names and ranks; Chinese actions in the home USER LIST and the built-in messenger |
+| [Apsalus III transform input fix](docs/transform-input-fix.md) <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation |
+| [Battle rank regression fix](docs/rank-progression-fix.md) <!-- catalog: `rank_progression_fix` --> | Stop battle settlement from lowering a pilot's rank (WorldServer) |
+| [First login lobby music](docs/lobby-music-fix.md) <!-- catalog: `lobby_music_fix` --> | Restore the lobby music on first login |
+| [Activity capsule currency](docs/capsule-currency-fix.md) <!-- catalog: `capsule_currency_fix` --> | Show machine 9301 as 99 coins in the list and purchase confirmation |
+| [Shop rental and Unicode labels](docs/shop-labels.md) <!-- catalog: `shop_labels` --> | Readable rental/permanent labels, numeric quantities and Chinese shop options |
+| [Chinese shop artwork labels](docs/shop-art-localization.md) <!-- catalog: `shop_art_localization` --> | Translate rank text baked into supported paint artwork |
+| [Agent relay log fix](docs/agent-relay-log-fix.md) <!-- catalog: `agent_relay_log_fix` --> | Fix an Agent relay log that reads invalid memory |
+| [Agent room-view error forwarding](docs/agent-room-view-error-fix.md) <!-- catalog: `agent_room_view_error_fix` --> | Fix unrelated error pop-ups during room actions (AgentServer) |
 
 ## Developer tools
 
-Optional development and diagnostic features.
+Protocol analysis, troubleshooting and native automated tests for developers.
 
-<!-- mod-category:development -->
-
-| Feature | Overview | Documentation |
-|---|---|---|
-| Packet logger <!-- catalog: `net_probe` --> | Log the client's outgoing packets for protocol work | [Use](docs/net-probe.md) |
-| Capsule price probe (Experimental) <!-- catalog: `capsule_price_probe` --> | Read-only log of capsule list price label refreshes | [Use](docs/capsule-price-probe.md) |
-| Native GameTest (Experimental) <!-- catalog: `game_test_client`, `game_test_server` --> | Native login, room entry, Ready, single-client and coordinated multiplayer battles, and page checks | [Use](docs/game-test.md) |
-
-<!-- /mod-category:development -->
+| Feature | Overview |
+|---|---|
+| [Packet logger](docs/net-probe.md) <!-- catalog: `net_probe` --> | Log the client's outgoing packets for protocol work |
+| [Capsule price probe (Experimental)](docs/capsule-price-probe.md) <!-- catalog: `capsule_price_probe` --> | Read-only log of capsule list price label refreshes |
+| [Native GameTest (Experimental)](docs/game-test.md) <!-- catalog: `game_test_client`, `game_test_server` --> | Native login, room entry, Ready, single-client and coordinated multiplayer battles, and page checks |
 
 ## Project documentation
 

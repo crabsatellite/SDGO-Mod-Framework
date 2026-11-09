@@ -213,7 +213,7 @@ class CatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "guide"):
             catalog.read_catalog(self.root)
 
-    def test_readme_category_and_feature_halves_match(self):
+    def test_readme_feature_halves_match(self):
         self.replace("README.zh-CN.md", "`pvp_ai`、`match_ai`", "`pvp_ai`")
         with self.assertRaisesRegex(ValueError, "README"):
             catalog.read_catalog(self.root)
@@ -224,7 +224,7 @@ class CatalogTests(unittest.TestCase):
             catalog.read_catalog(self.root)
 
     def test_stable_readme_cannot_keep_a_beta_label(self):
-        self.replace("README.md", "| FPS cap <!--", "| FPS cap (Beta) <!--")
+        self.replace("README.md", "[FPS cap](docs/fps-limit.md)", "[FPS cap (Beta)](docs/fps-limit.md)")
         with self.assertRaisesRegex(ValueError, "Stale README release channel"):
             catalog.read_catalog(self.root)
 
@@ -233,7 +233,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(set(c["features"]["frp-distribution"]["mods"]), {"net_route", "agent_udp_pool"})
         self.assertEqual(c["features"]["frp-distribution"]["toolkit"], "frp")
         self.assertEqual(next(m for m in c["mods"] if m["id"] == "agent_udp_pool")["target"], "server")
-    def test_all_categories_have_readme_blocks(self):
+    def test_bilingual_readmes_cover_the_catalog(self):
         catalog.read_catalog(self.root)
 
     def test_unsafe_and_reserved_payloads(self):
@@ -417,6 +417,43 @@ class CatalogTests(unittest.TestCase):
         script.unlink()
         with self.assertRaisesRegex(ValueError, "Missing"):
             catalog.validate_stage(self.root, stage, c)
+
+
+class ReadmeIndexTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.catalog = {"features": {"sample": {
+            "category": "gameplay", "channel": "stable",
+            "mods": ["sample_client", "sample_server"],
+        }}}
+        self.row = ("| Sample <!-- catalog: `sample_client`, `sample_server` --> "
+                    "| Example | [Use](docs/sample.md) |\n")
+
+    def write_readmes(self, text):
+        for name in ("README.md", "README.zh-CN.md"):
+            (self.root / name).write_text(text, encoding="utf-8")
+
+    def test_editorial_groups_and_preview_links_do_not_change_install_categories(self):
+        self.write_readmes("[Preview](docs/sample.md)\n\n## Player tools\n\n" + self.row)
+        catalog.validate_readmes(self.root, self.catalog)
+        self.assertEqual(self.catalog["features"]["sample"]["category"], "gameplay")
+
+    def test_missing_duplicate_or_incomplete_feature_entries_are_rejected(self):
+        for text in ("", self.row * 2,
+                     self.row.replace(", `sample_server`", ""),
+                     self.row.replace("`sample_server`", "`unknown_server`"),
+                     self.row.replace("`sample_server`", "`sample_server`, `sample_client`")):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, "README"):
+                self.write_readmes(text)
+                catalog.validate_readmes(self.root, self.catalog)
+
+    def test_unregistered_catalog_entries_are_rejected(self):
+        self.write_readmes(self.row + "| Unknown <!-- catalog: `unknown` --> "
+                          "| Example | [Use](docs/unknown.md) |\n")
+        with self.assertRaisesRegex(ValueError, "Unknown README catalog entry"):
+            catalog.validate_readmes(self.root, self.catalog)
 
 
 class PublicTextTests(unittest.TestCase):

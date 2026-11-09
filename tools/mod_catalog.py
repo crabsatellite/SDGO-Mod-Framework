@@ -169,24 +169,31 @@ def read_catalog(root: Path, *, check_build: bool = True) -> dict:
 
 
 def validate_readmes(root: Path, catalog: dict) -> None:
+    """Check complete feature entries independently of editorial README sections."""
     for filename in ("README.md", "README.zh-CN.md"):
         text = (root / filename).read_text(encoding="utf-8")
-        sections = {}
-        for category in CATEGORIES:
-            match = re.search(rf"<!-- mod-category:{category} -->(.*?)<!-- /mod-category:{category} -->", text, re.S)
-            if not match:
-                raise ValueError(f"Missing README category {category}: {filename}")
-            sections[category] = match.group(1)
+        rows = [line for line in text.splitlines()
+                if line.lstrip().startswith("|") and "<!-- catalog" in line]
+        used_rows = set()
         for feature, info in catalog["features"].items():
             guides = {f"docs/{feature}.md", f"docs/{feature}.zh-CN.md"}
-            rows = [line for line in sections[info["category"]].splitlines()
-                    if any(f"]({guide})" in line for guide in guides)]
-            if len(rows) != 1 or any(f"`{mod}`" not in rows[0] for mod in info["mods"]):
-                raise ValueError(f"README feature/category/mods mismatch: {feature} in {filename}")
-            if info["channel"] != "stable" and info["channel"] not in rows[0].lower():
+            matches = [i for i, line in enumerate(rows)
+                       if any(f"]({guide})" in line for guide in guides)]
+            if len(matches) != 1 or matches[0] in used_rows:
+                raise ValueError(f"README feature/mods mismatch: {feature} in {filename}")
+            index = matches[0]
+            row = rows[index]
+            marker = re.search(r"<!-- catalog: (.*?) -->", row)
+            mods = re.findall(r"`([^`]+)`", marker.group(1)) if marker else []
+            if len(mods) != len(info["mods"]) or set(mods) != set(info["mods"]):
+                raise ValueError(f"README feature/mods mismatch: {feature} in {filename}")
+            used_rows.add(index)
+            if info["channel"] != "stable" and info["channel"] not in row.lower():
                 raise ValueError(f"Missing README release channel for {feature}: {filename}")
-            if info["channel"] == "stable" and re.search(r"\b(?:beta|experimental)\b", rows[0], re.I):
+            if info["channel"] == "stable" and re.search(r"\b(?:beta|experimental)\b", row, re.I):
                 raise ValueError(f"Stale README release channel for {feature}: {filename}")
+        if len(used_rows) != len(rows):
+            raise ValueError(f"Unknown README catalog entry: {filename}")
 
 
 def select_catalog(catalog: dict, profile: str = "full", features: list[str] | None = None) -> dict:
