@@ -37,6 +37,7 @@
 #include "room_marks.h"
 #include "sdgo/oc_custom_client_observer.h"
 #include "sdgo/oc_custom_protocol.h"
+#include "sdgo/inventory_app_state.h"
 #include "sdgo/oc_room_system.h"
 #include "sdgo/room_titles_current.h"
 #include "sdgo/sdgo_api.h"
@@ -1317,8 +1318,13 @@ void TraceActiveRecord() {
 //
 // The account profile (CAccountData) points at the current room's data at
 // +0xEC (title length +0x79, native title +0x7A). The long-title Mod, when
-// present, provides the full confirmed title. The last room read stays known
-// until the room is left, so the battle start (stat setup) still sees it.
+// present, provides the full confirmed title. The title, and with it the room's
+// system, can only change in the lobby or the waiting room; once the battle
+// starts loading, the native room data may be rewritten and a long title can
+// lose its command. So a room's system is read in the menu states (CGameApp
+// +0x4A0) and kept for that room through loading and battle until the room is
+// left; there only a different or unknown room is read anew. Without the app
+// getter, the waiting-room title bar's per-frame update marks the menu side.
 constexpr std::size_t kProfileRoom = 0xEC;
 constexpr std::size_t kRoomTitleLength = 0x79, kRoomTitle = 0x7A, kRoomTitleMax = 20;
 
@@ -1328,6 +1334,10 @@ struct RoomView {
     RoomSystem system = RoomSystem::parts;
 };
 RoomView g_room_view;
+bool g_room_view_kept_logged = false; // once per room
+bool g_titlebar_hooked = false;       // the waiting-room title bar refreshes the view
+using AppFn = std::uint8_t*(__cdecl*)();
+AppFn g_app = nullptr;                // CGameApp getter (game.app)
 std::uint32_t g_mobility_room_skips = 0;
 
 std::uint8_t* CurrentRoomData() noexcept {
@@ -1356,7 +1366,8 @@ std::uint32_t FullRoomTitle(char* text, std::uint32_t capacity) {
     return length && length < capacity && text[length] == 0 ? length : 0;
 }
 
-void RefreshRoomView() {
+// waiting_room: called from the waiting-room title bar's per-frame update.
+void RefreshRoomView(bool waiting_room = false) {
     std::uint8_t* room = CurrentRoomData();
     if (!room) {
         g_room_view = RoomView{};
@@ -1364,17 +1375,40 @@ void RefreshRoomView() {
     }
     char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
     std::uint32_t length = FullRoomTitle(title, sizeof(title));
-    if (!length) length = NativeRoomTitle(room, title);
+    const bool full = length != 0;
+    if (!full) length = NativeRoomTitle(room, title);
     if (!length && !title[0]) {
         if (g_room_view.room != room) g_room_view = RoomView{room, false, RoomSystem::parts};
         return;
     }
     const RoomSystem system = RoomSystemOfTitle(g_api, title, length);
-    if (g_room_view.room != room || !g_room_view.known || g_room_view.system != system) {
+    const bool same = g_room_view.room == room && g_room_view.known;
+    std::uint32_t state = UINT32_MAX;
+    __try {
+        if (g_app) state = sdgo::inventory::AppState(g_app());
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        state = UINT32_MAX;
+    }
+    const bool menu = state != UINT32_MAX ? sdgo::inventory::IsMenuState(state) : (!g_titlebar_hooked || waiting_room);
+    if (same && !menu) {
+        if (g_room_view.system != system && !g_room_view_kept_logged) {
+            g_room_view_kept_logged = true;
+            char line[200];
+            std::snprintf(line, sizeof(line),
+                          "oc room view keeps system=%s in app state %u; the %s title (%u bytes) now reads %s",
+                          RoomSystemName(g_room_view.system), state, full ? "full" : "native", length,
+                          RoomSystemName(system));
+            Log(SDGO_LOG_INFO, line);
+        }
+        return;
+    }
+    if (!same || g_room_view.system != system) {
         char line[200];
-        std::snprintf(line, sizeof(line), "oc room view system=%s room=%p", RoomSystemName(system), room);
+        std::snprintf(line, sizeof(line), "oc room view system=%s room=%p source=%s%s", RoomSystemName(system), room,
+                      full ? "full" : "native", waiting_room ? " (waiting room)" : "");
         Log(SDGO_LOG_INFO, line);
     }
+    if (!same || menu) g_room_view_kept_logged = false;
     g_room_view = RoomView{room, true, system};
 }
 
@@ -1706,7 +1740,7 @@ void __stdcall MakeRoomAiEventHook(void* service, std::uint32_t event, std::uint
 void __fastcall TitleBarUpdateHook(void* title_bar, void*) {
     g_titlebar_update_original(title_bar);
     if (!RoomRuleKnown()) return;
-    RefreshRoomView();
+    RefreshRoomView(true);
     if (g_room_view.known) room_marks::MarkTitleBar(title_bar, g_room_view.system);
 }
 
@@ -2934,6 +2968,7 @@ SDGO_MOD_ENTRY {
     g_session =reinterpret_cast<NativeSession>(api->Symbol(mod, "storage.session"));
     g_native_send = reinterpret_cast<NativeSend>(api->Symbol(mod, "net.send_packet"));
     g_profile = reinterpret_cast<std::uint8_t**>(api->Symbol(mod, "hangar.profile_global"));
+    g_app = reinterpret_cast<AppFn>(api->Symbol(mod, "game.app"));
     g_grid = reinterpret_cast<std::uint8_t**>(api->Symbol(mod, "oc_custom.grid_singleton"));
     g_unit_manager = reinterpret_cast<std::uint8_t**>(api->Symbol(mod, "game.unit_manager"));
     g_service_list = static_cast<void**>(api->Symbol(mod, "flow.service_managed_pointer"));
@@ -3003,6 +3038,8 @@ SDGO_MOD_ENTRY {
         !api->HookSlot(mod, "oc_custom.client_titlebar_update", reinterpret_cast<void*>(&TitleBarUpdateHook),
                        reinterpret_cast<void**>(&g_titlebar_update_original)))
         Log(SDGO_LOG_WARN, "oc: room-system marks unavailable; rooms still play the system their title selects");
+    else
+        g_titlebar_hooked = true;
     if (!l10n::Bind(api, mod, &g_bindings, &LogMark, g_grid))
         Log(SDGO_LOG_WARN, "oc: factory Chinese labels unavailable");
     if (!g1_native::Bind(api, mod, &LogMark, &g_bindings) ||

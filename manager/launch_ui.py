@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from . import launch
-from .instance import Lease
+from .instance import Lease,local_open
 
 class IncompatibleSession(ValueError):pass
 
@@ -61,6 +61,20 @@ class Session:
         self.result={'status':'queued','message':'正在连接 Manager'};self.lock=threading.Lock();self.stop=threading.Event()
         self.retry=threading.Event();self.cancel=threading.Event();self.url=None;self.secret=None;self.host=None
 
+    def record(self,stage,**values):
+        from . import storage
+        # This UI receipt is separate from the update worker's authoritative
+        # result: a transient IPC error must not overwrite a completed launch.
+        storage.atomic(launch.item(self.root,self.token,'session.json'),storage.json_bytes({
+            **values,'schema_version':1,'token':self.token,'manager_pid':os.getpid(),'stage':stage}))
+
+    def failed(self,stage,error):
+        result={'status':'error','message':str(error),'error_type':type(error).__name__}
+        try:self.record(stage,**result)
+        except(OSError,ValueError)as receipt_error:
+            result['message']+='；无法保存启动诊断：'+str(receipt_error)
+        with self.lock:self.result=result
+
     def completed(self):
         try:result=launch.state(self.root,self.token)
         except(OSError,ValueError):return False
@@ -74,7 +88,7 @@ class Session:
             request.data=json.dumps(body).encode();request.add_header('Content-Type','application/json')
             request.add_header('Origin',self.url.rstrip('/'));request.add_header('X-ModManager-Token',self.secret)
         try:
-            with urllib.request.urlopen(request,timeout=5)as response:return json.load(response)
+            with local_open(request,timeout=5)as response:return json.load(response)
         except urllib.error.HTTPError as error:
             try:message=json.load(error).get('error',str(error))
             except(ValueError,OSError):message=str(error)
@@ -95,16 +109,20 @@ class Session:
                 if identity.get('launch_gate')!=1:raise IncompatibleSession('当前 Manager 会话版本过旧，请正常退出旧 Manager 后重试')
                 self.secret=identity['session_token'];return
             except IncompatibleSession:raise
-            except(OSError,ValueError):
-                if time.monotonic()>=deadline:raise ValueError('无法连接配套 Manager，请打开 Manager 检查后重试')
+            except(OSError,ValueError)as error:
+                self.record('connect',status='working',message=str(error),error_type=type(error).__name__)
+                if time.monotonic()>=deadline:raise ValueError('无法连接配套 Manager：'+str(error))from error
                 self.stop.wait(.25)
 
     def work(self):
-        submitted=False;restarting=False
+        submitted=False;restarting=False;stage='connect';previous=None
         while not self.stop.is_set():
             try:
                 if self.completed():return
-                if not self.url:self.connect();submitted=False
+                if not self.url:
+                    stage='connect';self.record(stage,status='working')
+                    self.connect();submitted=False
+                    if self.stop.is_set():return
                 if self.cancel.is_set():
                     if self.host:self.api('api/client-updates',{'action':'cancel','host':self.host})
                     else:
@@ -114,22 +132,29 @@ class Session:
                     self.cancel.clear()
                     # Wait for rollback/worker acknowledgement before closing.
                 if not submitted or self.retry.is_set():
+                    stage='submit';self.record(stage,status='working')
                     self.retry.clear();response=self.api('api/launch',{'root':str(self.root),'token':self.token})
                     self.token=response.get('token',self.token);self.host=response.get('host',self.host);submitted=True
+                    stage='poll';self.record(stage,status='working',host=self.host)
                 result=self.api('api/launch?'+urllib.parse.urlencode({'root':str(self.root),'token':self.token}))
                 self.host=result.get('host',self.host)
                 with self.lock:self.result=result
+                snapshot=(result.get('status'),result.get('progress',{}).get('phase'),result.get('message'))
+                if snapshot!=previous:
+                    self.record('poll',status=snapshot[0],phase=snapshot[1],message=snapshot[2],host=self.host)
+                    previous=snapshot
                 if result.get('status')=='restart_required'and not restarting:
                     restarting=True
                     self.api('api/client-updates',{'action':'restart','host':self.host})
                     self.url=None;self.stop.wait(1);continue
-                if result.get('status')in('launched','cancelled'):return
+                if result.get('status')in('launched','cancelled'):
+                    self.record('complete',**result);return
                 self.stop.wait(.3)
-            except(OSError,ValueError)as error:
+            except Exception as error:
                 if self.completed():return
                 if restarting:
                     self.url=None;restarting=False;continue
-                with self.lock:self.result={'status':'error','message':str(error)}
+                self.failed(stage,error)
                 while not self.stop.is_set()and not self.retry.wait(.25):
                     if self.completed():return
                     if self.cancel.is_set():
@@ -192,7 +217,7 @@ def dialog(session):
                 else:session.cancel.set()
                 return 1  # Keep the dialog until cancellation/rollback finishes.
         except Exception as error:
-            with session.lock:session.result={'status':'error','message':str(error)}
+            session.failed('dialog',error)
         return 0
     cfg=Config();cfg.size=c.sizeof(cfg);cfg.flags=0x200|0x800|0x8000|0x10000;cfg.common=0x8|0x10
     cfg.title='SDGO Mod Manager';cfg.instruction='启动前更新';cfg.content='正在连接 Manager…';cfg.callback=callback;cfg.width=340

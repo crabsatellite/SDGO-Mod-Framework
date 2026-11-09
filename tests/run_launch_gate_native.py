@@ -20,6 +20,9 @@ import time
 import urllib.request
 import zipfile
 import uuid
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+import threading
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
@@ -163,9 +166,10 @@ def run_sealed(base,build):
     return {'status':'pass','checks':checks}
 
 
-def run(base,build,with_owner=False,manager_handoff=False):
+def run(base,build,with_owner=False,manager_handoff=False,environment=None):
     sealed=run_sealed(base,build)
     game,profile_dir,profile,env=prepare(base,build,with_owner,manager_handoff);checks=[];owned=[]
+    env.update(environment or {})
     checks.extend(sealed['checks'])
     def start(**extra):
         process=WindowsBackgroundProcess([str(game/'GOnline.exe'),'--example','中文 参数'],cwd=game,env={**env,**extra},
@@ -264,9 +268,28 @@ def run(base,build,with_owner=False,manager_handoff=False):
         wait(lambda:not any(row.get('image_path')and Path(row['image_path']).resolve().is_relative_to(game)for row in process_snapshot()),90)
 
 
+@contextmanager
+def blocked_proxy():
+    intercepted=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_GET(self):intercepted.append(self.path);self.send_error(502)
+        do_POST=do_GET
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    url=f'http://127.0.0.1:{server.server_port}'
+    try:yield {'http_proxy':url,'HTTP_PROXY':url,'https_proxy':url,'HTTPS_PROXY':url,'no_proxy':'','NO_PROXY':''},intercepted
+    finally:server.shutdown();server.server_close();thread.join(3)
+
+
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--build',type=Path,default=ROOT/'build');parser.add_argument('--work',type=Path,required=True)
-    parser.add_argument('--sealed-only',action='store_true');parser.add_argument('--owner-programmes',action='store_true');parser.add_argument('--manager-handoff',action='store_true');args=parser.parse_args()
+    parser.add_argument('--sealed-only',action='store_true');parser.add_argument('--owner-programmes',action='store_true');parser.add_argument('--manager-handoff',action='store_true');parser.add_argument('--proxy',action='store_true');args=parser.parse_args()
     args.work.mkdir(parents=True,exist_ok=False)
-    result=run_sealed(args.work.resolve(),args.build.resolve())if args.sealed_only else run(args.work.resolve(),args.build.resolve(),args.owner_programmes,args.manager_handoff)
+    if args.proxy:
+        with blocked_proxy()as(environment,intercepted):
+            result=run(args.work.resolve(),args.build.resolve(),args.owner_programmes,args.manager_handoff,environment)
+            assert not intercepted,intercepted
+            result['checks'].append('loopback_launch_bypasses_player_http_proxy')
+    else:result=run_sealed(args.work.resolve(),args.build.resolve())if args.sealed_only else run(args.work.resolve(),args.build.resolve(),args.owner_programmes,args.manager_handoff)
     storage.atomic(args.work/'native-result.json',storage.json_bytes(result));print(json.dumps(result))

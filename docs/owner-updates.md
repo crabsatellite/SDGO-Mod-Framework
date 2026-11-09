@@ -36,6 +36,8 @@ Progress includes checking, received bytes or file counts, installation and laun
 The loader exits the initial process before replacement and accepts a single-use, short-lived launch permit bound to this client, its source and its verified receipt. Manager preserves the original arguments. A missing or outdated Manager shows an actionable error; incomplete content cannot be used as an offline success path. Explicitly imported offline profiles verify their declared local source.
 Concurrent clicks share a verified helper copy. Its executable is written by one process at a time, so another click cannot replace it while Windows is starting it.
 
+Startup progress connects directly to the local Manager over loopback, bypassing system and environment HTTP proxies. Remote programme and content downloads keep their existing network configuration. If a request is accepted but the game does not open, inspect the connection, submission or polling stage and error in `sdgo/local-state/launch/<token>.session.json`. The update worker writes its final result to the same token's `.result.json`; `.accepted` records custody of the request, not successful game startup. Quotes and trailing spaces in the original command line are preserved.
+
 ## Owner publication
 
 Choose owner DIY for your editing client. Review and adopt the intended upstream programs, set shared parameters and generate custom content. Check the program upstream before the first profile export or after adopting a different program version.

@@ -666,6 +666,9 @@ bool ArmMeleeCompletion(uint8_t* unit,Actor& actor,const SpNotice& notice,uint64
            *reinterpret_cast<uint32_t*>(victim+0xEB8)!=*reinterpret_cast<uint32_t*>(unit+4)) return false;
         actor.specialCompletion={actor.generation,acceptedSequence,notice.sequence,fsm,result,action,
                                  *reinterpret_cast<uint32_t*>(unit+4),victimId,notice.damage,true};
+        if(g_runtime.logDecisions)g_api->Log(g_mod,SDGO_LOG_INFO,
+            "native zero-damage special completion armed caster=%u victim=%u action=%u terminal=%llu",
+            *reinterpret_cast<uint32_t*>(unit+4),victimId,action,static_cast<unsigned long long>(notice.sequence));
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
@@ -692,7 +695,11 @@ bool AllowZeroDamageCompletion(uint8_t* fsm,uint8_t* owner,uint8_t* result) {
         if(!CombatTargetAlive(victim)||
            *reinterpret_cast<uint32_t*>(victim+0x9D8)!=4||
            *reinterpret_cast<uint32_t*>(victim+0xEB8)!=caster) return false;
-        receipt.armed=false;++actor.zeroCompletionCount;return true;
+        receipt.armed=false;++actor.zeroCompletionCount;
+        if(g_runtime.logDecisions)g_api->Log(g_mod,SDGO_LOG_INFO,
+            "native zero-damage special completion admitted caster=%u victim=%u action=%u",
+            caster,victimId,action);
+        return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 const DWORD g_specialCompletionDefaultMxcsr=0x1F80;
@@ -3703,10 +3710,9 @@ void ApplySpNotice(const SpNotice& notice) {
             ApplyNativeAbsoluteSp(unit,latest->second.value);return;
         }
         if(notice.stateOnly) {
-            if(notice.finish&&found!=g_actors.end()) {
-                found->second.specialAcknowledged=false;found->second.specialFinished=notice.sequence;
-                found->second.specialCompletion={};
-            }
+            // This packet carries an SP balance, not an action/victim identity.
+            // A delayed melee completion must retain its own acknowledgement
+            // and receipt across resource-only updates in either order.
             if(g_spSnapshots.size()>2048) g_spSnapshots.clear();
             g_spSnapshots[unit]={notice.sequence,notice.value};
             ApplyNativeAbsoluteSp(unit,notice.value);return;
@@ -3741,13 +3747,15 @@ bool ParseSpNotice(const uint8_t* packet,size_t valueOffset,bool begin,SpNotice&
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 bool ParseMeleeCompletion(const uint8_t* packet,SpNotice& notice,uint64_t sequence) {
+    __try {
+        // PacketDispatch_CombatExtended routes 0x0606 to this native handler.
+        if(!packet||*reinterpret_cast<const uint16_t*>(packet)!=0x0606)return false;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
     if(!ParseSpNotice(packet,0xE,false,notice,sequence)) return false;
     __try {
-        if(*reinterpret_cast<const uint16_t*>(packet)==606) {
-            notice.victimPilot=*reinterpret_cast<const uint32_t*>(packet+0x12);
-            notice.damage=*reinterpret_cast<const uint32_t*>(packet+0x24);
-            notice.meleeCompletion=notice.victimPilot!=0;
-        }
+        notice.victimPilot=*reinterpret_cast<const uint32_t*>(packet+0x12);
+        notice.damage=*reinterpret_cast<const uint32_t*>(packet+0x24);
+        notice.meleeCompletion=notice.victimPilot!=0;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         notice.victimPilot=0;notice.damage=0;notice.meleeCompletion=false;
     }
@@ -3774,7 +3782,14 @@ int __fastcall SpecialNotice(uint8_t* handler,void*,const uint8_t* packet) {
 }
 int __fastcall MeleeNotice(uint8_t* handler,void*,const uint8_t* packet) {
     SpNotice notice;bool valid=ParseMeleeCompletion(packet,notice,NextSpSequence());
-    int result=g_meleeNotice(handler,packet);if(valid) SubmitSpNotice(notice);return result;
+    int result=g_meleeNotice(handler,packet);
+    if(valid) {
+        if(g_runtime.logDecisions)g_api->Log(g_mod,SDGO_LOG_INFO,
+            "native melee special terminal opcode=0606 caster_pilot=%u victim_pilot=%u damage=%u",
+            notice.pilot,notice.victimPilot,notice.damage);
+        SubmitSpNotice(notice);
+    }
+    return result;
 }
 int __fastcall RangedNotice(uint8_t* handler,void*,const uint8_t* packet) {
     SpNotice notice;bool valid=ParseSpNotice(packet,0xA,false,notice,NextSpSequence());
