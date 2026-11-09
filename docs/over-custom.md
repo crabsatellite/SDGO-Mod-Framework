@@ -52,6 +52,8 @@ Every save refreshes the active-unit record, so it applies from the next battle.
 
 With **生效的强化体系** set to `room`, several systems run on one server and each room decides which one its battles use:
 
+![The OC page and the custom-parts page switching between G改 2.0 and G改 1.0](room-systems-demo.webp)
+
 | Title command | System | In battle |
 | --- | --- | --- |
 | (none) or `!g2` | G改 2.0 (the current custom parts) | The unit record's custom parts (`UnitSkill_1..4`); the OC allocation does not apply |

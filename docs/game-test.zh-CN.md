@@ -445,6 +445,7 @@ python -m tools.game_test_release_demo --run-dir build/gametest/hangar --output 
 ffmpeg -i capture.mkv -t 12 -an -vf "fps=12,scale=900:-2" -c:v libwebp_anim -quality 76 -loop 0 demonstration.webp
 ```
 
-可发布短片登记到 `docs/feature-demos.json`。Release 按实际程序包选择适用演示，保留中英文说明；
+可发布短片直接嵌入对应 Mod 的中英文介绍页，参照 PvP／任务 AI 页面，并登记到
+`docs/feature-demos.json`，不另建功能展示汇总页。Release 按实际程序包选择适用演示，保留中英文说明；
 媒体作为独立附件发布，不混入程序 ZIP。
 

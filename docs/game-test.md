@@ -662,6 +662,8 @@ Review the clip and crop out account names or deployment details before export:
 ffmpeg -i capture.mkv -t 12 -an -vf "fps=12,scale=900:-2" -c:v libwebp_anim -quality 76 -loop 0 demonstration.webp
 ```
 
-Register publishable clips in `docs/feature-demos.json`. Release notes select
+Embed publishable clips in the corresponding Mod's Chinese and English guides,
+following the PvP AI and mission wingmen pages, and register them in
+`docs/feature-demos.json`. Do not create a separate demonstration gallery page. Release notes select
 only demonstrations applicable to the programme package, retain Chinese and
 English descriptions, and publish media separately from programme ZIPs.

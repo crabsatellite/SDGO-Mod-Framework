@@ -9,6 +9,10 @@ Update older versions before selecting a higher cap.
 
 [简体中文](fps-limit.zh-CN.md)
 
+Save the FPS limit in Manager, then restart the game as indicated by the interface.
+
+![Save an FPS setting](mod-manager-demo.webp)
+
 | Mod | Install on | Purpose |
 |---|---|---|
 | `fps_limit` | Client | Apply the configured rendering cap independently of 60 Hz gameplay |

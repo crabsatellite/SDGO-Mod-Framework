@@ -3,8 +3,6 @@
 为 SD敢达 Online 客户端和私服提供基础修复与可选扩展。
 非官方爱好者项目，不包含游戏文件。[English](README.md)
 
-[观看功能短片](docs/demonstrations.zh-CN.md)：Manager 更新与设置、机库预览、对战 AI 和任务僚机。
-
 游戏版本基于 B 站 UP 主屮仔丿发布的 **SD敢达 Ultimate Repack** 整合包（[视频 BV1Qa4y1z7eW](https://www.bilibili.com/video/BV1Qa4y1z7eW/)）的客户端和服务端，
 框架按这套整合包的程序校验和测试；支持的程序版本见[安装说明](docs/setup.zh-CN.md#支持的游戏版本)。本项目不提供该整合包。
 

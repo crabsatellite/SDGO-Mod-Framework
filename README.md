@@ -3,8 +3,6 @@
 Core fixes and optional extensions for SD Gundam Online clients and private servers.
 Unofficial fan project; no game files are included. [简体中文](README.zh-CN.md)
 
-[Watch feature demonstrations](docs/demonstrations.md): Manager updates and settings, hangar previews, PvP AI and mission wingmen.
-
 The game version is the client and server of the **SD Gundam Online Ultimate Repack** published by Bilibili
 uploader 屮仔丿 ([video BV1Qa4y1z7eW](https://www.bilibili.com/video/BV1Qa4y1z7eW/)). The framework is verified and tested against that pack's
 executables; supported builds are listed under [Installation](docs/setup.md#supported-game-builds). This project

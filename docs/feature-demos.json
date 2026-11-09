@@ -20,8 +20,8 @@
       ],
       "title_zh": "Manager：修改帧率设置并保存，重启后生效",
       "title_en": "Manager: save an FPS setting for the next game start",
-      "guide_zh": "docs/mod-manager.zh-CN.md",
-      "guide_en": "docs/mod-manager.md"
+      "guide_zh": "docs/fps-limit.zh-CN.md",
+      "guide_en": "docs/fps-limit.md"
     },
     {
       "id": "hangar-manager",
