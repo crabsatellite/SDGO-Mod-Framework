@@ -23,9 +23,10 @@ struct Request {Operation operation;Tab tab;uint32_t page;Key key;};
 
 // One confirmation claims the whole tab at once:
 //  1. read every list page (one request at a time, the native cache holds one page),
-//  2. send the original preflight for every unclaimed reward, pipelined,
-//  3. send the original claim for every reward the server allowed, back to back
-//     (one at a time: each grant takes the account's shop lock on the server),
+//  2. send the original preflight for every unclaimed reward, back to back
+//     (`depth` may overlap them; the Mod uses 1 because the World refuses
+//     overlapping requests of one account),
+//  3. send the original claim for every reward the server allowed, one at a time,
 //  4. read the first page once more and stop, or start another round when the
 //     first pass was cut short by the native page range.
 // The World answers every request exactly once but not necessarily in send order.

@@ -49,7 +49,7 @@ void Setup(Tab tab=Tab::Items,uint64_t count=12) {
     Put(connection.data(),0x14,7);Put(service.data(),0x15C,static_cast<int>(tab));Put(service.data(),0x168,total);
     g_session=&Session;g_app=&App;g_busy=reinterpret_cast<NativeBusy>(&Busy);g_send=reinterpret_cast<NativeSend>(&Send);
     g_event=reinterpret_cast<NativeUI>(&Event);g_packet=reinterpret_cast<NativePacket>(&Original);
-    api.Log=&Log;g_api=&api;g_mod=nullptr;g_batch=Batch{};g_owner=nullptr;g_service=service.data();g_thread=GetCurrentThreadId();g_pumping=g_armed=false;g_observedSession=0;g_depth=8;
+    api.Log=&Log;g_api=&api;g_mod=nullptr;g_batch=Batch{};g_owner=nullptr;g_service=service.data();g_thread=GetCurrentThreadId();g_pumping=g_armed=false;g_observedSession=0;
     assert(g_ui.Attach(service.data(),Bind()));
 }
 void Click(){UIEvent(nullptr,nullptr,service.data(),0x101,0,Pointer(L"ModStorageClaimAll"));}
@@ -90,9 +90,10 @@ int main() {
     fixture::Setup();auto* button=Pointer(L"ModStorageClaimAll");assert(storage_fixture::Get<uint8_t>(button,0x168)==0);
     assert(children.at(L"ModStorageClaimAll")->skins.size()==3 && storage_fixture::Get<float>(button,0x148)==291.0f && storage_fixture::Get<float>(button,0x14C)==64.0f);
     assert(storage_fixture::Get<float>(Pointer(L"ModStorageClaimStatus"),0x14C)==520.0f);
-    // One confirmation: three page reads, then eight requests in flight at once,
-    // all twelve grants through the stock handler, and one refreshing read.
-    Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && nativeChecks==0 && maxPending==8);
+    // One confirmation: three page reads, then every preflight and claim back to
+    // back with one request outstanding (the World refuses overlapping requests
+    // of an account), all twelve grants through the stock handler, one refresh.
+    Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && nativeChecks==0 && maxPending==1);
     assert(sends==3+12+12+1 && g_batch.collected()==12);
     // The World may answer concurrent preflights out of send order.
     fixture::Setup();newestFirst=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && !g_batch.Outstanding());
@@ -128,7 +129,7 @@ int main() {
     storage_fixture::Put<uint8_t>(service.data(),0x190,0);Step();assert(pending.empty() && g_batch.Busy());
     storage_fixture::Put<uint8_t>(service.data(),0x190,1);Step();assert(pending.size()==1 && Next()==0x9A1);Run();assert(g_batch.phase()==Phase::Complete);
     // An invalid native page while the timer sends the next preflight disables the added UI.
-    fixture::Setup();g_depth=1;Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});
+    fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});
     g_thread=0;Deliver();g_thread=GetCurrentThreadId();assert(pending.empty() && g_batch.Next());
     storage_fixture::Put(service.data(),0x180,reinterpret_cast<uint8_t*>(1));storage_fixture::Put(service.data(),0x184,reinterpret_cast<uint8_t*>(29));
     const auto sentBeforeTimer=sends;Timer(nullptr,WM_TIMER,0,0);

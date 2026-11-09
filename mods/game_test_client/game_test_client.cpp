@@ -3363,7 +3363,8 @@ int GiftOriginCase(const SdgoGameTestContextV1* context,bool gifted) {
         return SDGO_GAME_TEST_PASS;
     }
     if(snapshot.last_reply_status!=9) {
-        context->Assert(0,"the server reports no accepted gift for the ordinary unit");return SDGO_GAME_TEST_FAIL;
+        char status[96];sprintf_s(status,"ordinary unit provenance status=%d",snapshot.last_reply_status);context->Observe(status);
+        context->Assert(0,"the server reports no accepted gift (not a database failure) for the ordinary unit");return SDGO_GAME_TEST_FAIL;
     }
     context->Assert(!shown && !snapshot.provenance_present,"an ordinary unit shows no gift origin or gift note");
     return SDGO_GAME_TEST_PASS;

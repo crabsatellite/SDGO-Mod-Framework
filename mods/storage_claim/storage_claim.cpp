@@ -54,7 +54,10 @@ sdgo::storage::extension::Registry g_extensions;
 UINT_PTR g_timer=0;DWORD g_thread=0;bool g_armed=false,g_pumping=false;
 bool g_timerObserved=false;
 Tab g_armTab=Tab::Items;uint64_t g_armSession=0,g_observedSession=0;
-uint32_t g_depth=8,g_timeout=10000,g_limit=5000;uint16_t g_error=0;
+// The World runs requests on several threads and refuses a request of an account
+// while another one of the same account is in progress: one request at a time.
+constexpr uint32_t kSequential=1;
+uint32_t g_timeout=10000,g_limit=5000;uint16_t g_error=0;
 uint32_t g_generation=0;
 struct RetiredCheck {Tab tab;Key key;};
 std::vector<RetiredCheck> g_retiredChecks;
@@ -245,8 +248,8 @@ uint32_t HandleUI(void* handler,void* self,uint32_t event,uintptr_t second,void*
                 g_armed=true;g_armTab=tab;g_armSession=session;DisplayState();return 0;
             }
             g_armed=false;g_error=0;g_owner=self;
-            if(g_batch.Start(tab,session,Read<uint32_t>(self,0x168),g_limit,GetTickCount64(),g_depth))
-                g_api->Log(g_mod,SDGO_LOG_INFO,"storage claim batch started: tab %d, pipeline %u",static_cast<int>(tab),g_depth);
+            if(g_batch.Start(tab,session,Read<uint32_t>(self,0x168),g_limit,GetTickCount64(),kSequential))
+                g_api->Log(g_mod,SDGO_LOG_INFO,"storage claim batch started: tab %d",static_cast<int>(tab));
             PumpUnsafe();DisplayState();return 0;
         }
         // The close buttons still work. Mutating rows, tab changes and native
@@ -354,7 +357,7 @@ uint32_t PacketGuard(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t com
     const bool owned=OwnsReply(self);
     uint32_t result=0;
     try{result=PacketUnsafe(self,a,b,c,command,data);}catch(const std::exception&){g_batch.Disconnect();return 0;}
-    // Send the next pipelined request now instead of waiting for the next timer tick.
+    // Send the next request now instead of waiting for the next timer tick.
     if(owned && GetCurrentThreadId()==g_thread)PumpUnsafe();
     return result;
 }
@@ -478,13 +481,13 @@ const SdgoStorageExtensionApiV1* __cdecl SdgoStorageGetExtensionApiV1() {
 
 SDGO_MOD_ENTRY {
     g_api=api;g_mod=mod;
-    const int depth=api->SettingInt(mod,"PipelineDepth",8),timeout=api->SettingInt(mod,"ReplyTimeoutMs",10000),limit=api->SettingInt(mod,"MaxClaims",5000);
-    if(depth<1 || depth>static_cast<int>(Batch::kMaxDepth) || timeout<1000 || timeout>60000 || limit<1 || limit>100000)return 0;
-    g_depth=static_cast<uint32_t>(depth);g_timeout=static_cast<uint32_t>(timeout);g_limit=static_cast<uint32_t>(limit);
+    const int timeout=api->SettingInt(mod,"ReplyTimeoutMs",10000),limit=api->SettingInt(mod,"MaxClaims",5000);
+    if(timeout<1000 || timeout>60000 || limit<1 || limit>100000)return 0;
+    g_timeout=static_cast<uint32_t>(timeout);g_limit=static_cast<uint32_t>(limit);
     if(!Bind(g_session,"storage.session") || !Bind(g_app,"game.app") || !Bind(g_send,"net.send_packet") || !Bind(g_busy,"storage.native_busy") || !g_ui.Bind(api,mod))return 0;
     if(!api->HookCode(mod,"storage.init",reinterpret_cast<void*>(&Init),reinterpret_cast<void**>(&g_init)) ||
        !api->HookCode(mod,"storage.ui_event",reinterpret_cast<void*>(&UIEvent),reinterpret_cast<void**>(&g_event)) ||
        !api->HookCode(mod,"storage.packet",reinterpret_cast<void*>(&Receive),reinterpret_cast<void**>(&g_packet)))return 0;
-    api->Log(mod,SDGO_LOG_INFO,"ready: native storage claim-all UI; one confirmation reads every page, pipelines the original preflights (depth %u) and claims back to back; no SQL or shared message-loop hook",g_depth);
+    api->Log(mod,SDGO_LOG_INFO,"ready: native storage claim-all UI; one confirmation reads every page, then sends the original preflight/claim requests back to back with one final list reload; no SQL or shared message-loop hook");
     return 1;
 }

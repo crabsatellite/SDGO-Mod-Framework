@@ -13,9 +13,9 @@ subsequent requests. Already submitted claims remain subject to the server's
 final result.
 
 Each reward still uses the original authenticated preflight and claim protocol,
-but all preflights are sent together (by default up to 8 awaiting an answer)
-and the allowed rewards are then claimed back to back, with no list reload in
-between, so dozens of rewards usually finish within seconds. Stable IDs distinguish separate copies of the same item; gift
+sent back to back: the next request goes out as soon as the previous answer
+arrives, with no list reload or pause in between, so dozens of rewards usually
+finish within seconds. Stable IDs distinguish separate copies of the same item; gift
 letters already claimed are skipped. A reward the server refuses (for example a
 full hangar) is skipped and counted while the rest is claimed; the summary shows
 the count and server code instead of one native failure dialog per reward.
@@ -29,9 +29,8 @@ import the dedicated overlay using SDGO Mod Manager. Start the game normally.
 No server Mod, account settings, database access, additional skins, background
 Manager or alternate launcher is required. The supported host is
 `GOnline-54BE1568-00C97000`. Unknown code/layout/skin combinations fail closed,
-preserving the original controls. Developer settings are `PipelineDepth=8` (requests
-awaiting an answer, 1–32), `ReplyTimeoutMs=10000` and `MaxClaims=5000` in
-`mod.ini`; normal users need not change them. Native page numbers are bounded at
+preserving the original controls. Developer settings are `ReplyTimeoutMs=10000` and
+`MaxClaims=5000` in `mod.ini`; normal users need not change them. Native page numbers are bounded at
 255: items beyond that range are claimed in a further round, gift letters beyond
 it stop with a notice.
 
@@ -40,12 +39,11 @@ and the status line at y=520, clear of existing rows, pagination, expiration
 warning and close controls. The Mod uses host-allocated skins and controls.
 Each preflight and claim is a self-contained stored-procedure call that does not
 depend on a preceding preflight, so requests can be submitted back to back. The
-World answers every request once, but concurrent requests may be answered out of
-send order: success replies are matched by reward ID; error replies carry no ID,
-are counted, and once every other outstanding request of the kind has answered,
-the unanswered ones are the refused rewards. A grant takes the account's shop lock,
-so claims are sent one after another; the timeout measures how long no answer
-arrived. Mod list requests mark the page as loading
+World processes requests on several threads and refuses a request of an account
+while another one of the same account is in progress, so exactly one request is
+outstanding at a time. Success replies are matched by reward ID; error replies
+carry no ID and belong to the only outstanding request. The timeout measures how
+long no answer arrived. Mod list requests mark the page as loading
 like the stock sender; the final reload waits while the stock grant handler is
 reloading the list itself. Delayed cancelled preflight replies are consumed to
 prevent native auto-claim. Successful claims still pass through the game's
@@ -53,7 +51,7 @@ grant/inventory handlers. Page
 attachment and received clicks are logged separately from loading.
 
 Automated fixtures use synthetic inventories, packet replies and UI boundaries,
-covering whole-tab collection, the pipelining window, counted refusals, stops
+covering whole-tab collection, back-to-back requests, out-of-order answers, counted refusals, stops
 before and after claims, timeouts and page ranges. The native GameTest page group
 `storage_gift` claims a multi-page tab with one confirmation on a real client and
 server and checks the collected, granted, skipped and remaining counts.

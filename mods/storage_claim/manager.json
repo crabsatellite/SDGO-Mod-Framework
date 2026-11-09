@@ -7,9 +7,8 @@
   "hosts": ["client"],
   "presentation": "configurable",
   "description": "在保管库页签右侧一次领取当前页签全部分页的奖品。",
-  "mechanism": "游戏页内确认一次：先读完当前页签的全部分页，再一起发出所有奖品的原生预检，并紧接着逐笔领取通过预检的奖品，最后刷新列表一次。普通物品与礼物使用各自原生协议；服务器拒绝的奖品跳过并计数，需要手动选择的礼包留给原生按钮。离开页面或断线时停止，不自动重发领取请求。无需 Manager 常驻、额外皮肤或服务器配置。",
+  "mechanism": "游戏页内确认一次：先读完当前页签的全部分页，再一笔接一笔连续发出每件奖品的原生预检和领取请求（中间不刷新列表、不停顿），最后刷新列表一次。普通物品与礼物使用各自原生协议；服务器拒绝的奖品跳过并计数，需要手动选择的礼包留给原生按钮。离开页面或断线时停止，不自动重发领取请求。无需 Manager 常驻、额外皮肤或服务器配置。",
   "settings": [
-    {"id":"pipelinedepth","key":"PipelineDepth","label":"同时等待的请求数","type":"integer","default":8,"file":"mod.ini","section":"settings","audience":"developer","activation":"restart_required","minimum":1,"maximum":32},
     {"id":"replytimeoutms","key":"ReplyTimeoutMs","label":"回应超时（毫秒）","type":"integer","default":10000,"file":"mod.ini","section":"settings","audience":"developer","activation":"restart_required","minimum":1000,"maximum":60000},
     {"id":"maxclaims","key":"MaxClaims","label":"单批领取上限","type":"integer","default":5000,"file":"mod.ini","section":"settings","audience":"developer","activation":"restart_required","minimum":1,"maximum":100000}
   ]

@@ -1090,11 +1090,15 @@ Reply ServerDatabase::ExecuteWireRequest(
                 std::to_wstring(authenticatedActor) +
                 L",@UserUnitNumber=" +
                 std::to_wstring(request.unit_uid) + L";";
-            if (game.Query(sql, 12, &rows, 1) &&
-                ApplyProvenance(rows, &reply))
+            const bool queried = game.Query(sql, 12, &rows, 1);
+            if (queried && ApplyProvenance(rows, &reply))
                 return reply;
-            if (rows.empty())
+            // No accepted gift owns this unit for the actor: an ordinary unit,
+            // not a database failure. (The fallback below is for failures.)
+            if (queried && rows.empty()) {
                 reply.status = WireStatus::not_authorized;
+                return reply;
+            }
             break;
         }
         case Command::preview_offer: {

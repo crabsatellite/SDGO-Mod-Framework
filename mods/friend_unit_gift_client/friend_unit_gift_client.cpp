@@ -1023,7 +1023,7 @@ void RefreshUnitDetailViewUnsafe() {
     }
     g_unit_detail_view.HideOrigin();
     if (found != g_gift_origins.end() &&
-        (found->second.state == GiftOrigin::State::plain ||
+        ((found->second.state == GiftOrigin::State::plain && !found->second.retry_at) ||
          GetTickCount64() < found->second.retry_at)) {
         return;
     }
@@ -1047,6 +1047,13 @@ void RecordGiftOrigin(std::uint64_t unitUid, WireStatus status) {
         // No accepted gift owns this unit for the current pilot.
         origin.state = GiftOrigin::State::plain;
         origin.detail = {};
+        origin.retry_at = 0;
+    } else if (status == WireStatus::database_unavailable) {
+        // Servers before friend_unit_gift_server 0.1.3 answer an ordinary unit
+        // this way. Show nothing and ask again only after a long pause.
+        origin.state = GiftOrigin::State::plain;
+        origin.detail = {};
+        origin.retry_at = GetTickCount64() + 300000;
     } else {
         origin.state = GiftOrigin::State::unknown;
         origin.retry_at = GetTickCount64() + 30000;
