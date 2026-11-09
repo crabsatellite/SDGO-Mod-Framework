@@ -4270,7 +4270,7 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
         uint32_t levels=0;for(uint32_t level=9;level<=15;++level)levels+=s.oc_level>=level ? 1u:0u;
         context->Assert(s.info_levels==levels,"the 0800 level track lights OVER CUSTOM 1..EX up to the unit's OC level");
         bool chart=true;
-        for(int i=0;i<6;++i)chart=chart && s.radar_base[i]>0.0f && s.radar_total[i]>=s.radar_base[i] && s.radar_total[i]<=1.0001f;
+        for(int i=0;i<6;++i)chart=chart && s.radar_base[i]>=0.0f && s.radar_total[i]>=s.radar_base[i] && s.radar_total[i]<=1.0001f;
         context->Assert(chart,"all six dimensions are charted: native stats, with OC points on top, within the stat caps");
         const uint32_t itemSlots=s.owned_items<3u ? s.owned_items:3u;
         if(s.item_models_shown<itemSlots) {

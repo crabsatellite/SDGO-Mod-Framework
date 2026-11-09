@@ -67,8 +67,8 @@ struct SdgoOcCustomClientSnapshotV2 {
     uint32_t owned_items;          // OC items the account holds (ITEM box source)
     int32_t owned_item_ids[3];     // the ITEM box slots
     uint32_t radar_frames;         // charts drawn on 0794
-    float radar_base[6];           // native stat / cap, protocol stat order
-    float radar_total[6];          // with the normal and Over points
+    float radar_base[6];           // native stat on its stat graph range (0..1), protocol stat order
+    float radar_total[6];          // with the normal and Over points, same scale
     uint32_t record_slots_known;   // the active unit record was read
     uint16_t record_custom[4];     // its four custom part slots (UnitSkill) as the client holds it
     uint32_t upgrade_tab_selected; // the factory tab menu has the 经验值转换 slot selected
