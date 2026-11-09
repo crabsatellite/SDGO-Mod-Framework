@@ -2,7 +2,7 @@
 
 [简体中文](over-custom.zh-CN.md) · [Back to the feature index](../README.md) · [Friend unit gifts](friend-unit-gift.md)
 
-Allocation, the OVER CUSTOM challenge and reset are available, OC values apply in battle, and both data sets survive a mode switch; one server can also let each room choose OC, G改 2.0 (the current custom parts) or G改 1.0 (see [Room systems](#room-systems)). The feature is on the Stable channel from 1.15.11. The OC-era EX abilities are not implemented yet (see [Scope and compatibility](#scope-and-compatibility)).
+Allocation, the OVER CUSTOM challenge and reset are available, OC values apply in battle, and both data sets survive a mode switch; one server can also let each room choose OC, G改 2.0 (the current custom parts) or G改 1.0 (see [Room systems](#room-systems)). The feature is on the Stable channel from 1.15.14. The OC-era EX abilities are not implemented yet (see [Scope and compatibility](#scope-and-compatibility)).
 
 Brings back the original six-stat over-custom (OC) enhancement next to the current custom-parts system. Each owned unit gets an OC profile with normal points (speed, HP, attack, defense, agility, special), Over points earned through the OC challenge, and a reset that costs GP. The rules are the original 2009 stored procedures, ported to the Mod's own tables so the current custom-parts data in the game database is never written.
 
