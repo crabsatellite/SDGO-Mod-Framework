@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include "capsule_runtime.h"
+#include "capsule_display_number.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/collection_acquisition.h"
 
@@ -21,6 +22,7 @@ namespace
 {
     const char kProviderMarker[] = "SDGO_CAPSULE_REGISTRY_6TABLE_V2";
     const char kAcquisitionMarker[] = "SDGO_COLLECTION_ACQUISITION_V1";
+    const char kCapsuleAcquisitionMarker[] = "SDGO_CAPSULE_ACQUISITION_V1";
 
     const SdgoApi* g_api = nullptr;
     SdgoMod* g_mod = nullptr;
@@ -39,6 +41,43 @@ namespace
     GridDataFn g_gridData = nullptr;
     GridFindFn g_gridFind = nullptr;
     std::wstring g_receiptPath;
+    void* g_sourceFormatter = nullptr;
+    void* g_sourceFormatReturn = nullptr;
+    void** g_localizationContext = nullptr;
+
+    uint32_t __cdecl DisplayMachineNumber(uint32_t identity) {
+        return capsule_catalog::DisplayMachineNumber(identity);
+    }
+
+    // The native formatter is cdecl varargs. Preserve every argument/register
+    // and tail-jump its trampoline, including calls with more than four args.
+    // Only FinishedProduct's ordinary-machine label (template 0x1EE50) receives
+    // a display number; its grid lookup and saved machine IDs are untouched.
+    __declspec(naked) void SourceFormatterDetour() {
+        __asm {
+            pushfd
+            pushad
+            mov eax, [esp + 36]
+            cmp eax, dword ptr [g_sourceFormatReturn]
+            jne unchanged
+            cmp dword ptr [esp + 48], 01EE50h
+            jne unchanged
+            mov eax, dword ptr [g_localizationContext]
+            mov eax, [eax]
+            test eax, eax
+            jz unchanged
+            cmp eax, [esp + 40]
+            jne unchanged
+            push dword ptr [esp + 52]
+            call DisplayMachineNumber
+            add esp, 4
+            mov [esp + 52], eax
+        unchanged:
+            popad
+            popfd
+            jmp dword ptr [g_sourceFormatter]
+        }
+    }
 
     template <typename Fn>
     bool BindCode(Fn& target, const char* name)
@@ -249,10 +288,14 @@ namespace
         for(int id=3628001;id<3648001;++id) {
             void* record=nullptr;
             if(!TryGridFind(grid,id,0x55,&record))break;
+            if(g_bundle.capsuleAcquisition.Apply(record,614))++hinted;
             if(g_bundle.acquisition.Apply(record,614))++hinted;
         }
         if(!g_bundle.acquisition.units.empty())
             g_api->Log(g_mod,SDGO_LOG_INFO,"%s: native acquisition explanations updated for %u catalog entries",kAcquisitionMarker,hinted);
+        if(!g_bundle.capsuleAcquisition.units.empty())
+            g_api->Log(g_mod,SDGO_LOG_INFO,"%s: capsule source hints loaded for %u units",kCapsuleAcquisitionMarker,
+                       static_cast<unsigned>(g_bundle.capsuleAcquisition.units.size()));
         bool match = CountsMatch(counts);
         WriteReceipt(counts, match);
         g_api->Log(g_mod, match ? SDGO_LOG_INFO : SDGO_LOG_ERROR,
@@ -269,10 +312,15 @@ namespace
 }
 
 extern "C" __declspec(dllexport) int __cdecl SdgoCollectionAcquisitionApplyV1(void* row,uint32_t bytes) {
-    return g_bundle.acquisition.Apply(row,bytes)?1:0;
+    const bool capsule=g_bundle.capsuleAcquisition.Apply(row,bytes);
+    const bool collection=g_bundle.acquisition.Apply(row,bytes);
+    return capsule || collection ? 1 : 0;
 }
 extern "C" __declspec(dllexport) const wchar_t* __cdecl SdgoCollectionAcquisitionExpectedV1(uint32_t unit) {
     return g_bundle.acquisition.units.count(unit)?g_bundle.acquisition.text.c_str():nullptr;
+}
+extern "C" __declspec(dllexport) const wchar_t* __cdecl SdgoCapsuleAcquisitionExpectedV1(uint32_t unit) {
+    return g_bundle.capsuleAcquisition.Expected(unit);
 }
 
 SDGO_MOD_ENTRY
@@ -289,7 +337,9 @@ SDGO_MOD_ENTRY
 
     bool bound =
         BindCode(g_gridData, "grid.data") &&
-        BindCode(g_gridFind, "grid.find");
+        BindCode(g_gridFind, "grid.find") &&
+        BindCode(g_sourceFormatReturn, "capsule.source_format_return") &&
+        BindCode(g_localizationContext, "capsule.localization_context");
     if (!bound) {
         api->Log(mod, SDGO_LOG_ERROR, "capsule native file symbols are unavailable; stock catalog remains active");
         return 0;
@@ -312,7 +362,9 @@ SDGO_MOD_ENTRY
     if (!api->HookCode(mod, "capsule.grid_verify_checksum", reinterpret_cast<void*>(&VerifyChecksumDetour),
                        reinterpret_cast<void**>(&g_verifyChecksum)) ||
         !api->HookCode(mod, "capsule.grid_load_all", reinterpret_cast<void*>(&GridLoadAllDetour),
-                       reinterpret_cast<void**>(&g_gridLoadAll))) {
+                       reinterpret_cast<void**>(&g_gridLoadAll)) ||
+        !api->HookCode(mod, "capsule.source_formatter", reinterpret_cast<void*>(&SourceFormatterDetour),
+                       &g_sourceFormatter)) {
         return 0;
     }
     // Publish the broker only after every other capsule hook has registered.

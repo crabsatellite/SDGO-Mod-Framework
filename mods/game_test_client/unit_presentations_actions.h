@@ -13,13 +13,15 @@
 class UnitPresentationsActions {
 public:
     enum Result : uint32_t { Waiting=1,Ready=2,Submitted=3,Invalid=0x100,
-        ServiceMismatch,ControlMismatch,MissingIndex,WrongDetail,NativeFault,CollectionHintMismatch };
+        ServiceMismatch,ControlMismatch,MissingIndex,WrongDetail,NativeFault,CollectionHintMismatch,CapsuleHintMismatch };
     struct Observation {
         uint32_t unit=0,index_id=0,slot=0,form=0,selection_calls=0,form_calls=0,pose_handle=0;
         uintptr_t list=0,detail=0,model=0;
         float animation_state=0;
         uint32_t phase=0,rank=0,list_flags=0,first_visible_id=0,visible_count=0;
         uint32_t detail_unit=0,detail_active=0,detail_visible=0,projection_mode=0,pending_actions=0;
+        uint32_t capsule_hint_visible=0;
+        uint32_t capsule_numbers_visible=0;
     };
     bool Bind(const SdgoApi* api,SdgoMod* mod,HangarNavigation* navigation) {
         api_=api;mod_=mod;navigation_=navigation;
@@ -344,6 +346,56 @@ private:
                 }
             }
             if(!copied)return Waiting;
+        }
+        auto capsuleExpected=module?reinterpret_cast<Expected>(GetProcAddress(module,"SdgoCapsuleAcquisitionExpectedV1")):nullptr;
+        const wchar_t* capsuleText=capsuleExpected?capsuleExpected(state_.unit):nullptr;
+        state_.capsule_hint_visible=0;
+        state_.capsule_numbers_visible=0;
+        if(capsuleText) {
+            const uint8_t* row=nullptr;
+            if(!find_(grid_(),&row,state_.index_id,0x55,0) || !row)return MissingIndex;
+            wchar_t original[101]{};std::memcpy(original,row+214,200);
+            if(!wcsstr(original,capsuleText))return CapsuleHintMismatch;
+            bool copied=false;
+            for(unsigned index=0;index<10;++index) {
+                wchar_t name[64]{};swprintf_s(name,L"FinishedProduct%u",index);
+                auto* source=Resolve(name);
+                if(!source || Read<uint32_t>(source+0x44)!=state_.unit)continue;
+                const auto first=Read<uintptr_t>(source+0x178),last=Read<uintptr_t>(source+0x17C);
+                if(!first || last<first || last-first>28*256 || (last-first)%28)continue;
+                std::wstring combined;
+                for(auto at=first;at<last;at+=28) {
+                    const auto* value=reinterpret_cast<const uint8_t*>(at);
+                    const auto length=Read<uint32_t>(value+16),capacity=Read<uint32_t>(value+20);
+                    if(!length || length>512 || capacity<length)continue;
+                    const auto* text=capacity<8?reinterpret_cast<const wchar_t*>(value):Read<const wchar_t*>(value);
+                    if(text)combined.append(text,length);
+                }
+                if(combined.find(capsuleText)!=std::wstring::npos)copied=true;
+                // The original service keeps real grid IDs in its five slots.
+                // Compare the numbers consumed by its text vector with those
+                // records, so a correct event hint cannot mask old raw labels.
+                for(unsigned entry=0;entry<5;++entry) {
+                    const uint32_t id=Read<uint32_t>(source+0xF8+4*entry);
+                    const uint8_t* machine=nullptr;
+                    if(!id || !find_(grid_(),&machine,id,0x17,0) || !machine)continue;
+                    const uint32_t raw=Read<uint32_t>(machine+5);
+                    if(raw<101 || raw>989901 || raw%100!=1)continue;
+                    bool visible=false;
+                    for(size_t at=0;at<combined.size();) {
+                        if(combined[at]<L'0' || combined[at]>L'9'){++at;continue;}
+                        uint64_t number=0;
+                        do {number=number*10+(combined[at++]-L'0');}
+                        while(at<combined.size() && combined[at]>=L'0' && combined[at]<=L'9' && number<=0xffffffffu);
+                        if(number==raw)return CapsuleHintMismatch;
+                        if(number==raw/100)visible=true;
+                    }
+                    if(!visible)return Waiting;
+                    ++state_.capsule_numbers_visible;
+                }
+            }
+            if(!copied)return Waiting;
+            state_.capsule_hint_visible=1;
         }
         return Ready;
     }

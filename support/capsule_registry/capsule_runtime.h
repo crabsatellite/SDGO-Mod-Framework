@@ -6,6 +6,7 @@
 
 #include "../native_resource_overlay/native_resource_overlay.h"
 #include "acquisition_hints.h"
+#include "capsule_acquisition_hints.h"
 
 namespace capsule_catalog
 {
@@ -25,6 +26,7 @@ namespace capsule_catalog
         uint32_t candidateCount = 0;
         uint32_t activityCount = 0;
         AcquisitionHints acquisition;
+        CapsuleAcquisitionHints capsuleAcquisition;
         std::unordered_map<std::wstring, OverlayEntry> entries;
 
         const OverlayEntry* Find(const std::wstring& nativePath) const;

@@ -12,6 +12,14 @@ templates; set prices and weights; add or remove custom candidates; preview unit
 portraits; export and compile configuration; apply matching client and server data.
 Players keep the game's native capsule screens and normal launcher.
 
+Publishing a catalog also derives the encyclopedia's activity acquisition sources
+from its active pools, including every unit reward in an activity machine.
+Recompile and publish after adding, retiring or renumbering a machine; units do not
+need to be imported again, and no extra linking Mod is required. Player-facing
+numbers follow the native UI: internal ID `15401` is activity machine 154. Special
+machines retain their names. Existing sources and blueprint fields are preserved;
+unapplied activity drafts are not advertised as available sources.
+
 `capsule_catalog` ships disabled until the owner supplies a complete generated
 runtime. No game assets, player data, database credentials or machine-specific
 paths are checked into this repository. Owners provide their own supported client

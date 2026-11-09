@@ -101,7 +101,9 @@ def status(engine, identity):
             value['error']='卡面生成逻辑已更新，请重新准备原生预览';return value
         client=_inside(engine,entry['client'])
         if not client.is_dir():return value
+        from manager.engines.capsules.capsule_acquisition import display_number
         value.update(prepared=True,client=str(client),machine_id=entry['machine_id'],machine_kind=entry.get('machine_kind','fixed'),slot=1,
+                     machine_number=display_number(entry['machine_id'],entry.get('machine_kind','fixed')),
                      instructions='启动此独立预览客户端并正常登录。进入商城打开机体详情，原生机体视图会展示候选；'+
                      ('进入自定义扭蛋，选择预览机台并点击候选机体，查看原生等级框和 unitview。' if entry.get('machine_kind')=='custom' else
                       '进入固定扭蛋，选择预览机台并点击第一个机体槽，查看实际卡面和原生 unitview。')+

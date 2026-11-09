@@ -3,6 +3,7 @@
 #include <unordered_map>
 
 #include "capsule_runtime.h"
+#include "../support/capsule_registry/capsule_display_number.h"
 
 namespace
 {
@@ -66,6 +67,10 @@ int wmain(int argc, wchar_t** argv)
         return 4;
     }
     std::puts("CHECKSUM_GATE 1");
+    for (uint32_t raw : {101u, 701u, 2901u, 8401u, 12001u, 15201u, 989901u})
+        if (capsule_catalog::DisplayMachineNumber(raw) != raw / 100) return 14;
+    for (uint32_t raw : {0u, 1u, 2u, 100u, 700u, 990001u, 1990001u, 0xffffffffu})
+        if (capsule_catalog::DisplayMachineNumber(raw) != raw) return 15;
     if(!bundle.acquisition.units.empty()) {
         std::vector<uint8_t> row(614,0),before;
         const uint32_t unit=*bundle.acquisition.units.begin();
@@ -83,6 +88,24 @@ int wmain(int argc, wchar_t** argv)
         const uint32_t other=0;std::memcpy(row.data()+6,&other,4);before=row;
         if(bundle.acquisition.Apply(row.data(),614) || row!=before)return 8;
         std::puts("ACQUISITION 1");
+    }
+    if(!bundle.capsuleAcquisition.units.empty()) {
+        std::vector<uint8_t> row(614,0), before;
+        const uint32_t unit=bundle.capsuleAcquisition.units.begin()->first;
+        row[5]=1;std::memcpy(row.data()+6,&unit,4);
+        const wchar_t existing[]=L"Original shop source";
+        std::memcpy(row.data()+214,existing,sizeof(existing));before=row;
+        if(!bundle.capsuleAcquisition.Apply(row.data(),614) ||
+           std::memcmp(row.data(),before.data(),214) ||
+           std::memcmp(row.data()+414,before.data()+414,200))return 10;
+        wchar_t explanation[101]{};std::memcpy(explanation,row.data()+214,200);
+        if(!wcsstr(explanation,existing) ||
+           !wcsstr(explanation,bundle.capsuleAcquisition.Expected(unit)))return 11;
+        const auto once=row;
+        if(!bundle.capsuleAcquisition.Apply(row.data(),614) || row!=once)return 12;
+        row[5]=0;before=row;
+        if(bundle.capsuleAcquisition.Apply(row.data(),614) || row!=before)return 13;
+        std::puts("CAPSULE_ACQUISITION 1");
     }
     std::printf("OK %s %u\n", bundle.catalogRevision.c_str(),
                 static_cast<unsigned>(bundle.entries.size()));

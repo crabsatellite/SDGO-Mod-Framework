@@ -4767,6 +4767,10 @@ int PresentationResult(const SdgoGameTestContextV1* context,UnitPresentationsAct
         return SDGO_GAME_TEST_FAIL;
     }
     if(result!=UnitPresentationsActions::Ready)return SDGO_GAME_TEST_WAIT;
+    if(s.capsule_hint_visible)
+        context->Observe("the original FinishedProduct control copied the published activity capsule source text");
+    if(s.capsule_numbers_visible)
+        context->Observe("native ordinary-machine labels use display numbers while their grid identities remain unchanged");
     context->Assert(1,"the original unit UI reached the requested state through its own callbacks");
     return SDGO_GAME_TEST_PASS;
 }

@@ -286,6 +286,9 @@ def package_client_registry(
     from owner.collection_capsule.acquisition import FILE as acquisition_file,MARKER as acquisition_marker
     if (registry/acquisition_file).is_file() and acquisition_marker not in support_dll.read_bytes():
         raise ClientPackageError('Update the shared capsule provider: collection acquisition explanations require the current build')
+    from manager.engines.capsules.capsule_acquisition import FILE as capsule_hints_file,MARKER as capsule_hints_marker
+    if (registry/capsule_hints_file).is_file() and capsule_hints_marker not in support_dll.read_bytes():
+        raise ClientPackageError('Update the shared capsule provider: configured capsule acquisition explanations require the current build')
     output = _absolute(output)
     if output.exists():
         raise FileExistsError(f"Client package output already exists: {output}")

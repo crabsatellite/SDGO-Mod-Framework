@@ -496,6 +496,19 @@ bool capsule_catalog::LoadBundle(const std::wstring& modDirectory, Bundle& out, 
             error="invalid collection acquisition metadata";return false;
         }
     }
+    const auto capsuleHintFile=IniValue(ini,L"capsule_acquisition",L"file");
+    const auto capsuleHintHash=IniValue(ini,L"capsule_acquisition",L"sha256");
+    if(!capsuleHintFile.empty() || !capsuleHintHash.empty()) {
+        if(capsuleHintFile!=L"capsule-acquisition.bin" ||
+           !VerifyDeclaredFile(modDirectory,capsuleHintFile,capsuleHintHash,nullptr,error)) {
+            error="invalid capsule acquisition declaration: "+error;return false;
+        }
+        std::vector<uint8_t> raw;
+        if(!ReadFileBytes(Join(modDirectory,capsuleHintFile),4u*1024u*1024u,raw,error) ||
+           !candidate.capsuleAcquisition.Decode(raw)) {
+            error="invalid capsule acquisition metadata";return false;
+        }
+    }
     const std::wstring uiRelative = IniValue(ini, L"ui", L"1161");
     const bool declaredUi = !uiRelative.empty();
     if (declaredUi) {

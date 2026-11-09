@@ -90,7 +90,7 @@
 | 功能 | 简介 |
 |---|---|
 | [商城商品管理](docs/shop-catalog.zh-CN.md) <!-- catalog: `shop_catalog` --> | 在 Manager 中上架、改价、下架服主自己的商城商品（WorldServer） |
-| [扭蛋机编辑器](docs/capsule-catalog.zh-CN.md) <!-- catalog: `capsule_catalog` --> | 在 Manager 中新增、修改、下架扭蛋机，设置奖池、价格和权重，为未使用的独立活动机改号 |
+| [扭蛋机编辑器](docs/capsule-catalog.zh-CN.md) <!-- catalog: `capsule_catalog` --> | 管理机台、奖池、价格和权重；图鉴自动显示有效获取途径和游戏机台号 |
 | [机体族导入](docs/unit-import.zh-CN.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入任何来源按协议制作的机体包或整套阵容，补齐定义并生成两端数据、图鉴和商城／扭蛋资源 |
 | [副官与能力管理](docs/operator-assistant.zh-CN.md) <!-- catalog: `operator_catalog`、`operator_catalog_server` --> | 在 Manager 编辑副官外观、能力、补给掉落和商城草稿，导入分享包并发布配套内容 |
 | [AI 机体目录（可选）](docs/ai-catalog.zh-CN.md) <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 |

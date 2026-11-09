@@ -1469,7 +1469,7 @@ ctx.setInterval(async()=>{if(!batchRunning())return;try{const data=await ctx.req
 function renderNativePreview(){
  const current=draft?.native_preview||{};
  $("native-preview-status").textContent=current.error||(!current.prepared?"尚未准备原生预览。":current.ready?"已收到原生显示调用回执；请在游戏窗口核对实际画面后勾选确认。":"等待原生界面：商城 "+(current.shop?"已调用":"待查看")+" / 扭蛋 "+(current.capsule?"已调用":"待查看"));
- $("native-preview-instructions").textContent=[current.client,current.instructions,current.machine_id?(current.machine_kind==="custom"?"自定义预览机台 ":"固定预览机台 ")+current.machine_id+"，选择候选机体查看。":""].filter(Boolean).join(" · ");
+ $("native-preview-instructions").textContent=[current.client,current.instructions,current.machine_id?(current.machine_kind==="custom"?"自定义预览机台 ":"固定预览机台 ")+(Number.isSafeInteger(current.machine_number)?current.machine_number+"号":"（见游戏列表）")+"，选择候选机体查看。":""].filter(Boolean).join(" · ");
 }
 async function nativeAction(action){
  if(!draft||busy)return;

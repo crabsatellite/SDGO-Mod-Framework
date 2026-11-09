@@ -15,7 +15,7 @@ from .capsule_ui_layout import patch_capsule_price_defaults
 
 
 TABLE_BASES = {"0033": 155001, "0101": 135001, "0154": 3519001, "0155": 3520001}
-COMPILER_VERSION = 14
+COMPILER_VERSION = 15
 
 
 def resident_activity_ownership(client):
@@ -134,7 +134,7 @@ def _extension_resources(resident, table_0099):
     return kept
 
 
-def _extension_digest(resources, tables, metadata, reader):
+def _extension_digest(resources, tables, metadata, reader, unit_catalog_sha=...):
     hashes = {name: hashlib.sha256(value[0]).hexdigest() for name, value in tables.items()}
     _, rows = gdt_records(tables['0099'][0])
     for row in rows:
@@ -154,6 +154,11 @@ def _extension_digest(resources, tables, metadata, reader):
     root=getattr(reader,'root',None)
     owned=resident_activity_ownership(root) if root is not None else []
     if owned:hashes['activity_ownership']=hashlib.sha256(json.dumps(owned,sort_keys=True).encode()).hexdigest()
+    if root is not None:
+        imported = Path(root)/'sdgo/mods/unit_catalog/catalog.bin'
+        if unit_catalog_sha is ...:
+            unit_catalog_sha=hashlib.sha256(imported.read_bytes()).hexdigest() if imported.is_file() else None
+        if unit_catalog_sha is not None:hashes['unit_catalog']=unit_catalog_sha
     return hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
 
 
@@ -248,7 +253,9 @@ def compile_catalog(catalog, client, lookup, output):
     revision = digest(catalog)
     resources, files, placement = {}, {}, []
     inherited, extension_tables, unit_items, inherited_ui = resident_extensions(client, reader)
-    extension_signature = _extension_digest(inherited, extension_tables, unit_items, reader)
+    from . import capsule_acquisition
+    imported_items, imported_sha = capsule_acquisition.imported_item_rows(client)
+    extension_signature = _extension_digest(inherited, extension_tables, unit_items, reader, imported_sha)
     resources.update(inherited)
     for relative, raw in inherited.items():
         target = out / 'assets' / relative
@@ -472,6 +479,16 @@ def compile_catalog(catalog, client, lookup, output):
         lines+=['','[acquisition]','file='+FILE,'sha256='+files[FILE]]
         collection_acquisition=hint['manifest']
         unit_items={key:value for key,value in unit_items.items() if key!='collection_acquisition'}
+    _, item_rows = gdt_records(extension_tables['0031'][0])
+    hint_raw, capsule_hints = capsule_acquisition.encode(catalog, item_rows + imported_items)
+    capsule_hints['unit_catalog_sha256'] = imported_sha
+    imported_path=Path(client)/'sdgo/mods/unit_catalog/catalog.bin'
+    current_imported_sha=hashlib.sha256(imported_path.read_bytes()).hexdigest() if imported_path.is_file() else None
+    if current_imported_sha != imported_sha:raise ValueError('Imported unit catalog changed while compiling capsule sources')
+    (out/capsule_acquisition.FILE).write_bytes(hint_raw)
+    files[capsule_acquisition.FILE] = hashlib.sha256(hint_raw).hexdigest()
+    lines += ['', '[capsule_acquisition]', 'file='+capsule_acquisition.FILE,
+              'sha256='+files[capsule_acquisition.FILE]]
     counts.update(activity=extension_tables['0099'][1], item_categories=extension_tables['0031'][1])
     lines += ["", "[counts]"] + [f"{key}={value}" for key, value in counts.items()]
     (out / "runtime.ini").write_text("\n".join(lines) + "\n", encoding="ascii")
@@ -480,6 +497,7 @@ def compile_catalog(catalog, client, lookup, output):
     write_json(out / "manifest.json", {"schema_version": 1, "compiler_version": COMPILER_VERSION,
         "unit_items": unit_items,
         "collection_acquisition": collection_acquisition,
+        "capsule_acquisition": capsule_hints,
         "activity_ownership":activity_ownership,"activity_metadata":activity_metadata,
         "preserved_extensions_signature": extension_signature,
         "catalog_revision": revision,
