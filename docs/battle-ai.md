@@ -113,8 +113,11 @@ Native damage notifications can refer to map objects as well as units. NPC-only 
 read or updated only after the original object-type check identifies an NPC; destructible scenery
 continues to use its native behavior.
 
-Acknowledged zero-damage melee specials complete through the original native finalizer, so a surviving
-victim can leave capture normally. Teleport notifications move locally controlled PvP bots through the
+Acknowledged zero-damage melee specials complete through the original native finalizer, releasing the
+caster and surviving victim normally. The client recognizes the native melee completion notification
+and preserves the pending action across SP-only updates, including a server result received after the
+local animation ends. Completion still requires the matching action and server result.
+Teleport notifications move locally controlled PvP bots through the
 same native relocation path as players, instead of the stock NPC destruction fallback. Normal damage,
 death, ammo and cooldown rules remain native.
 

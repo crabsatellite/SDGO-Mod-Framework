@@ -755,7 +755,8 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(fsm,4,fsm+0x20);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
             native_world::Put(unit.bytes,0xBC8,int32_t(15000));notify(native_world::document.data(),accepted);unit.Think();
             Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==15000,"duplicate special notice without a pending request cannot refund NPC SP");
-            uint8_t terminal[0x28]={};native_world::Put(terminal,0,uint16_t(606));
+            // Native dispatcher 0x4D5341 routes opcode 0x0606 to 0x4C36B0.
+            uint8_t terminal[0x28]={};native_world::Put(terminal,0,uint16_t(0x0606));
             native_world::Put(terminal,6,uint32_t(0x80000014));native_world::Put(terminal,0xE,int32_t(0));
             native_world::Put(terminal,0x12,uint32_t(0x80000001));
             NoticeFn volatile meleeNotice=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::MeleeNotice));
@@ -767,7 +768,14 @@ int wmain(int argc,wchar_t** argv) {
             Check(*reinterpret_cast<int*>(unit.bytes+0xBC8)==0,"duplicate terminal notification cannot refund a finished special");
             auto completionResult=native_world::specialResults[0].data();
             uint32_t completionAction=0x7000;
-            auto stageCompletion=[&](uint32_t damage) {
+            NoticeFn volatile completionSpState=reinterpret_cast<NoticeFn>(native_world::Address(&native_world::Callbacks::SpStateNotice));
+            auto resourceOnly=[&]() {
+                uint8_t packet[0xF0]={};native_world::Put(packet,0,uint16_t(0x779));
+                native_world::Put(packet,6,uint32_t(0x80000014));packet[0xA]=0xFF;
+                native_world::Put(packet,0xB,int32_t(0));
+                completionSpState(native_world::document.data(),packet);unit.Think();
+            };
+            auto stageCompletion=[&](uint32_t damage,int resourceOrder=0,uint16_t opcode=0x0606,uint64_t delayMs=0) {
                 native_world::Put(unit.bytes,0xBC8,int32_t(30000));requestSpecial();
                 notify(native_world::document.data(),accepted);unit.Think();
                 native_world::Put(fsm,4,fsm+0xAC);native_world::Put(fsm,8,static_cast<uint8_t*>(nullptr));
@@ -783,7 +791,11 @@ int wmain(int argc,wchar_t** argv) {
                 native_world::Put(completionResult,0x1C,int32_t(0));
                 native_world::Put(terminal,0xE,int32_t(0));
                 native_world::Put(terminal,0x24,damage);
+                native_world::Put(terminal,0,opcode);
+                if(resourceOrder==1)resourceOnly();
+                if(delayMs)WaitNativeTicks(delayMs);
                 meleeNotice(native_world::document.data(),terminal);unit.Think();
+                if(resourceOrder==2)resourceOnly();
             };
             native_world::specialCompletionCalls=0;
             native_world::Put(fsm,4,fsm+0xAC);native_world::Put(fsm,0x224,++completionAction);
@@ -817,6 +829,24 @@ int wmain(int argc,wchar_t** argv) {
             native_world::Put(completionResult,0x10,uint32_t(0));native_world::Put(completionResult,0x14,uint32_t(1));
             Check(native_world::InvokeSpecialCompletionGate(fsm)==0&&native_world::specialCompletionCalls==1,
                   "the matched zero-damage receipt is consumed once");
+            stageCompletion(0,0,0x025E);
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
+                  "decimal 606 is not the native 0x0606 completion opcode");
+            native_world::Put(terminal,0,uint16_t(0x0606));
+            meleeNotice(native_world::document.data(),terminal);unit.Think();
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==1,
+                  "the real completion still succeeds after an unrelated opcode");
+            stageCompletion(0,2);
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==1,
+                  "a later SP-only clear cannot erase a matched melee completion");
+            stageCompletion(0,1);
+            Check(native_world::InvokeSpecialCompletionGate(fsm)==1,
+                  "an earlier SP-only clear cannot consume melee action acknowledgement");
+            if(medium) {
+                stageCompletion(0,0,0x0606,3200);
+                Check(native_world::InvokeSpecialCompletionGate(fsm)==1,
+                      "a delayed server completion after native animation end retains the accepted special");
+            }
             stageCompletion(0);native_world::Put(native_world::enemy1.data(),0xEB8,uint32_t(999));
             Check(native_world::InvokeSpecialCompletionGate(fsm)==0,
                   "a zero-damage receipt cannot release a victim no longer captured by that caster");
