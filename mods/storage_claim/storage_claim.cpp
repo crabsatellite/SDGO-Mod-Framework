@@ -58,6 +58,7 @@ Tab g_armTab=Tab::Items;uint64_t g_armSession=0,g_observedSession=0;
 // while another one of the same account is in progress: one request at a time.
 constexpr uint32_t kSequential=1;
 uint32_t g_timeout=10000,g_limit=5000;uint16_t g_error=0;
+uint64_t g_settleMs=150,g_settleUntil=0;
 uint32_t g_generation=0;
 struct RetiredCheck {Tab tab;Key key;};
 std::vector<RetiredCheck> g_retiredChecks;
@@ -179,8 +180,9 @@ void PumpUnsafe() {
             const auto now=GetTickCount64();g_batch.Tick(now,g_timeout);
             for(uint32_t n=0;n<Batch::kMaxDepth;++n) {
                 const auto request=g_batch.Next();if(!request)break;
-                // The stock claim handler may still be reloading the list itself.
-                if(request->operation==Operation::List && !Read<uint8_t>(g_service,0x190))break;
+                // The game's own follow-ups of the last grant are still running:
+                // its list reload (page not loaded) or storage traffic in the last moments.
+                if(!Read<uint8_t>(g_service,0x190) || now<g_settleUntil)break;
                 if(request->operation!=Operation::List) {
                     uint32_t total=0;const auto entries=Snapshot(g_service,request->tab,total);
                     const auto entry=std::find_if(entries.begin(),entries.end(),[&](const Entry& e){return e.key==request->key && !e.claimed;});
@@ -290,6 +292,14 @@ uint32_t PacketUnsafe(void* self,uintptr_t a,uintptr_t b,uintptr_t c,uint32_t co
     // Other native storage commands expose no trustworthy length here.
     const uint32_t fixedSize=op==0x07BE?0x07EAu:0u;
     if(g_extensions.PacketPrefilter(op,data,fixedSize))return 0;
+    // After a grant the game sends its own follow-ups (0x777 -> 0x0593/0x04E6 and a
+    // list reload). The World refuses a request of an account while another one is
+    // in progress, so the next batch request waits until that traffic is quiet.
+    if(self==g_owner && (g_batch.Busy() || g_batch.Outstanding())) {
+        const bool ownPreflight=op==0x4E7 || op==0x722 || op==0x5D9 || op==0x814;
+        const bool ownList=g_batch.Waiting(Operation::List) && (op==0x7BD || op==0x7BE || op==0x8AF || op==0x8B0);
+        if(!ownPreflight && !ownList)g_settleUntil=GetTickCount64()+g_settleMs;
+    }
     if(op==0x4E7 || op==0x722) {
         const auto tab=op==0x4E7?Tab::Items:Tab::Gifts;
         const auto key=ReplyKey(tab,data,{});

@@ -49,7 +49,7 @@ void Setup(Tab tab=Tab::Items,uint64_t count=12) {
     Put(connection.data(),0x14,7);Put(service.data(),0x15C,static_cast<int>(tab));Put(service.data(),0x168,total);
     g_session=&Session;g_app=&App;g_busy=reinterpret_cast<NativeBusy>(&Busy);g_send=reinterpret_cast<NativeSend>(&Send);
     g_event=reinterpret_cast<NativeUI>(&Event);g_packet=reinterpret_cast<NativePacket>(&Original);
-    api.Log=&Log;g_api=&api;g_mod=nullptr;g_batch=Batch{};g_owner=nullptr;g_service=service.data();g_thread=GetCurrentThreadId();g_pumping=g_armed=false;g_observedSession=0;
+    api.Log=&Log;g_api=&api;g_mod=nullptr;g_batch=Batch{};g_owner=nullptr;g_service=service.data();g_thread=GetCurrentThreadId();g_pumping=g_armed=false;g_observedSession=0;g_settleMs=0;g_settleUntil=0;
     assert(g_ui.Attach(service.data(),Bind()));
 }
 void Click(){UIEvent(nullptr,nullptr,service.data(),0x101,0,Pointer(L"ModStorageClaimAll"));}
@@ -97,6 +97,12 @@ int main() {
     // of an account), all twelve grants through the stock handler, one refresh.
     Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && nativeChecks==0 && maxPending==1);
     assert(sends==3+12+12+1 && g_batch.collected()==12);
+    // After a grant the next request waits for the game's own follow-up traffic to go quiet.
+    fixture::Setup();g_settleMs=80;Start();DeliverUntil([]{return g_batch.Waiting(Operation::Claim);});Deliver();
+    {const auto sentAfterGrant=sends;Step();assert(sends==sentAfterGrant);
+     std::vector<uint8_t> followUp(64,0);Receive(service.data(),nullptr,0,0,0,0x593,followUp.data());
+     Sleep(50);Step();assert(sends==sentAfterGrant);Sleep(60);Step();assert(sends==sentAfterGrant+1);}
+    g_settleMs=0;Run();assert(g_batch.phase()==Phase::Complete && grants==12);
     // The World may answer concurrent preflights out of send order.
     fixture::Setup();newestFirst=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && !g_batch.Outstanding());
     fixture::Setup(Tab::Gifts);rewards[0].claimed=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==11 && nativeChecks==0);
@@ -125,11 +131,11 @@ int main() {
     while(!pending.empty())Deliver();Step();assert(nativeChecks==0 && grants==0 && g_retiredChecks.empty());
     fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});storage_fixture::Put(connection.data(),0x14,8);
     while(!pending.empty())Deliver();Step();assert(nativeChecks==0 && grants==0 && !g_batch.Busy()); // replies before the next timer tick
-    // The refreshing read waits while a stock list request is still loading.
+    // Nothing is sent while the game's own list reload is still loading the page.
     fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Claim);});storage_fixture::Put<uint8_t>(service.data(),0x190,0);
     while(!pending.empty())Deliver();
     storage_fixture::Put<uint8_t>(service.data(),0x190,0);Step();assert(pending.empty() && g_batch.Busy());
-    storage_fixture::Put<uint8_t>(service.data(),0x190,1);Step();assert(pending.size()==1 && Next()==0x9A1);Run();assert(g_batch.phase()==Phase::Complete);
+    storage_fixture::Put<uint8_t>(service.data(),0x190,1);Step();assert(pending.size()==1 && Next()==0x9CC);Run();assert(g_batch.phase()==Phase::Complete);
     // An invalid native page while the timer sends the next preflight disables the added UI.
     fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});
     g_thread=0;Deliver();g_thread=GetCurrentThreadId();assert(pending.empty() && g_batch.Next());

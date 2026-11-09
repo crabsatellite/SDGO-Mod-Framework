@@ -43,7 +43,10 @@ Each preflight and claim is a self-contained stored-procedure call that does not
 depend on a preceding preflight, so requests can be submitted back to back. The
 World processes requests on several threads and refuses a request of an account
 while another one of the same account is in progress, so exactly one request is
-outstanding at a time. Success replies are matched by reward ID; error replies
+outstanding at a time. After each grant the game sends follow-ups of its own
+(0x777 -> 0x0593/0x04E6 and a list reload); the next batch request waits until the
+page is loaded again and storage traffic has been quiet for 150 ms, so it never
+overlaps them (an overlap is refused, or shows an empty error box). Success replies are matched by reward ID; error replies
 carry no ID and belong to the only outstanding request. The timeout measures how
 long no answer arrived. Mod list requests mark the page as loading
 like the stock sender; the final reload waits while the stock grant handler is
