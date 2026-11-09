@@ -1,4 +1,4 @@
-# Unit family import (Beta)
+# Unit family import
 
 [简体中文](unit-import.zh-CN.md) · [Back to the feature index](../README.md)
 
@@ -7,7 +7,7 @@ Packages prepared from any source can be submitted through the documented import
 Import a unit archive (RAR/ZIP) in SDGO Mod Manager, fill in missing definitions, generate the shop, capsule and
 encyclopedia images, then write the unit definitions to the server and build a client package for players.
 
-This feature is in Beta: the basic workflow is still under development. Single-form, two-form (reciprocal or one-way)
+Single-form, two-form (reciprocal or one-way)
 and self-transforming units are supported, as are entry forms into an already published reciprocal pair; skills must
 reuse skills the server already has. Before going live, try an imported unit in
 real battles on a test server to check its weapons, skills and transformation.
@@ -16,9 +16,13 @@ real battles on a test server to check its weapons, skills and transformation.
 |---|---|---|
 | Manager **机体导入** (Unit import) panel | owner's PC | parse, complete, generate images, confirm and publish |
 | `unit_catalog` | client | loads the imported units' native records and resources |
+| `unit_catalog_server` | battle servers | binds the imported units' skills and forms |
 
 The generic release contains only the tools, never units. Owner drafts, images, publications and install receipts stay
 in the owner's workspace.
+The **机体导入** panel runs only inside Manager; the game never loads it. Both runtime Mods are installed switched off,
+and the game does not load a Mod that is off. Server publication switches on `unit_catalog_server`; installing the
+unit client package switches on `unit_catalog`.
 
 Unit, weapon and skill names and descriptions belong to unit content. Edit them in the content authoring source and distribute them with the custom-unit package; public interface dictionaries do not carry those dedicated translations. The runtime reports content ownership to optional localization consumers so matching stock phrases do not replace authored wording.
 
@@ -543,6 +547,11 @@ The skill profile verifies the 882-to-1132-byte projection, explicit ID changes
 and an optional typed linked-skill ID change; the 732-byte funnel profile
 preserves every byte outside its ID word. The native catalog checks fixed
 sizes and typed unit-to-skill, weapon-to-funnel and linked-skill references.
+A weapon's special feature (offset 132) names a kind-12 record from the client's own
+`gdrs` special-feature tables. A publication may carry kind-12 records in the same 1559-byte
+layout; the native catalog refuses to load when an imported weapon names a special feature
+that is neither native nor carried, instead of letting the client crash when the feature
+triggers in battle. These rows are client data: servers keep only the weapon's number.
 Manager cannot publish these new dependency definitions yet: even with server data
 and scoped resources prepared, ID-specific behavior, scripts and the full actor
 lifecycle are not supported.

@@ -37,6 +37,8 @@ public:
         kCancelled = 11,
         kStorageReady = 12,
         kGbSubmittedRelogRequired = 13,
+        kGbCommittedLive = 14,
+        kSortRefreshed = 15,
 
         kInvalidContext = 0x100,
         kSnapshotCallFailed = 0x101,
@@ -54,6 +56,9 @@ public:
         kGbCandidateMissing = 0x10D,
         kGbArmMismatch = 0x10E,
         kGbSubmitStateMismatch = 0x10F,
+        kLiveRefreshFailed = 0x110,
+        kSortLayoutMismatch = 0x111,
+        kGbLayoutMismatch = 0x112,
     };
 
     enum Step : uint32_t
@@ -70,6 +75,7 @@ public:
         kStepStorageBinding = 9,
         kStepArmGb = 10,
         kStepSubmitGb = 11,
+        kStepSort = 12,
     };
 
     enum Scope : uint32_t
@@ -78,6 +84,8 @@ public:
         kScopeProtectedOrNoDuplicateNegative = 1,
         kScopePreviewCandidatesPresent = 2,
         kScopeGbSubmittedRelogRequired = 3,
+        kScopeGbCommittedLive = 4,
+        kScopeSortRefreshed = 5,
     };
 
     struct Exports
@@ -121,6 +129,10 @@ public:
         uint32_t item_preview_removed = 0;
         uint32_t confirm_rejections = 0;
         uint32_t receipt_count = 0;
+        uint32_t live_generation_before = 0;
+        uint32_t removed_after_refresh = 0;
+        uint32_t active_uid_kept = 0;
+        uint32_t slots_contiguous = 0;
         SdgoHangarGameTestSnapshotV1 snapshot = {};
         SourceReceipt latest_receipt = {};
     };
@@ -476,11 +488,64 @@ public:
             return Publish(
                 CompleteGbSubmission(context));
         case kCommitComplete:
-            return Publish(
-                kGbSubmittedRelogRequired);
+            return Publish(kGbCommittedLive);
         default:
             return Publish(kWaitingAction);
         }
+    }
+
+    // One original 一键整理 action; the server sorts, the Mod waits for the
+    // server's answer and reloads every slot page in the same session.
+    Result PollHangarSort(
+        const SdgoGameTestContextV1* context)
+    {
+        Result prepared = PrepareRun(context);
+        if (IsTerminalFailure(prepared) ||
+            prepared == kHangarUnavailable)
+            return Publish(prepared);
+        if (!readReady_) {
+            const Result read = PollHangarRead(context);
+            return Publish(
+                read == kReadReady
+                    ? kWaitingAction
+                    : read);
+        }
+        if (sortStage_ == 0) {
+            const Result issued =
+                IssueAccepted(
+                    context,
+                    kStepSort,
+                    SDGO_HANGAR_GAME_TEST_ACTION_SORT);
+            if (issued == kActionAccepted) {
+                liveGenerationBefore_ =
+                    pendingBefore_.live_generation;
+                liveBaselineSet_ = true;
+                sortStage_ = 1;
+            }
+            return Publish(issued);
+        }
+        if (sortStage_ == 2)
+            return Publish(kSortRefreshed);
+        const Result live =
+            WaitLiveRefresh(
+                context,
+                kStepSort,
+                SDGO_HANGAR_GAME_TEST_ACTION_SORT);
+        if (live != kReadReady)
+            return Publish(live);
+        // Same units, compacted to slots 1..N, the active unit kept.
+        bool same = currentUnits_.size() == beforeUnits_.size();
+        for (const auto& unit : beforeUnits_)
+            same = same && FindUid(currentUnits_, unit.uid) != nullptr;
+        slotsContiguous_ = Contiguous(currentUnits_);
+        activeUidKept_ = ActiveUidKept();
+        if (!same || !slotsContiguous_ || !activeUidKept_)
+            return Publish(kSortLayoutMismatch);
+        scope_ = kScopeSortRefreshed;
+        sortStage_ = 2;
+        // The verified server order is the inventory the next case starts from.
+        SaveBaseline();
+        return Publish(kSortRefreshed);
     }
 
     Result PollStorageBinding(
@@ -555,6 +620,14 @@ public:
         observed.receipt_count =
             static_cast<uint32_t>(
                 receipts_.size());
+        observed.live_generation_before =
+            liveGenerationBefore_;
+        observed.removed_after_refresh =
+            removedAfterRefresh_;
+        observed.active_uid_kept =
+            activeUidKept_ ? 1u : 0u;
+        observed.slots_contiguous =
+            slotsContiguous_ ? 1u : 0u;
         observed.snapshot = currentSnapshot_;
         if (!receipts_.empty())
             observed.latest_receipt =
@@ -625,6 +698,16 @@ public:
             return "storage-ready";
         case kGbSubmittedRelogRequired:
             return "gb-submitted-relog-required";
+        case kGbCommittedLive:
+            return "gb-committed-live";
+        case kSortRefreshed:
+            return "sort-refreshed";
+        case kLiveRefreshFailed:
+            return "live-refresh-failed";
+        case kSortLayoutMismatch:
+            return "sort-layout-mismatch";
+        case kGbLayoutMismatch:
+            return "gb-layout-mismatch";
         case kInvalidContext:
             return "invalid-context";
         case kSnapshotCallFailed:
@@ -667,6 +750,8 @@ public:
         switch (step) {
         case kStepRead:
             return "read";
+        case kStepSort:
+            return "sort";
         case kStepOpen:
             return "open";
         case kStepPreviewGb:
@@ -779,6 +864,12 @@ private:
         itemPreviewRemoved_ = 0;
         confirmRejections_ = 0;
         receiptSequence_ = 0;
+        sortStage_ = 0;
+        liveBaselineSet_ = false;
+        liveGenerationBefore_ = 0;
+        removedAfterRefresh_ = 0;
+        activeUidKept_ = false;
+        slotsContiguous_ = false;
         scope_ = kScopeUnknown;
         beforeSnapshot_ = {};
         currentSnapshot_ = {};
@@ -1001,6 +1092,49 @@ private:
     {
         if (pendingStep_ != kStepSubmitGb)
             return kActionSequenceMismatch;
+        if (!liveBaselineSet_) {
+            liveGenerationBefore_ =
+                pendingBefore_.live_generation;
+            liveBaselineSet_ = true;
+        }
+        const Result live =
+            WaitLiveRefresh(
+                context,
+                kStepSubmitGb,
+                SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM);
+        if (live != kReadReady)
+            return live;
+        if (currentSnapshot_.armed)
+            return kGbSubmitStateMismatch;
+        // The previewed duplicates left the cache; every other unit remains.
+        size_t kept = 0;
+        for (const auto& unit : currentUnits_) {
+            if (!FindUid(beforeUnits_, unit.uid))
+                return kGbLayoutMismatch;
+            ++kept;
+        }
+        removedAfterRefresh_ =
+            static_cast<uint32_t>(
+                beforeUnits_.size() - kept);
+        activeUidKept_ = ActiveUidKept();
+        if (removedAfterRefresh_ != gbPreviewRemoved_ ||
+            !activeUidKept_)
+            return kGbLayoutMismatch;
+        scope_ = kScopeGbCommittedLive;
+        previewStage_ = kCommitComplete;
+        return kGbCommittedLive;
+    }
+
+    // Waits until the Mod finished the server answer and the page reload of the
+    // pending action, then reads the refreshed units. The live generation before
+    // the action comes from the accepted action's source snapshot.
+    Result WaitLiveRefresh(
+        const SdgoGameTestContextV1* context,
+        Step step,
+        uint32_t action)
+    {
+        if (pendingStep_ != step)
+            return kActionSequenceMismatch;
         SdgoHangarGameTestSnapshotV1 snapshot = {};
         snapshot.size = sizeof(snapshot);
         snapshot.version =
@@ -1018,28 +1152,70 @@ private:
             return kRunMismatch;
         if (snapshot.action_sequence !=
                 pendingActionSequence_ ||
-            snapshot.last_action !=
-                SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM)
+            snapshot.last_action != action)
             return kActionSequenceMismatch;
         if (snapshot.busy ||
-            !snapshot.needs_relog)
+            snapshot.live_state !=
+                SDGO_HANGAR_GAME_TEST_LIVE_IDLE)
             return kWaitingAction;
-        if (snapshot.armed)
-            return kGbSubmitStateMismatch;
+        if (!liveBaselineSet_ ||
+            snapshot.live_generation == liveGenerationBefore_)
+            return kWaitingAction;
+        if (snapshot.live_result !=
+                SDGO_HANGAR_GAME_TEST_LIVE_RESULT_REFRESHED ||
+            snapshot.needs_relog)
+            return kLiveRefreshFailed;
+        const Result read =
+            Refresh(context, false);
+        if (read != kReadReady)
+            return read == kWaitingSnapshot
+                ? kWaitingAction
+                : read;
         PushReceipt(
             context,
-            kStepSubmitGb,
-            SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM,
+            step,
+            action,
             true,
             true,
             pendingBefore_,
-            snapshot);
+            currentSnapshot_);
         pendingStep_ = kStepNone;
         pendingActionSequence_ = 0;
-        scope_ =
-            kScopeGbSubmittedRelogRequired;
-        previewStage_ = kCommitComplete;
-        return kGbSubmittedRelogRequired;
+        return kReadReady;
+    }
+
+    static const SdgoHangarGameTestUnitV1* FindUid(
+        const std::vector<SdgoHangarGameTestUnitV1>& units,
+        uint64_t uid)
+    {
+        for (const auto& unit : units)
+            if (unit.uid == uid)
+                return &unit;
+        return nullptr;
+    }
+
+    static bool Contiguous(
+        const std::vector<SdgoHangarGameTestUnitV1>& units)
+    {
+        std::vector<uint8_t> seen(units.size() + 1, 0);
+        for (const auto& unit : units) {
+            if (!unit.slot || unit.slot > units.size() || seen[unit.slot])
+                return false;
+            seen[unit.slot] = 1;
+        }
+        return true;
+    }
+
+    bool ActiveUidKept() const
+    {
+        uint64_t before = 0, after = 0;
+        for (const auto& unit : beforeUnits_)
+            if (unit.slot == beforeSnapshot_.active_slot)
+                before = unit.uid;
+        for (const auto& unit : currentUnits_)
+            if (unit.slot == currentSnapshot_.active_slot)
+                after = unit.uid;
+        return before && before == after;
     }
 
     void PushReceipt(
@@ -1117,6 +1293,12 @@ private:
     uint32_t itemPreviewRemoved_ = 0;
     uint32_t confirmRejections_ = 0;
     uint32_t receiptSequence_ = 0;
+    uint32_t sortStage_ = 0;
+    bool liveBaselineSet_ = false;
+    uint32_t liveGenerationBefore_ = 0;
+    uint32_t removedAfterRefresh_ = 0;
+    bool activeUidKept_ = false;
+    bool slotsContiguous_ = false;
     Scope scope_ = kScopeUnknown;
     Result lastResult_ = kUnbound;
     SdgoHangarGameTestSnapshotV1 beforeSnapshot_ = {};

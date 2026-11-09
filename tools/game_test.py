@@ -1810,6 +1810,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          room_style_preview: str | None = None,
                          same_room_rematch: bool = False, shop_visual_only: bool = False,
                          page_group: str | None = None, hangar_confirm_gb: bool = False,
+                         hangar_sort: bool = False,
                          mission_respawns: str | None = None,
                          oc_allocate: str | None = None,
                          oc_room: bool = False,
@@ -1905,8 +1906,9 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
             return FLOW_CASES[:3] + selection + ('pages.storage.read','pages.storage.claim','pages.hangar.gift_origin','pages.hangar.gift_plain')
         if page_group == 'hangar':
             hangar_cases = (
-                ('pages.hangar.read','pages.hangar.confirm_gb')
-                if hangar_confirm_gb else
+                ('pages.hangar.read',) + (('pages.hangar.sort',) if hangar_sort else ()) +
+                (('pages.hangar.confirm_gb',) if hangar_confirm_gb else ())
+                if hangar_confirm_gb or hangar_sort else
                 ('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel')
             )
             return FLOW_CASES[:3] + selection + hangar_cases + (
@@ -1979,7 +1981,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
             "ai_layout",
             "bootstrap_only",
             "battleship_only", "gift_requests_only", "deck_only",
-            "pages_only", "hangar_confirm_gb", "friends_only", "room_titles_only", "collection_draw", "random_loadout", "same_room_rematch",
+            "pages_only", "hangar_confirm_gb", "hangar_sort", "friends_only", "room_titles_only", "collection_draw", "random_loadout", "same_room_rematch",
             *SHOP_PLAN_FIELDS,
         }
         if forbidden.intersection(plan):
@@ -2024,6 +2026,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         shop_visual_only=plan.get('shop_visual_only', False),
         page_group=plan.get('page_group'),
         hangar_confirm_gb=plan.get('hangar_confirm_gb', False),
+        hangar_sort=plan.get('hangar_sort', False),
         mission_respawns=plan.get('mission_respawns'),
         oc_allocate=plan.get('oc_allocate'),
         oc_room=plan.get('oc_room', False),
@@ -2434,6 +2437,8 @@ def write_job(
         run['run']['page_group'] = plan['page_group']
     if plan.get('hangar_confirm_gb'):
         run['run']['hangar_confirm_gb'] = '1'
+    if plan.get('hangar_sort'):
+        run['run']['hangar_sort'] = '1'
     if plan.get('login_recovery'):
         run['run'].update({
             'login_recovery': '1',
@@ -2507,6 +2512,11 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         hangar_confirm_gb = run.get('hangar_confirm_gb', '0') == '1'
         if hangar_confirm_gb and (not pages_only or page_group != 'hangar'):
             raise ValueError('hangar_confirm_gb requires the sealed hangar page group')
+        if run.get('hangar_sort', '0') not in ('0', '1'):
+            raise ValueError('hangar_sort must be canonical boolean')
+        hangar_sort = run.get('hangar_sort', '0') == '1'
+        if hangar_sort and (not pages_only or page_group != 'hangar'):
+            raise ValueError('hangar_sort requires the sealed hangar page group')
         friends_only = run.get('friends_only', '0') == '1'
         room_titles_only = run.get('room_titles_only','0') == '1'
         room_style_preview = run.get('room_style_preview')
@@ -2536,8 +2546,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             login_recovery_hold_after_completion = run['login_recovery_hold_after_completion'] == '1'
             if not pages_only or page_group != 'hangar':
                 raise ValueError('login recovery requires the read-only hangar page group')
-            if hangar_confirm_gb:
-                raise ValueError('login recovery cannot submit a hangar GB transaction')
+            if hangar_confirm_gb or hangar_sort:
+                raise ValueError('login recovery cannot submit a hangar transaction')
         unknown_operator_fields = {
             field for field in run if field.startswith("operator_")
         } - set(operator_scenarios.RUN_FIELDS)
@@ -2551,7 +2561,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
         operator_present = bool(operator_fields_present)
         preparation_fields = (
             'bootstrap_only', 'battleship_only', 'gift_requests_only',
-            'deck_only', 'pages_only', 'hangar_confirm_gb', 'friends_only', 'room_titles_only', 'collection_draw', 'random_loadout', 'same_room_rematch',
+            'deck_only', 'pages_only', 'hangar_confirm_gb', 'hangar_sort', 'friends_only', 'room_titles_only', 'collection_draw', 'random_loadout', 'same_room_rematch',
         )
         if any(run.get(flag, '0') not in ('0', '1') for flag in preparation_fields):
             raise ValueError('invalid preparation flag')
@@ -2796,6 +2806,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 same_room_rematch=same_room_rematch,
                 page_group=page_group,
                 hangar_confirm_gb=hangar_confirm_gb,
+                hangar_sort=hangar_sort,
                 oc_allocate=oc_allocate,
                 oc_room=run.get('oc_room') == '1',
                 g1_room=run.get('g1_room') == '1',
@@ -2943,6 +2954,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             plan['page_group'] = page_group
         if hangar_confirm_gb:
             plan['hangar_confirm_gb'] = True
+        if hangar_sort:
+            plan['hangar_sort'] = True
         for flag, value in (
             ('bootstrap_only', bootstrap_only),
             ('battleship_only', battleship_only),
@@ -3265,6 +3278,7 @@ def prepare(
     pages_only: bool = False,
     page_group: str | None = None,
     hangar_confirm_gb: bool = False,
+    hangar_sort: bool = False,
     friends_only: bool = False,
     room_titles_only: bool = False,
     room_style_preview: str | None = None,
@@ -3335,6 +3349,22 @@ def prepare(
         parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
         if not parsed or tuple(map(int,parsed.groups())) < (0,1,20):
             raise GameTestError('--hangar-confirm-gb requires native GameTest client 0.1.20 or newer')
+    if type(hangar_sort) is not bool:
+        raise GameTestError('--hangar-sort must be a flag')
+    if hangar_sort or hangar_confirm_gb:
+        if hangar_sort and (not pages_only or page_group != 'hangar' or create_test_account):
+            raise GameTestError('--hangar-sort requires the sealed hangar page group and an existing test account')
+        sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
+        parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
+        if not parsed or tuple(map(int,parsed.groups())) < (0,1,27):
+            raise GameTestError('live hangar refresh checks require native GameTest client 0.1.27 or newer')
+    if page_group == 'storage_gift':
+        if create_test_account:
+            raise GameTestError('the storage_gift page group requires an existing test account with gift_origin units')
+        sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
+        parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
+        if not parsed or tuple(map(int,parsed.groups())) < (0,1,30):
+            raise GameTestError('the storage_gift page group requires native GameTest client 0.1.30 or newer')
     if login_recovery_min_retries is None:
         if login_recovery_hold_after_completion:
             raise GameTestError('login recovery hold requires a sealed recovery scenario')
@@ -3346,8 +3376,8 @@ def prepare(
             raise GameTestError('login_recovery_hold_after_completion must be boolean')
         if not pages_only or page_group != 'hangar' or create_test_account or mission_mode is not None:
             raise GameTestError('login recovery requires read-only hangar pages and an existing account')
-        if hangar_confirm_gb:
-            raise GameTestError('login recovery cannot submit a hangar GB transaction')
+        if hangar_confirm_gb or hangar_sort:
+            raise GameTestError('login recovery cannot submit a hangar transaction')
         extra_mods=tuple(dict.fromkeys((*extra_mods,'login_recovery_client')))
     if type(same_room_rematch) is not bool or (same_room_rematch and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only)))):
         raise GameTestError('same-room rematch requires complete PvP without preparation-only scopes')
@@ -3475,6 +3505,7 @@ def prepare(
             room_style_preview=room_style_preview,
             page_group=page_group,
             hangar_confirm_gb=hangar_confirm_gb,
+            hangar_sort=hangar_sort,
             mission_respawns=mission_respawns,
             mission_behavior_profile=mission_behavior_profile,
             mission_game_mode_id=mission_game_mode_id,
@@ -3721,6 +3752,8 @@ def prepare(
             plan['page_group'] = page_group
         if hangar_confirm_gb:
             plan['hangar_confirm_gb'] = True
+        if hangar_sort:
+            plan['hangar_sort'] = True
         if login_recovery_min_retries is not None:
             plan.update({
                 'login_recovery': True,
@@ -4146,7 +4179,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
                 "ai_layout",
                 "bootstrap_only",
                 "battleship_only", "gift_requests_only", "deck_only",
-                "pages_only", "hangar_confirm_gb", "friends_only", "room_titles_only", "collection_draw", "random_loadout",
+                "pages_only", "hangar_confirm_gb", "hangar_sort", "friends_only", "room_titles_only", "collection_draw", "random_loadout",
             }
             if forbidden.intersection(plan):
                 raise GameTestError("run.json adds PvP, pages, or preparation scope to a mission smoke")
@@ -4163,7 +4196,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
             raise GameTestError("run.json cannot add mission scope to a non-mission plan")
         for flag in (
             'bootstrap_only','battleship_only','gift_requests_only','deck_only',
-            'pages_only', 'hangar_confirm_gb', 'friends_only','room_titles_only','collection_draw','random_loadout',
+            'pages_only', 'hangar_confirm_gb', 'hangar_sort', 'friends_only','room_titles_only','collection_draw','random_loadout',
         ):
             if (
                 type(plan.get(flag, False)) is not bool
@@ -5324,7 +5357,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--capture-native-frames',action='store_true',help='save native frames after each passing page case under the run visual folder for visual review')
     prepare_parser.add_argument('--page-group', choices=PAGE_GROUPS, help='with --pages-only, seal bounded native hangar, preview-failure, or storage claim and gift-origin checks')
     prepare_parser.add_argument('--hangar-confirm-gb', action='store_true',
-                                help='task-owned test SQL only: seal the hangar GB preview and two original Confirm actions, then require reconnect verification')
+                                help='task-owned test SQL only: seal the hangar GB preview and two original Confirm actions, then require the live hangar refresh')
+    prepare_parser.add_argument('--hangar-sort', action='store_true',
+        help='with --pages-only --page-group hangar, run the original 一键整理 and require the live hangar refresh')
     prepare_parser.add_argument('--friends-only',action='store_true',help='run the real multi-client native friend session')
     prepare_parser.add_argument('--collection-draw',action='store_true',help='explicit pages-only extension: purchase one collection draw with existing native funds and verify delivery')
     prepare_parser.add_argument('--shop-assertions',type=Path,
@@ -5450,6 +5485,7 @@ def main(argv: list[str] | None = None) -> int:
                 pages_only=args.pages_only,
                 page_group=args.page_group,
                 hangar_confirm_gb=args.hangar_confirm_gb,
+                hangar_sort=args.hangar_sort,
                 capture_native_frames=args.capture_native_frames,
                 friends_only=args.friends_only,
                 room_titles_only=args.room_titles_only,

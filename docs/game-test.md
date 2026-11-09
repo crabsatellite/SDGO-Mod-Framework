@@ -387,6 +387,19 @@ reads back the installed resource hashes; this path never applies the server SQL
 hangar read, preview and cancel cases, together with login and optional active-unit
 selection. This read-only group excludes storage claims, purchases and other page
 features; it rejects shop or collection scope and preserves the full suite's assertions.
+Adding `--hangar-sort` presses the original sort button and requires the live refresh: the server's
+answer arrives, every unit is still present in slots 1..N and the active unit stays active, without a
+re-login. `--hangar-confirm-gb` (task-owned or restored test data only: it really dismantles units)
+confirms one GB batch and requires that exactly the previewed duplicates leave the refreshed page.
+The account needs a duplicate candidate: more than `KeepCopies` (default 2) unlocked, level-1 copies
+of a unit type that has a GB rule. After `--hangar-sort`, the GB case starts from the sorted order.
+`--pages-only --page-group storage_gift` claims the storage tab with one confirmation and then checks
+gift origins on the unit-information page. The claim must settle every reward collected from all pages
+(granted, refused or left for manual selection) and leave only refused items in the item tab, so seed a
+multi-page tab first. The account profile names two existing units in a `[gift_origin]` section:
+`gifted_uid` with an accepted friend-gift record and an ordinary `plain_uid`; the gifted unit must show
+its sender and date strip, the ordinary one nothing. Requires GameTest client 0.1.30. `--capture-native-frames`
+saves two native frames after each passing page case under the run's `visual` folder for visual review.
 It also opens native storage, waits for its real message loop and server list
 reply, and confirms one claim batch. An empty batch only covers the empty-storage path.
 Capsule cases read all five native catalog tables and enter the actual page to

@@ -26,10 +26,14 @@ public:
             bool valid = false;
             switch (entry.kind) {
             case kUnitType:
-            case kWeaponType:
                 valid = AddField(entry, 5, 50, texts) &&
                         AddField(entry, 105, 50, texts) &&
                         AddField(entry, 205, 50, texts);
+                break;
+            case kWeaponType:
+                // Only the name is text. From offset 105 a weapon row holds
+                // numeric data (special feature at 132) and effect paths.
+                valid = AddField(entry, 5, 50, texts);
                 break;
             case kSkillType:
                 valid = AddField(entry, 5, 50, texts) &&

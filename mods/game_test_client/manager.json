@@ -124,6 +124,17 @@
       "activation": "restart_required"
     },
     {
+      "id": "battle_ai_lives",
+      "key": "BattleAiLives",
+      "label": "检查 TAB 剩余生命随真实死亡更新",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "battle_ai_teleport",
       "key": "BattleAiTeleport",
       "label": "要求 AI 真实瞬移且保留血量",

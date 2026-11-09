@@ -114,6 +114,9 @@ Without the title extension, the native 20-byte limit remains. See [combined com
 Normal, death match, Grid, leader and Tag modes enable AI on the same native countdown frame that releases
 player control, at every difficulty; AI cannot move or attack early. Hold TAB to see AI on both teams in the
 native battle roster, including their names, kills, assists and points with normal scoring and sorting.
+Remaining lives use the original display update as well. Death match reads the same life cost as the
+server and the participant's current power, so deaths reduce the displayed allowance; respawning does
+not restore it. Deck-based life displays keep their original rules, and a new battle starts afresh.
 
 Every battle draws new units for each AI from its pool, without duplicates and within the
 mode's point and unit-count limits. The host runs the AI and other clients display synchronized copies.

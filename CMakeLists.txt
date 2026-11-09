@@ -707,7 +707,7 @@ if(BUILD_TESTING)
     add_test(NAME unit_preview_offline COMMAND unit_preview_test)
     add_test(NAME unit_catalog_offline COMMAND unit_catalog_test)
     foreach(scenario success conflict missing_reference partial_failure index_reference_missing index_conflict
-                     skill_reference_missing funnel_reference_missing linked_skill_reference_missing dependency_records_success
+                     skill_reference_missing funnel_reference_missing special_feature_reference_missing linked_skill_reference_missing dependency_records_success
                      blueprint_output_missing blueprint_material_missing
                      blueprint_item_reference_missing index_blueprint_reference_missing index_blueprint_output_mismatch
                      large_catalog)
@@ -1119,6 +1119,10 @@ if(BUILD_TESTING)
     sdgo_strict(hangar_model_test)
     target_compile_options(hangar_model_test PRIVATE /UNDEBUG)
     add_test(NAME hangar_model_offline COMMAND hangar_model_test)
+    add_executable(hangar_live_refresh_test tests/hangar_live_refresh_test.cpp)
+    sdgo_strict(hangar_live_refresh_test)
+    target_compile_options(hangar_live_refresh_test PRIVATE /UNDEBUG)
+    add_test(NAME hangar_live_refresh_offline COMMAND hangar_live_refresh_test)
     add_executable(hangar_native_test tests/hangar_native_test.cpp mods/hangar_manager/native_ui.cpp)
     target_link_libraries(hangar_native_test PRIVATE sdgo_api user32 ole32)
     sdgo_strict(hangar_native_test)
