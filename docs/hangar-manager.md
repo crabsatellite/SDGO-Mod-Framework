@@ -15,7 +15,7 @@ The server orders all units by grade (S/A/B/C), sub-level, unit number, acquisit
 ID, changing only slot numbers. Locks, sortie units, decks, training and other unit data are kept.
 Sorting also raises the registered capacity in six-slot blocks to fit the inventory, up to 1200
 (an imported inventory larger than `24 + ExpandSlotCount` can crash the native login slot writer).
-After submitting, **log in again** to see the result.
+The page shows "sorting on the server" until the server answers; the hangar then refreshes in place with the new order (no re-login). If the server refuses, nothing changes and the page says so; only when its answer or the refreshed slot pages cannot be confirmed does the page ask you to log in again.
 
 ## Exchange duplicates
 
@@ -32,7 +32,7 @@ After submitting, **log in again** to see the result.
 **GB batch exchange** builds the list from the native inventory summary. After confirmation the exact
 instances, unit numbers and slots go to the server, which rechecks ownership, protection, KeepCopies and
 rewards, dismantles natively and credits GB in one transaction. Incomplete or stale lists and any failure
-change nothing; repeated submissions do not pay twice. Log in again afterwards.
+change nothing; repeated submissions do not pay twice. When the server has answered every message, the exchanged units disappear from the page and the GB balance updates in the same session.
 
 **Item exchange** keeps the native per-unit flow and stops, without retrying, when a reply cannot be
 confirmed, the connection changes or the hangar is modified elsewhere. Confirmed steps are not undone.
@@ -71,8 +71,16 @@ guessed. Owners can export the base rules read-only with
 ## Developer notes
 
 - Sort and GB batch requests use the native mail send `0x0891` (345 bytes); the server derives the owner
-  from its own session. Native mail has no completion acknowledgement, so the client only reports
-  "submitted"; the server writes a separate receipt that the Manager reads back.
+  from its own session and writes a separate receipt that the Manager reads back.
+- Live refresh: the World's `CRequest::ReqSendMsg` runs the mail procedure, which executes the hangar
+  command synchronously, and then answers each send with `0x06AD` (committed) or `0x079F` (refused). The
+  client Mod copies these replies from the native receive pre-handler (`hangar.packet_prehandler`). After
+  every expected `0x06AD` it requests each slot page with the native `REQ_UNIT_SLOT_PAGE` `0x04FF`
+  (page *p* = slots 6*p*+1–6*p*+6, read from the database by `sp_GetUserUnitPage_V2`), writes each `0x08F2`
+  record through the native `CUnitInfo::SyncFullData`, clears occupied slots that no page reported
+  (`hangar.slot_clear`), asks for the user info again (`0x06B3`, whose `0x05C1` reply rebuilds the
+  active-unit record and the GB balance) and redraws the page. A missing answer, a page error or a record
+  outside the client's allocated slots leaves the cache as it was and falls back to the re-login message.
 - The sort transaction changes only `tbl_UserUnits.UserUnitSlotNumber` and verifies all other columns.
 - The deletion trigger rejects a statement whose `deleted` set contains more than one `AccountNumber`.
   Its audit insert participates in the caller's transaction, so a failed or rolled-back native operation

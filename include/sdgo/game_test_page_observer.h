@@ -112,8 +112,29 @@ typedef struct SdgoHangarGameTestSnapshotV1 {
     uint32_t runner_total;
     uint32_t submit_index;
     uint32_t submit_total;
-    uint32_t reserved[6];
+    // Live refresh after a server sort or GB batch (former reserved words; the
+    // layout is unchanged). live_state: SDGO_HANGAR_GAME_TEST_LIVE_*;
+    // live_generation counts finished refreshes; live_result is the last one's
+    // SDGO_HANGAR_GAME_TEST_LIVE_RESULT_*.
+    uint32_t live_state;
+    uint32_t live_generation;
+    uint32_t live_result;
+    uint32_t live_pages;
+    uint32_t live_cleared;
+    uint32_t reserved[1];
 } SdgoHangarGameTestSnapshotV1;
+
+enum {
+    SDGO_HANGAR_GAME_TEST_LIVE_IDLE = 0,
+    SDGO_HANGAR_GAME_TEST_LIVE_AWAIT_ACK = 1,
+    SDGO_HANGAR_GAME_TEST_LIVE_RELOAD = 2
+};
+enum {
+    SDGO_HANGAR_GAME_TEST_LIVE_RESULT_NONE = 0,
+    SDGO_HANGAR_GAME_TEST_LIVE_RESULT_REFRESHED = 1,
+    SDGO_HANGAR_GAME_TEST_LIVE_RESULT_REFUSED = 2,
+    SDGO_HANGAR_GAME_TEST_LIVE_RESULT_UNKNOWN = 3
+};
 
 typedef struct SdgoHangarGameTestUnitV1 {
     uint64_t uid;

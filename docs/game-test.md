@@ -387,6 +387,10 @@ reads back the installed resource hashes; this path never applies the server SQL
 hangar read, preview and cancel cases, together with login and optional active-unit
 selection. This read-only group excludes storage claims, purchases and other page
 features; it rejects shop or collection scope and preserves the full suite's assertions.
+Adding `--hangar-sort` presses the original sort button and requires the live refresh: the server's
+answer arrives, every unit is still present in slots 1..N and the active unit stays active, without a
+re-login. `--hangar-confirm-gb` (task-owned or restored test data only: it really dismantles units)
+confirms one GB batch and requires that exactly the previewed duplicates leave the refreshed page.
 It also opens native storage, waits for its real message loop and server list
 reply, and confirms one claim batch. An empty batch only covers the empty-storage path.
 Capsule cases read all five native catalog tables and enter the actual page to

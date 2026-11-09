@@ -30,6 +30,7 @@ uint32_t g_itemRemoved = 0;
 bool g_exchange = false;
 bool g_itemPending = false;
 bool g_gbSubmitPending = false;
+bool g_sortPending = false;
 bool g_snapshotCallFails = false;
 bool g_unitPageMismatch = false;
 bool g_rejectOpen = false;
@@ -134,6 +135,7 @@ void ResetFixture(
     g_exchange = false;
     g_itemPending = false;
     g_gbSubmitPending = false;
+    g_sortPending = false;
     g_snapshotCallFails = false;
     g_unitPageMismatch = false;
     g_rejectOpen = false;
@@ -189,6 +191,14 @@ int __cdecl FakeHangarAction(
         return 0;
     ++g_actionCalls[action];
     switch (action) {
+    case SDGO_HANGAR_GAME_TEST_ACTION_SORT:
+        if (g_exchange || g_snapshot.busy)
+            return 0;
+        g_snapshot.busy = 1;
+        g_snapshot.live_state =
+            SDGO_HANGAR_GAME_TEST_LIVE_AWAIT_ACK;
+        g_sortPending = true;
+        break;
     case SDGO_HANGAR_GAME_TEST_ACTION_OPEN:
         if (g_exchange || g_rejectOpen)
             return 0;
@@ -217,6 +227,8 @@ int __cdecl FakeHangarAction(
         } else {
             g_snapshot.armed = 0;
             g_snapshot.busy = 1;
+            g_snapshot.live_state =
+                SDGO_HANGAR_GAME_TEST_LIVE_AWAIT_ACK;
             g_gbSubmitPending = true;
         }
         break;
@@ -242,8 +254,42 @@ void CompleteGbSubmission()
         "GB completion follows the explicitly armed second confirmation");
     g_gbSubmitPending = false;
     g_exchange = false;
+    // The Mod's live refresh: the previewed duplicate (101) left the cache.
+    g_units.erase(g_units.begin());
+    g_snapshot.unit_count =
+        static_cast<uint32_t>(g_units.size());
     g_snapshot.busy = 0;
-    g_snapshot.needs_relog = 1;
+    g_snapshot.needs_relog = 0;
+    g_snapshot.live_state =
+        SDGO_HANGAR_GAME_TEST_LIVE_IDLE;
+    ++g_snapshot.live_generation;
+    g_snapshot.live_result =
+        SDGO_HANGAR_GAME_TEST_LIVE_RESULT_REFRESHED;
+}
+
+void CompleteSort(uint32_t result)
+{
+    Check(
+        g_sortPending,
+        "sort completion follows the accepted original sort action");
+    g_sortPending = false;
+    if (result ==
+        SDGO_HANGAR_GAME_TEST_LIVE_RESULT_REFRESHED) {
+        // Server order: the active unit 103 first, then 102, then 101.
+        g_units = {
+            Unit(103, 30, 1, SDGO_HANGAR_GAME_TEST_PROTECTED_ACTIVE),
+            Unit(102, 20, 2),
+            Unit(101, 10, 3),
+        };
+        g_snapshot.active_slot = 1;
+    } else {
+        g_snapshot.needs_relog = 1;
+    }
+    g_snapshot.busy = 0;
+    g_snapshot.live_state =
+        SDGO_HANGAR_GAME_TEST_LIVE_IDLE;
+    ++g_snapshot.live_generation;
+    g_snapshot.live_result = result;
 }
 
 int __cdecl FakeStorageSnapshot(
@@ -587,18 +633,20 @@ void TestExplicitGbCommitRequiresTwoConfirmsAndRelog()
     CompleteGbSubmission();
     Check(
         pages.PollHangarCommitGB(&context) ==
-            PageTestActions::kGbSubmittedRelogRequired,
-        "GB submission passes after the exchange panel closes and requires relog");
+            PageTestActions::kGbCommittedLive,
+        "GB submission passes after the server's answers and the live hangar refresh");
     const auto state = pages.State();
     Check(
         state.scope ==
                 PageTestActions::
-                    kScopeGbSubmittedRelogRequired &&
+                    kScopeGbCommittedLive &&
             state.gb_preview_removed == 1 &&
-            state.snapshot.needs_relog &&
+            state.removed_after_refresh == 1 &&
+            state.active_uid_kept &&
+            !state.snapshot.needs_relog &&
             state.snapshot.visible &&
             !state.snapshot.busy,
-        "explicit GB receipt preserves the reviewed count, native page visibility and final relog state");
+        "explicit GB receipt removes exactly the reviewed duplicate live and keeps the active unit");
     Check(
         g_actionCalls[
             SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM] == 2 &&
@@ -606,10 +654,10 @@ void TestExplicitGbCommitRequiresTwoConfirmsAndRelog()
         "explicit GB scope performs exactly the two original Confirm actions");
     Check(
         pages.BeforeUnits().size() ==
-                pages.CurrentUnits().size() &&
+                pages.CurrentUnits().size() + 1 &&
             pages.BeforeUnits()[2].protection_flags ==
                 SDGO_HANGAR_GAME_TEST_PROTECTED_ACTIVE,
-        "submission keeps the observed protected-unit baseline for SQL and reconnect comparison");
+        "the refreshed cache lost one unit against the protected-unit baseline");
 
     ResetFixture(0, 0);
     PageTestActions empty;
@@ -632,6 +680,57 @@ void TestExplicitGbCommitRequiresTwoConfirmsAndRelog()
         !g_actionCalls[
             SDGO_HANGAR_GAME_TEST_ACTION_CONFIRM],
         "missing duplicate candidates never reach either Confirm action");
+}
+
+void TestSortRefreshesLive()
+{
+    ResetFixture();
+    auto context = Context();
+    PageTestActions pages;
+    pages.Bind(AllExports());
+    Check(
+        pages.PollHangarRead(&context) ==
+            PageTestActions::kReadReady,
+        "sort case captures the pre-sort inventory");
+    Check(
+        pages.PollHangarSort(&context) ==
+                PageTestActions::kActionAccepted &&
+            g_actionCalls[SDGO_HANGAR_GAME_TEST_ACTION_SORT] == 1,
+        "sort case issues exactly one original sort action");
+    Check(
+        pages.PollHangarSort(&context) ==
+            PageTestActions::kWaitingAction,
+        "sort waits while the Mod waits for the server and reloads pages");
+    CompleteSort(SDGO_HANGAR_GAME_TEST_LIVE_RESULT_REFRESHED);
+    Check(
+        pages.PollHangarSort(&context) ==
+            PageTestActions::kSortRefreshed,
+        "sort passes once the live refresh delivered the server order");
+    const auto state = pages.State();
+    Check(
+        state.scope ==
+                PageTestActions::kScopeSortRefreshed &&
+            state.slots_contiguous &&
+            state.active_uid_kept &&
+            state.current_unit_count == 3 &&
+            !state.snapshot.needs_relog,
+        "the refreshed hangar holds the same units in slots 1..N with the active unit kept");
+    Check(
+        pages.PollHangarSort(&context) ==
+                PageTestActions::kSortRefreshed &&
+            g_actionCalls[SDGO_HANGAR_GAME_TEST_ACTION_SORT] == 1,
+        "a finished sort case never sorts again");
+
+    ResetFixture();
+    PageTestActions failed;
+    failed.Bind(AllExports());
+    failed.PollHangarRead(&context);
+    failed.PollHangarSort(&context);
+    CompleteSort(SDGO_HANGAR_GAME_TEST_LIVE_RESULT_UNKNOWN);
+    Check(
+        failed.PollHangarSort(&context) ==
+            PageTestActions::kLiveRefreshFailed,
+        "an unconfirmed or incomplete refresh fails the sort case");
 }
 
 void TestUnsafeAndDriftFailures()
@@ -697,6 +796,7 @@ int main()
     TestNegativePreviewAndCancel();
     TestCandidatePreviewNeverConfirms();
     TestExplicitGbCommitRequiresTwoConfirmsAndRelog();
+    TestSortRefreshesLive();
     TestUnsafeAndDriftFailures();
     if (g_failures) {
         std::fprintf(

@@ -270,6 +270,7 @@ HangarPreviewGuardFaultProbe previewGuardFaults;
 HangarPreviewGuardActions previewGuardActions;
 SpecialTargetGuardActions specialTargetGuardActions;
 bool hangarConfirmGb = false;
+bool hangarSort = false;
 uint64_t deckUnitUids[4]{};
 char giftRecipient[17]{};
 uint32_t giftSenderPilot = 0, giftRecipientPilot = 0, giftCount = 0, giftSent = 0;
@@ -544,6 +545,10 @@ bool LoadPlan() {
     if(hangarConfirmFlag<0 || hangarConfirmFlag>1)return false;
     hangarConfirmGb=hangarConfirmFlag==1;
     if(hangarConfirmGb && !hangarPagesOnly)return false;
+    const auto hangarSortFlag=GetPrivateProfileIntW(L"run",L"hangar_sort",0,job.c_str());
+    if(hangarSortFlag<0 || hangarSortFlag>1)return false;
+    hangarSort=hangarSortFlag==1;
+    if(hangarSort && !hangarPagesOnly)return false;
     if(collectionDraw && !pagesOnly)return false;
     if(collectionPreviewOnly && (!pagesOnly || collectionDraw))return false;
     if(activityDrawOnce && (!unitPagesOnly || !collectionPreviewOnly || collectionDraw || !testUnitPresentations))return false;
@@ -609,7 +614,7 @@ bool LoadPlan() {
     roomSwitch=GetPrivateProfileIntW(L"run",L"room_switch",0,job.c_str())!=0;
     if(roomSwitch && (ocRoom || g1Room || ocAllocateStat<0 || !playUnitUid))return false;
     ocChallenge=GetPrivateProfileIntW(L"run",L"oc_challenge",0,job.c_str())!=0;
-    if(hangarConfirmGb && (ocPanel || loginRecovery.Enabled()))return false;
+    if((hangarConfirmGb || hangarSort) && (ocPanel || loginRecovery.Enabled()))return false;
     if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
     if(ocPanel && (!playUnitUid || (ocAllocateStat<0 && !hangarPagesOnly)))return false;
     if(testUnitPresentations && !playUnitUid)return false;
@@ -2502,30 +2507,57 @@ int __cdecl PreviewHangarPage(const SdgoGameTestContextV1* context) {
 int __cdecl CancelHangarPage(const SdgoGameTestContextV1* context) {
     return PageResult(context,pages.PollHangarCancel(context),PageTestActions::kCancelled);
 }
+void ObserveLive(const SdgoGameTestContextV1* context,const char* label,PageTestActions::Result result) {
+    const auto state=pages.State();
+    static uint32_t lastResult=UINT32_MAX,lastReceipt=UINT32_MAX,lastLive=UINT32_MAX;
+    const uint32_t live=state.snapshot.live_state|(state.snapshot.live_generation<<8);
+    if(state.result==lastResult && state.receipt_count==lastReceipt && live==lastLive)return;
+    char message[512];
+    sprintf_s(message,"native hangar %s result=%s stage=%u scope=%u units=%u/%u preview=%u armed=%u busy=%u relog=%u live=%u/%u result=%u pages=%u cleared=%u removed=%u active_kept=%u contiguous=%u actions=%u replies=%u receipts=%u",
+        label,PageTestActions::ResultName(result),state.stage,state.scope,state.before_unit_count,state.current_unit_count,
+        state.gb_preview_removed,state.snapshot.armed,state.snapshot.busy,state.snapshot.needs_relog,
+        state.snapshot.live_state,state.snapshot.live_generation,state.snapshot.live_result,state.snapshot.live_pages,
+        state.snapshot.live_cleared,state.removed_after_refresh,state.active_uid_kept,state.slots_contiguous,
+        state.snapshot.action_sequence,state.snapshot.reply_sequence,state.receipt_count);
+    context->Observe(message);lastResult=state.result;lastReceipt=state.receipt_count;lastLive=live;
+}
 int __cdecl ConfirmHangarGb(const SdgoGameTestContextV1* context) {
     const auto result=pages.PollHangarCommitGB(context);
-    const auto state=pages.State();
-    static uint32_t lastResult=UINT32_MAX,lastReceipt=UINT32_MAX;
-    if(state.result!=lastResult || state.receipt_count!=lastReceipt) {
-        char message[384];
-        sprintf_s(message,"native hangar GB result=%s stage=%u scope=%u units=%u/%u preview=%u armed=%u busy=%u relog=%u actions=%u replies=%u receipts=%u",
-            PageTestActions::ResultName(result),state.stage,state.scope,state.before_unit_count,state.current_unit_count,
-            state.gb_preview_removed,state.snapshot.armed,state.snapshot.busy,state.snapshot.needs_relog,
-            state.snapshot.action_sequence,state.snapshot.reply_sequence,state.receipt_count);
-        context->Observe(message);lastResult=state.result;lastReceipt=state.receipt_count;
-    }
+    ObserveLive(context,"GB",result);
     if(result>=PageTestActions::kInvalidContext || result==PageTestActions::kHangarUnavailable) {
-        context->Assert(0,"sealed native hangar GB confirmation rejected its candidate, identity, double confirmation or submit state");
+        context->Assert(0,"sealed native hangar GB confirmation rejected its candidate, identity, double confirmation, server answer or live refresh");
         return SDGO_GAME_TEST_FAIL;
     }
-    if(result!=PageTestActions::kGbSubmittedRelogRequired)return SDGO_GAME_TEST_WAIT;
+    if(result!=PageTestActions::kGbCommittedLive)return SDGO_GAME_TEST_WAIT;
+    const auto state=pages.State();
     context->Assert(state.gb_preview_removed>0,
         "the server-backed GB preview selected at least one genuine duplicate before confirmation");
-    context->Assert(state.scope==PageTestActions::kScopeGbSubmittedRelogRequired &&
-        state.snapshot.needs_relog && !state.snapshot.busy && !state.snapshot.armed,
-        "two original Confirm actions submit once, close the exchange panel and require reconnect verification");
-    context->Assert(state.layout_unchanged && state.active_slot_unchanged,
-        "the submission receipt retains the exact pre-transaction UID/slot/protection baseline for SQL and reconnect comparison");
+    context->Assert(state.scope==PageTestActions::kScopeGbCommittedLive &&
+        !state.snapshot.needs_relog && !state.snapshot.busy && !state.snapshot.armed &&
+        state.snapshot.live_result==SDGO_HANGAR_GAME_TEST_LIVE_RESULT_REFRESHED,
+        "two original Confirm actions submit once; the server's answers arrive and the hangar refreshes without a re-login");
+    context->Assert(state.removed_after_refresh==state.gb_preview_removed,
+        "exactly the previewed duplicates left the refreshed native hangar cache and every other unit remains");
+    context->Assert(state.active_uid_kept!=0,
+        "the active unit stays active after the live refresh");
+    return SDGO_GAME_TEST_PASS;
+}
+int __cdecl SortHangar(const SdgoGameTestContextV1* context) {
+    const auto result=pages.PollHangarSort(context);
+    ObserveLive(context,"sort",result);
+    if(result>=PageTestActions::kInvalidContext || result==PageTestActions::kHangarUnavailable) {
+        context->Assert(0,"the original sort action, the server's answer and the live hangar refresh complete");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(result!=PageTestActions::kSortRefreshed)return SDGO_GAME_TEST_WAIT;
+    const auto state=pages.State();
+    context->Assert(state.scope==PageTestActions::kScopeSortRefreshed && !state.snapshot.needs_relog &&
+        state.snapshot.live_result==SDGO_HANGAR_GAME_TEST_LIVE_RESULT_REFRESHED,
+        "the server sorted the hangar and the client refreshed it in the same session without a re-login");
+    context->Assert(state.current_unit_count==state.before_unit_count && state.slots_contiguous!=0,
+        "every unit is still present and the refreshed slots are the server's compacted order 1..N");
+    context->Assert(state.active_uid_kept!=0,
+        "the active unit keeps being the active unit at its new slot");
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl ReadOperatorCatalog(const SdgoGameTestContextV1* context) {
@@ -3232,7 +3264,9 @@ const SdgoGameTestCaseV1 pageCases[]={
     {"pages.capsule.currency",60000,&ReadCapsuleCurrency},
 };
 const SdgoGameTestCaseV1 hangarGbCase{
-    "pages.hangar.confirm_gb",120000,&ConfirmHangarGb};
+    "pages.hangar.confirm_gb",180000,&ConfirmHangarGb};
+const SdgoGameTestCaseV1 hangarSortCase{
+    "pages.hangar.sort",180000,&SortHangar};
 int CollectionResult(const SdgoGameTestContextV1* context,CapsuleDrawActions::Result result) {
     static uint32_t previous=UINT32_MAX,reply=UINT32_MAX;
     const auto s=collection.State();
@@ -5444,8 +5478,9 @@ void RegisterPlannedCases() {
                 provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
             }
             plannedCases.push_back(pageCases[0]);
+            if(hangarSort)plannedCases.push_back(hangarSortCase);
             if(hangarConfirmGb)plannedCases.push_back(hangarGbCase);
-            else plannedCases.insert(plannedCases.end(),std::begin(pageCases)+1,std::begin(pageCases)+3);
+            if(!hangarSort && !hangarConfirmGb)plannedCases.insert(plannedCases.end(),std::begin(pageCases)+1,std::begin(pageCases)+3);
             if(ocPanel)plannedCases.push_back(ocPanelCase);
             if(ocPanel && g1Room)plannedCases.push_back(g1PageCase);
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
