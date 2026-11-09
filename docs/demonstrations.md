@@ -44,4 +44,12 @@ AI wingmen join the team in cooperative missions.
 
 [Mission wingmen guide](coop-wingmen.md)
 
+## The factory's three enhancement systems
+
+The 终极强化 tab is the OC page; the 强化部件 tab switches between G改 2.0 and G改 1.0 with the buttons under its left panel, and G改 1.0 uses the original type bar, skill list and reset window.
+
+![The factory's OC page and the 强化部件 page switching between G改 2.0 and G改 1.0](room-systems-demo.webp)
+
+[Over-custom and per-room systems](over-custom.md)
+
 The relevant guides describe background, protocol and crash fixes. Fixes without visible interaction do not receive simulated demonstrations.

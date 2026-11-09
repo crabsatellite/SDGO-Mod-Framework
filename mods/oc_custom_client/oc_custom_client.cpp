@@ -1662,8 +1662,27 @@ bool RoomRuleKnown() {
 
 void LogMark(const char* message) { Log(SDGO_LOG_INFO, message); }
 
+// The lobby asks the World server for its mode itself: a player who goes
+// straight to the room list (never through the factory) still gets the room
+// marks and the create window's 体系 row.
+void AskModeFromLobby() noexcept {
+    static std::uint64_t last = 0;
+    auto& s = g_state_data;
+    const auto now = GetTickCount64();
+    if (s.mode_known || now - last < 3000) return;
+    last = now;
+    __try {
+        if (!TransportReady() || s.queued != Pending::none || s.outstanding != Pending::none) return;
+        s.queued = Pending::mode;
+        ArmTimer();
+        PumpQueue();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
 void __fastcall RoomListUpdateHook(void* service, void*) {
     g_room_list_update_original(service);
+    AskModeFromLobby();
     if (!RoomRuleKnown()) return;
     room_marks::MarkRoomList(service);
     room_marks::UpdateCreateWindow();
