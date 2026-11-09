@@ -73,8 +73,8 @@ def main():
     args=p.parse_args();directory=args.build_dir.resolve()
     if args.build:
         subprocess.run(['cmake','-S',str(ROOT),'-B',str(directory),'-A','Win32','-DBUILD_TESTING=ON'],check=True)
-        # The authoring tool embeds its optional importer binary; Stable still
-        # excludes that Beta Mod from the installable client catalog/payload.
+        # The Manager unit authoring tool embeds the importer binary, which it
+        # copies into each owner-generated unit client package.
         subprocess.run(['cmake','--build',str(directory),'--config','Release','--target','release_'+args.channel+'_payload','unit_catalog','sdgo_data','--parallel','3'],check=True)
         subprocess.run(['powershell.exe','-NoProfile','-File',str(ROOT/'tools/build_mod_manager.ps1'),'-BuildDir',str(directory)],
             check=True,env=dict(os.environ,SDGO_RELEASE_VERSION=args.version))

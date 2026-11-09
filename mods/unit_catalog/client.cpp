@@ -140,6 +140,15 @@ bool ValidateReferences(void* grid) {
                     static_cast<unsigned long>(entry.id),static_cast<unsigned long>(funnel));
                 return false;
             }
+            // The native table loader (00431E50) files gdrs\0265.gdt and
+            // gdrs\0064.gdt as kind 12. A weapon whose special feature is not
+            // in that set crashes the client when the feature triggers on a hit.
+            const uint32_t feature=U32(entry.bytes.data()+kWeaponSpecialFeatureOffset);
+            if (feature && !ReferenceExists(grid,feature,kSpecialFeatureType)) {
+                g_api->Log(g_mod,SDGO_LOG_ERROR,"weapon %lu special feature %lu is unavailable",
+                    static_cast<unsigned long>(entry.id),static_cast<unsigned long>(feature));
+                return false;
+            }
         } else if (entry.kind == kSkillType) {
             // Original skill activation 0066C580 resolves this DWORD through
             // the same kind-13 lookup, including the linked record's link.

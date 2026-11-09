@@ -2,7 +2,7 @@
   "schema_version": 1,
   "distribution": "public",
   "id": "unit_catalog_server",
-  "title": "机体导入服务端绑定（Beta）",
+  "title": "机体导入服务端绑定",
   "description": "读取配套定义与安装记录，绑定已支持的技能，捕获形态初始化状态，并按 v2 宿主许可校验原生变形请求；入口形态之后的第三形态会被写入原生未激活槽。",
   "hosts": ["battle"],
   "category": "gameplay",
