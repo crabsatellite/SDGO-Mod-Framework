@@ -720,6 +720,12 @@ void TestSortRefreshesLive()
                 PageTestActions::kSortRefreshed &&
             g_actionCalls[SDGO_HANGAR_GAME_TEST_ACTION_SORT] == 1,
         "a finished sort case never sorts again");
+    Check(
+        pages.PollHangarCommitGB(&context) ==
+                PageTestActions::kActionAccepted &&
+            pages.PollHangarCommitGB(&context) ==
+                PageTestActions::kPreviewStepDone,
+        "a GB case after the sort starts from the refreshed server order");
 
     ResetFixture();
     PageTestActions failed;

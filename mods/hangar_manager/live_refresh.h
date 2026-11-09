@@ -9,9 +9,11 @@
 // with the native REQ_UNIT_SLOT_PAGE request 0x04FF (page p = slots 6p+1..6p+6,
 // read from the database by sp_GetUserUnitPage_V2), writes each 0x08F2 record
 // through the native CUnitInfo::SyncFullData, clears occupied slots that no
-// page reported, and re-requests the user info (0x06B3) so the active-unit
-// record and the GB balance follow. No record is fabricated; anything missing
-// leaves the old "re-login" path in place.
+// page reported, and re-requests the user info (0x06B3). Its 0x05C1 reply
+// rebuilds the active-unit record (whose slot moves with a sort) and the GB
+// balance, so the refresh ends only once that reply has been handled. No
+// record is fabricated; anything missing leaves the old "re-login" path in
+// place.
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -26,6 +28,7 @@ constexpr uint16_t kPageRequest = 0x04FF;
 constexpr uint16_t kPageReply = 0x08F2;
 constexpr uint16_t kPageError = 0x09E4;
 constexpr uint16_t kUserInfoRequest = 0x06B3;
+constexpr uint16_t kUserInfoReply = 0x05C1;
 constexpr size_t kRecordBytes = 0x99;
 constexpr size_t kPageSlots = 6;
 constexpr size_t kMaxPageBytes = 7 + kPageSlots * kRecordBytes;
@@ -44,6 +47,7 @@ inline bool Capture(uint16_t opcode, const uint8_t* bytes, Packet* out) {
     if (!bytes || !out) return false;
     if (opcode == kSendOk) size = 6;
     else if (opcode == kSendRefused || opcode == kPageError) size = 8;
+    else if (opcode == kUserInfoReply) size = 2;  // only its arrival matters
     else if (opcode == kPageReply) {
         const uint8_t count = bytes[6];
         if (count > kPageSlots) return false;
@@ -57,7 +61,7 @@ inline bool Capture(uint16_t opcode, const uint8_t* bytes, Packet* out) {
     return true;
 }
 
-enum class State : uint32_t { Idle = 0, AwaitAck = 1, Reload = 2 };
+enum class State : uint32_t { Idle = 0, AwaitAck = 1, Reload = 2, AwaitInfo = 3 };
 enum class Result : uint32_t { None = 0, Refreshed = 1, Refused = 2, Unknown = 3 };
 
 struct Io {
@@ -84,6 +88,7 @@ public:
         seen_.assign(kMaxSlots + 1, 0);
         answered_.assign(kMaxSlots / kPageSlots + 1, 0);
         answeredPages_ = emptyReplies_ = 0;
+        infoSeen_ = infoSeenEarlier_ = false;
     }
     void SendsDone() { sendsDone_ = true; }
     void Abort() { if (state_ != State::Idle) Finish(Result::Unknown); }
@@ -97,6 +102,14 @@ public:
             if (refused_) return Finish(Result::Refused);
             if (sendsDone_ && ok_ >= expected_) StartReload(now, capacity);
             else if (now >= ackDeadline_) return Finish(Result::Unknown);
+        }
+        if (state_ == State::AwaitInfo) {
+            // The pre-handler copies 0x05C1 before the native handler applies
+            // it, so success is reported one tick after the reply was seen.
+            if (infoSeenEarlier_) return Finish(Result::Refreshed);
+            if (infoSeen_) { infoSeenEarlier_ = true; return false; }
+            if (now >= reloadDeadline_) return Finish(Result::Unknown);
+            return false;
         }
         if (state_ != State::Reload) return false;
         // A page error or a record the client cannot hold ends the reload at once;
@@ -119,8 +132,11 @@ public:
                 if (io.clear) io.clear(io.user, static_cast<uint16_t>(slot));
                 ++cleared_;
             }
-            if (io.user_info) io.user_info(io.user);
-            return Finish(Result::Refreshed);
+            if (!io.user_info || !io.user_info(io.user)) return Finish(Result::Unknown);
+            state_ = State::AwaitInfo;
+            infoSeen_ = infoSeenEarlier_ = false;
+            reloadDeadline_ = now + kInfoTimeout;
+            return false;
         }
         if (now >= reloadDeadline_) return Finish(Result::Unknown);
         return false;
@@ -144,6 +160,10 @@ private:
         reloadDeadline_ = now + reloadTimeout_;
     }
     void Consume(const Packet& p, uint32_t capacity, const Io& io) {
+        if (state_ == State::AwaitInfo) {
+            if (p.opcode == kUserInfoReply) infoSeen_ = true;
+            return;
+        }
         if (state_ == State::AwaitAck) {
             if (p.opcode == kSendOk) ++ok_;
             else if (p.opcode == kSendRefused) ++refused_;
@@ -187,6 +207,8 @@ private:
     uint32_t pages_ = 0, nextPage_ = 0, replies_ = 0, errors_ = 0, written_ = 0, cleared_ = 0;
     std::vector<uint8_t> seen_, answered_;
     uint32_t answeredPages_ = 0, emptyReplies_ = 0;
+    bool infoSeen_ = false, infoSeenEarlier_ = false;
+    static constexpr uint64_t kInfoTimeout = 10000;
 };
 
 } // namespace sdgo::hangar::live

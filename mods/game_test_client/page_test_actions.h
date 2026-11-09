@@ -543,6 +543,8 @@ public:
             return Publish(kSortLayoutMismatch);
         scope_ = kScopeSortRefreshed;
         sortStage_ = 2;
+        // The verified server order is the inventory the next case starts from.
+        SaveBaseline();
         return Publish(kSortRefreshed);
     }
 

@@ -78,8 +78,8 @@ guessed. Owners can export the base rules read-only with
   every expected `0x06AD` it requests each slot page with the native `REQ_UNIT_SLOT_PAGE` `0x04FF`
   (page *p* = slots 6*p*+1–6*p*+6, read from the database by `sp_GetUserUnitPage_V2`), writes each `0x08F2`
   record through the native `CUnitInfo::SyncFullData`, clears occupied slots that no page reported
-  (`hangar.slot_clear`), asks for the user info again (`0x06B3`, whose `0x05C1` reply rebuilds the
-  active-unit record and the GB balance) and redraws the page. A missing answer, a page error or a record
+  (`hangar.slot_clear`), asks for the user info again (`0x06B3`) and waits for its `0x05C1` reply, which rebuilds the
+  active-unit record (whose slot moves with a sort) and the GB balance, before it redraws the page. A missing answer, a page error or a record
   outside the client's allocated slots leaves the cache as it was and falls back to the re-login message.
 - The sort transaction changes only `tbl_UserUnits.UserUnitSlotNumber` and verifies all other columns.
 - The deletion trigger rejects a statement whose `deleted` set contains more than one `AccountNumber`.

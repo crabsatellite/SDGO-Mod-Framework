@@ -65,6 +65,24 @@ live::Packet Ack(uint16_t opcode) {
     return p;
 }
 
+// The 0x05C1 user-info reply; only its arrival matters to the refresh.
+live::Packet Info() {
+    uint8_t bytes[2] = {};
+    const uint16_t op = live::kUserInfoReply;
+    std::memcpy(bytes, &op, 2);
+    live::Packet p;
+    assert(live::Capture(op, bytes, &p) && p.size == 2);
+    return p;
+}
+
+// Waits out the user-info reply: seen on one tick, reported on the next.
+bool AwaitInfo(live::Refresh& r, uint64_t now, uint32_t capacity, const live::Io& io) {
+    assert(r.state() == live::State::AwaitInfo);
+    assert(!r.Tick(now, capacity, {}, io) && r.state() == live::State::AwaitInfo);
+    assert(!r.Tick(now + 1, capacity, {Info()}, io) && r.state() == live::State::AwaitInfo);
+    return r.Tick(now + 2, capacity, {}, io);
+}
+
 // A 0x08F2 page carrying (slot, type) records.
 struct Rec {
     uint16_t slot;
@@ -110,7 +128,9 @@ void TestSortRefresh() {
     assert(r.pages() == 2 && f.requestedPages == std::vector<uint32_t>({0, 1}));
     // Server order after the sort: slots 1..3 hold 300, 200, 100; page 1 is empty.
     assert(!r.Tick(30, 12, {Page({{1, 300}, {2, 200}, {3, 100}})}, io));
-    assert(r.Tick(40, 12, {Page({})}, io));
+    // A 0x05C1 that arrives before the user info was requested does not count.
+    assert(!r.Tick(40, 12, {Info(), Page({})}, io) && f.userInfo == 1);
+    assert(AwaitInfo(r, 50, 12, io));
     assert(r.result() == live::Result::Refreshed && r.state() == live::State::Idle && r.generation() == 1);
     assert(f.cache.size() == 3 && f.cache[1] == 300 && f.cache[2] == 200 && f.cache[3] == 100);
     assert(f.cleared == std::vector<uint16_t>({5}) && r.cleared() == 1 && f.userInfo == 1);
@@ -138,6 +158,24 @@ void TestRefusedAndTimeout() {
     assert(!r.Tick(2, 12, {Page({})}, io));
     assert(r.Tick(5000, 12, {}, io) && r.result() == live::Result::Unknown);
     assert(f.cleared.empty() && f.cache.size() == 1);
+
+    // The user-info reply never arrives: the slots are written but the active
+    // unit and GB cannot be confirmed (re-login path).
+    r.Begin(1, 0, 1000, 2000);
+    r.SendsDone();
+    r.Tick(1, 6, {Ack(live::kSendOk)}, io);
+    assert(!r.Tick(2, 6, {Page({{1, 100}})}, io) && r.state() == live::State::AwaitInfo);
+    assert(!r.Tick(9000, 6, {}, io));
+    assert(r.Tick(10002, 6, {}, io) && r.result() == live::Result::Unknown);
+
+    // The user-info request cannot be sent.
+    Fake noInfo;
+    auto noInfoIo = MakeIo(noInfo);
+    noInfoIo.user_info = [](void*) { return false; };
+    r.Begin(1, 0, 1000, 2000);
+    r.SendsDone();
+    r.Tick(1, 6, {Ack(live::kSendOk)}, noInfoIo);
+    assert(r.Tick(2, 6, {Page({{1, 100}})}, noInfoIo) && r.result() == live::Result::Unknown);
 
     // A page error keeps the old cache (re-login path).
     r.Begin(1, 0, 1000, 2000);
@@ -171,7 +209,8 @@ void TestCapacityAndDuplicates() {
     r.Tick(1, 18, {Ack(live::kSendOk)}, io);
     assert(r.pages() == 3);
     assert(!r.Tick(2, 18, {Page({{1, 100}}), Page({{1, 100}}), Page({{7, 200}})}, io));
-    assert(r.Tick(3, 18, {Page({{13, 300}})}, io) && r.result() == live::Result::Refreshed);
+    assert(!r.Tick(3, 18, {Page({{13, 300}})}, io));
+    assert(AwaitInfo(r, 4, 18, io) && r.result() == live::Result::Refreshed);
 
     // GB batch: one answer per message, the reload waits for all of them.
     f = Fake{};
@@ -182,7 +221,8 @@ void TestCapacityAndDuplicates() {
     r.SendsDone();
     assert(!r.Tick(2, 6, {}, io) && r.state() == live::State::AwaitAck);
     assert(!r.Tick(3, 6, {Ack(live::kSendOk)}, io) && r.state() == live::State::Reload);
-    assert(r.Tick(4, 6, {Page({{1, 100}, {2, 100}})}, io) && r.result() == live::Result::Refreshed);
+    assert(!r.Tick(4, 6, {Page({{1, 100}, {2, 100}})}, io));
+    assert(AwaitInfo(r, 5, 6, io) && r.result() == live::Result::Refreshed);
     assert(f.cache.size() == 2 && f.cleared == std::vector<uint16_t>({3}));
 }
 

@@ -6,6 +6,7 @@ from tests import test_game_test as runner_tests
 gt=runner_tests.game_test
 HANGAR=('pages.hangar.read','pages.hangar.preview','pages.hangar.cancel')
 HANGAR_CONFIRM=('pages.hangar.read','pages.hangar.confirm_gb')
+HANGAR_SORT_CONFIRM=('pages.hangar.read','pages.hangar.sort','pages.hangar.confirm_gb')
 
 class PageGroupTests(unittest.TestCase):
     def setUp(self):
@@ -13,7 +14,7 @@ class PageGroupTests(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.cleanup_fixture)
         manifest=self.fixture.stage/'client/sdgo/mods/game_test_client/mod.ini'
-        data=gt.read_ini(manifest);data['mod']['version']='0.1.20';gt.write_ini(manifest,data)
+        data=gt.read_ini(manifest);data['mod']['version']='0.1.27';gt.write_ini(manifest,data)
 
     def cleanup_fixture(self):
         try:self.fixture.tearDown()
@@ -57,6 +58,29 @@ class PageGroupTests(unittest.TestCase):
         cases=gt.required_cases_for_plan(public)
         self.assertNotIn('pages.hangar.preview',cases)
         self.assertNotIn('pages.hangar.cancel',cases)
+
+    def test_sort_is_sealed_before_the_gb_confirmation(self):
+        prepared=self.fixture.prepare(
+            'hangar-sort-gb',
+            pages_only=True,
+            page_group='hangar',
+            hangar_sort=True,
+            hangar_confirm_gb=True,
+        )
+        plan=json.loads((prepared/'run.json').read_text())
+        self.assertEqual(
+            gt.required_cases_for_plan(plan['plan']),
+            gt.FLOW_CASES[:3]+HANGAR_SORT_CONFIRM,
+        )
+        public=gt.read_public_plan(self.fixture.root/'hangar-sort-gb'/'client')
+        self.assertTrue(public['hangar_sort'] and public['hangar_confirm_gb'])
+
+    def test_live_refresh_checks_require_the_live_refresh_client(self):
+        manifest=self.fixture.stage/'client/sdgo/mods/game_test_client/mod.ini'
+        data=gt.read_ini(manifest);data['mod']['version']='0.1.26';gt.write_ini(manifest,data)
+        for name,options in [('old-sort',dict(hangar_sort=True)),('old-live-gb',dict(hangar_confirm_gb=True))]:
+            with self.subTest(name=name),self.assertRaisesRegex(gt.GameTestError,'0.1.27'):
+                self.fixture.prepare(name,pages_only=True,page_group='hangar',**options)
 
     def test_group_rejects_unknown_or_mutating_scope(self):
         for options in [dict(page_group='hangar'),dict(pages_only=True,page_group='storage'),

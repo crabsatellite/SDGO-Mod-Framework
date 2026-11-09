@@ -173,6 +173,11 @@ int main(){
     // Server order after the sort; the former slot 8 is now empty.
     fixture::ReplyPage({{102,40,1},{105,20,2},{104,10,3},{103,10,4},{101,10,5}});fixture::ReplyPage({});
     g_nextTick=0;Pump();
+    // The active-unit slot and GB follow the 0x05C1 user-info reply; success is
+    // reported one pump after the reply was copied off the receive path.
+    assert(Busy() && fixture::userInfo==1 && g_live.state()==sdgo::hangar::live::State::AwaitInfo);
+    fixture::Reply(0x5C1);g_nextTick=0;Pump();assert(Busy());
+    g_nextTick=0;Pump();
     assert(!Busy() && !g_needsRelog && g_live.result()==sdgo::hangar::live::Result::Refreshed && g_live.cleared()==1);
     s=fixture::Capture();
     assert(s.units.size()==5 && ById(s,102)->slot==1 && ById(s,105)->slot==2 && ById(s,104)->slot==3 && ById(s,101)->slot==5);
@@ -213,6 +218,8 @@ int main(){
         std::vector<fixture::Row> first,second;
         for(const auto& r:rows)(r.slot<=6?first:second).push_back(r);
         fixture::ReplyPage(first);fixture::ReplyPage(second);g_nextTick=0;Pump();
+        assert(Busy() && fixture::userInfo==1);
+        fixture::Reply(0x5C1);g_nextTick=0;Pump();g_nextTick=0;Pump();
         assert(!Busy() && !g_needsRelog && fixture::owned.size()==4 && !ById(fixture::Capture(),removed) && fixture::userInfo==1);
         assert(page_fixture::children.at(L"ModHangarNotice0")->text.find(L"已回收 1 台")!=std::wstring::npos);
     }

@@ -391,6 +391,8 @@ Adding `--hangar-sort` presses the original sort button and requires the live re
 answer arrives, every unit is still present in slots 1..N and the active unit stays active, without a
 re-login. `--hangar-confirm-gb` (task-owned or restored test data only: it really dismantles units)
 confirms one GB batch and requires that exactly the previewed duplicates leave the refreshed page.
+The account needs a duplicate candidate: more than `KeepCopies` (default 2) unlocked, level-1 copies
+of a unit type that has a GB rule. After `--hangar-sort`, the GB case starts from the sorted order.
 It also opens native storage, waits for its real message loop and server list
 reply, and confirms one claim batch. An empty batch only covers the empty-storage path.
 Capsule cases read all five native catalog tables and enter the actual page to

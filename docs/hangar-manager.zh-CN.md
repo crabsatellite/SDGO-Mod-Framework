@@ -83,7 +83,7 @@ python export_hangar_rules.py --server-ini "D:\Server\StoreServer.ini" --output 
 
 - 整理和 GB 批量请求借用原生邮件发送 `0x0891`（345 字节），服务端从自身账号上下文派生归属，玩家不传入目标账号。
   服务端完成后写入独立回执表，由 Manager 读回。
-- 当场刷新：World 的 `CRequest::ReqSendMsg` 调用邮件过程，该过程同步执行机库指令，之后对每次发送回复 `0x06AD`（已提交）或 `0x079F`（被拒绝）。客户端 Mod 从原生接收预处理（`hangar.packet_prehandler`）复制这些回复；收齐预期的 `0x06AD` 后，用原生 `REQ_UNIT_SLOT_PAGE` `0x04FF` 请求每一页槽位（第 *p* 页为槽位 6*p*+1–6*p*+6，由 `sp_GetUserUnitPage_V2` 从数据库读取），把每条 `0x08F2` 记录交给原生 `CUnitInfo::SyncFullData` 写入，清除没有任何一页报告的已占用槽位（`hangar.slot_clear`），再请求一次用户信息（`0x06B3`，其 `0x05C1` 回复会重建出击机体记录和 GB 余额），最后重绘页面。缺少回复、页面出错或记录超出客户端已分配的槽位时，缓存保持原样，并回到提示重新登录的流程。
+- 当场刷新：World 的 `CRequest::ReqSendMsg` 调用邮件过程，该过程同步执行机库指令，之后对每次发送回复 `0x06AD`（已提交）或 `0x079F`（被拒绝）。客户端 Mod 从原生接收预处理（`hangar.packet_prehandler`）复制这些回复；收齐预期的 `0x06AD` 后，用原生 `REQ_UNIT_SLOT_PAGE` `0x04FF` 请求每一页槽位（第 *p* 页为槽位 6*p*+1–6*p*+6，由 `sp_GetUserUnitPage_V2` 从数据库读取），把每条 `0x08F2` 记录交给原生 `CUnitInfo::SyncFullData` 写入，清除没有任何一页报告的已占用槽位（`hangar.slot_clear`），再请求一次用户信息（`0x06B3`），等到其 `0x05C1` 回复重建出击机体记录（整理后其槽位会变化）和 GB 余额后，才重绘页面。缺少回复、页面出错或记录超出客户端已分配的槽位时，缓存保持原样，并回到提示重新登录的流程。
 - 排序事务只改 `tbl_UserUnits.UserUnitSlotNumber`，按旧排序脚本的顺序生成槽位，再逐列核对其他机体数据。
 - 删除触发器会检查整条语句的 `deleted` 集合；只要同时出现两个 `AccountNumber` 就拒绝并回滚。审计写入与调用者使用
   同一事务，因此原生操作失败或外层事务回滚时，不会留下错误的审计记录。审计不保存 SQL 文本或凭据。
