@@ -8,14 +8,16 @@ namespace {
 struct Server {
     Tab tab=Tab::Items;std::vector<Entry> rewards;
     std::set<Key> refuseCheck,refuseClaim,choice;
-    std::deque<Request> queue;uint32_t maxInFlight=0,sent=0,checks=0,claims=0,lists=0;
+    std::deque<Request> queue;uint32_t maxInFlight=0,maxClaimsInFlight=0,sent=0,checks=0,claims=0,lists=0;
+    bool newestFirst=false; // the World may answer concurrent requests out of send order
     void Pump(Batch& b,uint64_t now=1) {
         while(const auto r=b.Next()){b.Sent(*r,now,true);queue.push_back(*r);++sent;
             if(r->operation==Operation::Check)++checks;if(r->operation==Operation::Claim)++claims;if(r->operation==Operation::List)++lists;}
         maxInFlight=std::max<uint32_t>(maxInFlight,static_cast<uint32_t>(queue.size()));
+        maxClaimsInFlight=std::max<uint32_t>(maxClaimsInFlight,static_cast<uint32_t>(std::count_if(queue.begin(),queue.end(),[](const Request& r){return r.operation==Operation::Claim;})));
     }
     void Answer(Batch& b) {
-        const auto r=queue.front();queue.pop_front();
+        const auto r=newestFirst?queue.back():queue.front();if(newestFirst)queue.pop_back();else queue.pop_front();
         if(r.operation==Operation::List) {
             std::vector<Entry> page;const size_t first=static_cast<size_t>(r.page)*5;
             for(size_t i=first;i<rewards.size() && i<first+5;++i)page.push_back(rewards[i]);
@@ -36,11 +38,18 @@ Server Items(uint64_t count){Server s;for(uint64_t i=1;i<=count;++i)s.rewards.pu
 Server Gifts(uint64_t count){Server s;s.tab=Tab::Gifts;for(uint64_t i=1;i<=count;++i)s.rewards.push_back({{0xF0000000ULL+i,i*1234567890123ULL},false});return s;}
 }
 int main() {
-    // Twelve items over three pages: three list reads, then twelve preflights and
-    // twelve claims in flight together (window 16), then one refreshing read.
+    // Twelve items over three pages: three list reads, twelve preflights in flight
+    // together (window 16), twelve claims back to back, then one refreshing read.
     {auto s=Items(12);Batch b;assert(b.Start(Tab::Items,7,12,5000,0,16));s.Run(b);
      assert(b.phase()==Phase::Complete && b.completed()==12 && s.rewards.empty() && b.collected()==12);
-     assert(s.lists==4 && s.checks==12 && s.claims==12 && s.maxInFlight==12 && b.rounds()==1 && !b.Next());}
+     assert(s.lists==4 && s.checks==12 && s.claims==12 && s.maxInFlight==12 && s.maxClaimsInFlight==1 && b.rounds()==1 && !b.Next());}
+    // Answers out of send order, refusals included, still settle every reward exactly once.
+    {auto s=Items(12);s.newestFirst=true;s.refuseCheck.insert(s.rewards[3].key);s.refuseCheck.insert(s.rewards[9].key);
+     s.refuseClaim.insert(s.rewards[6].key);Batch b;b.Start(Tab::Items,7,12,5000,0,8);s.Run(b);
+     assert(b.phase()==Phase::Complete && b.completed()==9 && b.skipped()==3 && s.rewards.size()==3 && !b.Outstanding());
+     for(const auto& e:s.rewards)assert(e.key==Items(12).rewards[3].key || e.key==Items(12).rewards[6].key || e.key==Items(12).rewards[9].key);}
+    {auto s=Gifts(9);s.newestFirst=true;s.choice.insert(s.rewards[4].key);Batch b;b.Start(Tab::Gifts,7,9,5000,0,8);s.Run(b);
+     assert(b.phase()==Phase::Complete && b.completed()==8 && b.manual()==1 && !s.rewards[4].claimed);}
     // The window bounds requests awaiting an answer.
     {auto s=Items(12);Batch b;assert(b.Start(Tab::Items,7,12,5000,0,3));s.Run(b);assert(b.completed()==12 && s.maxInFlight==3);}
     {Batch b;assert(!b.Start(Tab::Items,7,1,10,0,0) && !b.Start(Tab::Items,7,1,10,0,Batch::kMaxDepth+1) && !b.Start(Tab::Items,0,1,10,0));}
@@ -61,23 +70,23 @@ int main() {
      assert(b.Waiting(Operation::Check) && s.queue.size()==6);s.Answer(b);b.Stop(Reason::Cancelled);
      assert(b.phase()==Phase::Stopped && b.Outstanding() && !b.Next() && !b.Start(Tab::Items,7,6,10,3));
      while(!s.queue.empty())s.Answer(b);assert(!b.Outstanding() && s.claims==0 && b.completed()==0);}
-    // Stop during claims: claims already sent finish, no new claim is sent.
+    // Stop during claims: the claim already sent finishes, no new claim is sent.
     {auto s=Items(6);Batch b;b.Start(Tab::Items,7,6,5000,0,4);
      for(int n=0;n<6+2;++n){s.Pump(b);s.Answer(b);} // two lists, six preflights
-     s.Pump(b);assert(b.Waiting(Operation::Claim) && s.queue.size()==4);s.Answer(b);b.Stop(Reason::Cancelled);
+     s.Pump(b);assert(b.Waiting(Operation::Claim) && s.queue.size()==1);s.Answer(b);s.Pump(b);b.Stop(Reason::Cancelled);
      assert(b.Busy() && !b.Next());while(!s.queue.empty())s.Answer(b);
-     assert(b.phase()==Phase::Stopped && b.completed()==4 && s.rewards.size()==2 && s.claims==4 && !b.Next());}
+     assert(b.phase()==Phase::Stopped && b.completed()==2 && s.rewards.size()==4 && s.claims==2 && !b.Next());}
     // A claim without an answer is Unknown; its late grant still counts.
     {auto s=Items(1);Batch b;b.Start(Tab::Items,7,1,10,0);s.Pump(b);s.Answer(b);s.Pump(b);s.Answer(b);s.Pump(b,100);
-     b.Tick(20000,10000);assert(b.phase()==Phase::Unknown && b.reason()==Reason::Timeout && !b.Next() && !b.Start(Tab::Items,7,1,10,20001));
+     b.Tick(100,10000);b.Tick(20000,10000);assert(b.phase()==Phase::Unknown && b.reason()==Reason::Timeout && !b.Next() && !b.Start(Tab::Items,7,1,10,20001));
      s.Answer(b);assert(b.completed()==1 && b.phase()==Phase::Stopped && !b.Outstanding());}
     // A preflight without an answer only stops the batch.
-    {auto s=Items(1);Batch b;b.Start(Tab::Items,7,1,10,0);s.Pump(b);s.Answer(b);s.Pump(b,100);b.Tick(20000,10000);
+    {auto s=Items(1);Batch b;b.Start(Tab::Items,7,1,10,0);s.Pump(b);s.Answer(b);s.Pump(b,100);b.Tick(100,10000);b.Tick(20000,10000);
      assert(b.phase()==Phase::Stopped && b.reason()==Reason::Timeout && b.Outstanding());s.Answer(b);assert(!b.Outstanding() && !s.claims);}
-    // Disconnect while claims are out: Unknown, never retried.
+    // Disconnect while a claim is out: Unknown, never retried.
     {auto s=Items(3);Batch b;b.Start(Tab::Items,7,3,10,0);for(int n=0;n<4;++n){s.Pump(b);s.Answer(b);}s.Pump(b);
      assert(b.Waiting(Operation::Claim));b.Disconnect();assert(b.phase()==Phase::Unknown && !b.Next());
-     while(!s.queue.empty())s.Answer(b);assert(b.completed()==3 && b.phase()==Phase::Stopped);}
+     while(!s.queue.empty())s.Answer(b);assert(b.completed()==1 && b.phase()==Phase::Stopped && s.claims==1);}
     // A granted item that is still listed means the server did not do what it said.
     {Batch b;b.Start(Tab::Items,7,1,10,0);const Key k{4,0};
      auto r=b.Next();b.Sent(*r,1,true);b.ListReply(Tab::Items,1,{{k,false}});r=b.Next();b.Sent(*r,1,true);b.CheckReply(k,true);
@@ -88,9 +97,13 @@ int main() {
      auto r=b.Next();b.Sent(*r,1,true);b.ListReply(Tab::Items,1,{{k,false}});r=b.Next();b.Sent(*r,1,true);b.CheckReply(k,true);
      r=b.Next();b.Sent(*r,1,true);b.ClaimReply({5,0},true);assert(b.phase()==Phase::Unknown && b.Outstanding() && !b.completed());
      b.ClaimReply(k,true);assert(b.completed()==1 && !b.Outstanding());}
-    // A preflight success naming a different reward stops before any claim.
+    // A preflight success naming a reward that was never requested stops before any claim.
     {Batch b;b.Start(Tab::Items,7,2,10,0);auto r=b.Next();b.Sent(*r,1,true);b.ListReply(Tab::Items,2,{{{4,0},false},{{5,0},false}});
-     r=b.Next();b.Sent(*r,1,true);r=b.Next();b.Sent(*r,1,true);b.CheckReply({5,0},true);assert(b.reason()==Reason::Changed && !b.Next());}
+     r=b.Next();b.Sent(*r,1,true);r=b.Next();b.Sent(*r,1,true);b.CheckReply({5,0},true);assert(!b.Next() && b.Busy());
+     b.CheckReply({6,0},true);assert(b.reason()==Reason::Changed && !b.Next());}
+    // Silence, not the age of the oldest request, decides the timeout.
+    {auto s=Items(3);Batch b;b.Start(Tab::Items,7,3,10,0);s.Pump(b,0);s.Answer(b);s.Pump(b,0);
+     b.Tick(9000,10000);s.Answer(b);b.Tick(15000,10000);assert(b.Busy());b.Tick(26000,10000);assert(b.reason()==Reason::Timeout);}
     // A failed claim send is Unknown; a failed list/preflight send only stops.
     {auto s=Items(1);Batch b;b.Start(Tab::Items,7,1,10,0);s.Pump(b);s.Answer(b);s.Pump(b);s.Answer(b);
      const auto r=b.Next();assert(r && r->operation==Operation::Claim);b.Sent(*r,1,false);assert(b.phase()==Phase::Unknown && b.Outstanding());}

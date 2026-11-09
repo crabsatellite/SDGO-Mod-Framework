@@ -13,9 +13,9 @@ subsequent requests. Already submitted claims remain subject to the server's
 final result.
 
 Each reward still uses the original authenticated preflight and claim protocol,
-but requests are pipelined (by default up to 8 awaiting an answer) instead of
-one request and one list reload per reward, so dozens of rewards usually finish
-within seconds. Stable IDs distinguish separate copies of the same item; gift
+but all preflights are sent together (by default up to 8 awaiting an answer)
+and the allowed rewards are then claimed back to back, with no list reload in
+between, so dozens of rewards usually finish within seconds. Stable IDs distinguish separate copies of the same item; gift
 letters already claimed are skipped. A reward the server refuses (for example a
 full hangar) is skipped and counted while the rest is claimed; the summary shows
 the count and server code instead of one native failure dialog per reward.
@@ -38,11 +38,14 @@ it stop with a notice.
 The 450×540 native `1396.uir` layout places the new 124×23 button at (291,64)
 and the status line at y=520, clear of existing rows, pagination, expiration
 warning and close controls. The Mod uses host-allocated skins and controls.
-The World answers requests of one connection one at a time and in order, and
-each claim is a self-contained stored-procedure call that does not depend on a
-preceding preflight, so requests can be pipelined: success replies carry the
-reward ID and are matched exactly; error replies (no ID) belong to the oldest
-outstanding request of their kind. Mod list requests mark the page as loading
+Each preflight and claim is a self-contained stored-procedure call that does not
+depend on a preceding preflight, so requests can be submitted back to back. The
+World answers every request once, but concurrent requests may be answered out of
+send order: success replies are matched by reward ID; error replies carry no ID,
+are counted, and once every other outstanding request of the kind has answered,
+the unanswered ones are the refused rewards. A grant takes the account's shop lock,
+so claims are sent one after another; the timeout measures how long no answer
+arrived. Mod list requests mark the page as loading
 like the stock sender; the final reload waits while the stock grant handler is
 reloading the list itself. Delayed cancelled preflight replies are consumed to
 prevent native auto-claim. Successful claims still pass through the game's

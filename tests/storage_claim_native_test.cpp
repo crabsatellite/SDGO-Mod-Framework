@@ -13,7 +13,7 @@ std::array<uint8_t,0x500> app{};
 std::vector<Entry> rewards;std::deque<std::vector<uint8_t>> pending;
 std::vector<uint8_t> rows;uint32_t total=0;int sends=0,grants=0,nativeChecks=0,nativeErrors=0,manual=0;
 int appCalls=0;size_t maxPending=0;
-bool rejected=false,selection=false,claimRefused=false;
+bool rejected=false,selection=false,claimRefused=false,newestFirst=false;
 std::vector<uint32_t> originalReplySequences;
 void __cdecl Log(SdgoMod*,int,const char*,...){}
 uint8_t* __cdecl Session(){return connection.data();}
@@ -44,7 +44,7 @@ void Setup(Tab tab=Tab::Items,uint64_t count=12) {
     if(g_timer){KillTimer(nullptr,g_timer);g_timer=0;}g_ui.Detach();storage_fixture::Setup();
     rewards.clear();for(uint64_t i=1;i<=count;++i)rewards.push_back({{i+(tab==Tab::Items?0x100000000ULL:0),tab==Tab::Gifts?i*1234567890123ULL:0},false});
     total=static_cast<uint32_t>(count);pending.clear();sends=grants=nativeChecks=nativeErrors=manual=appCalls=0;maxPending=0;
-    rejected=selection=claimRefused=false;g_retiredChecks.clear();originalReplySequences.clear();
+    rejected=selection=claimRefused=newestFirst=false;g_retiredChecks.clear();originalReplySequences.clear();
     app={};connection={};Put(app.data(),0x4A0,uint32_t{6});Put(app.data(),0x4A4,reinterpret_cast<void*>(1));
     Put(connection.data(),0x14,7);Put(service.data(),0x15C,static_cast<int>(tab));Put(service.data(),0x168,total);
     g_session=&Session;g_app=&App;g_busy=reinterpret_cast<NativeBusy>(&Busy);g_send=reinterpret_cast<NativeSend>(&Send);
@@ -57,7 +57,8 @@ void Start(){Click();assert(g_armed && sends==0);Click();assert(!g_armed && g_ba
 void Step(){PumpUnsafe();}
 uint16_t Next(){assert(!pending.empty());return Read<uint16_t>(pending.front().data());}
 void Deliver() {
-    assert(!pending.empty());auto request=pending.front();pending.pop_front();const uint16_t op=Read<uint16_t>(request.data());
+    assert(!pending.empty());auto request=newestFirst?pending.back():pending.front();
+    if(newestFirst)pending.pop_back();else pending.pop_front();const uint16_t op=Read<uint16_t>(request.data());
     const auto tab=(op==0x9A1 || op==0x6CB || op==0x9CC)?Tab::Items:Tab::Gifts;
     std::vector<uint8_t> reply(64,0);uint32_t command=0;
     if(op==0x9A1 || op==0x9A2) {
@@ -93,6 +94,8 @@ int main() {
     // all twelve grants through the stock handler, and one refreshing read.
     Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && nativeChecks==0 && maxPending==8);
     assert(sends==3+12+12+1 && g_batch.collected()==12);
+    // The World may answer concurrent preflights out of send order.
+    fixture::Setup();newestFirst=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==12 && rewards.empty() && !g_batch.Outstanding());
     fixture::Setup(Tab::Gifts);rewards[0].claimed=true;Start();Run();assert(g_batch.phase()==Phase::Complete && grants==11 && nativeChecks==0);
     // Stop while preflights are out: nothing is claimed, late preflights are absorbed.
     fixture::Setup();Start();DeliverUntil([]{return g_batch.Waiting(Operation::Check);});Click();

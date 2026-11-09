@@ -485,6 +485,6 @@ SDGO_MOD_ENTRY {
     if(!api->HookCode(mod,"storage.init",reinterpret_cast<void*>(&Init),reinterpret_cast<void**>(&g_init)) ||
        !api->HookCode(mod,"storage.ui_event",reinterpret_cast<void*>(&UIEvent),reinterpret_cast<void**>(&g_event)) ||
        !api->HookCode(mod,"storage.packet",reinterpret_cast<void*>(&Receive),reinterpret_cast<void**>(&g_packet)))return 0;
-    api->Log(mod,SDGO_LOG_INFO,"ready: native storage claim-all UI; one confirmation reads every page, then pipelines the original preflight/grant requests (depth %u); no SQL or shared message-loop hook",g_depth);
+    api->Log(mod,SDGO_LOG_INFO,"ready: native storage claim-all UI; one confirmation reads every page, pipelines the original preflights (depth %u) and claims back to back; no SQL or shared message-loop hook",g_depth);
     return 1;
 }

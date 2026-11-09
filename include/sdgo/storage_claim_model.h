@@ -24,14 +24,16 @@ struct Request {Operation operation;Tab tab;uint32_t page;Key key;};
 // One confirmation claims the whole tab at once:
 //  1. read every list page (one request at a time, the native cache holds one page),
 //  2. send the original preflight for every unclaimed reward, pipelined,
-//  3. send the original claim for every reward the server allowed, pipelined,
+//  3. send the original claim for every reward the server allowed, back to back
+//     (one at a time: each grant takes the account's shop lock on the server),
 //  4. read the first page once more and stop, or start another round when the
 //     first pass was cut short by the native page range.
-// The server answers one request at a time and in order, so error replies (which
-// carry no reward ID) belong to the oldest request of their kind. Success replies
-// carry the reward ID and are matched exactly. A refused reward is skipped and
-// reported; it is never retried inside the batch. A claim whose answer is missing
-// leaves the batch Unknown and nothing is retried.
+// The World answers every request exactly once but not necessarily in send order.
+// Success replies carry the reward ID and are matched by it. Error replies carry
+// no ID: they are counted, and once every other outstanding request of the kind
+// has been answered the unanswered ones are the refused rewards. A refused reward
+// is skipped and reported; it is never retried inside the batch. A claim whose
+// answer is missing leaves the batch Unknown and nothing is retried.
 class Batch {
 public:
     static constexpr uint32_t kMaxDepth=32;
@@ -39,7 +41,7 @@ public:
     bool Start(Tab tab,uint64_t session,uint32_t total,uint32_t limit,uint64_t now,uint32_t depth=8) {
         if(Busy() || Outstanding() || !session || !limit || !depth || depth>kMaxDepth)return false;
         *this=Batch{};tab_=tab;session_=session;limit_=limit;depth_=depth;
-        lastPage_=LastPage(total);stage_=Stage::List;since_=now;rounds_=1;return true;
+        lastPage_=LastPage(total);stage_=Stage::List;progress_=now;rounds_=1;return true;
     }
     bool Busy()const{const auto p=phase();return p>=Phase::NeedList && p<=Phase::Claim;}
     bool Outstanding()const{return !inflight_.empty();}
@@ -67,9 +69,12 @@ public:
     uint32_t depth()const{return depth_;}
     uint16_t error()const{return error_;}
     Key pending()const{return inflight_.empty()?Key{}:inflight_.front().key;}
+    // Requests still awaiting an answer (refusals already counted are excluded).
     std::vector<Key> InFlight(Operation op)const {
-        std::vector<Key> keys;for(const auto& f:inflight_)if(f.operation==op)keys.push_back(f.key);return keys;
+        std::vector<Key> keys;for(const auto& f:inflight_)if(f.operation==op)keys.push_back(f.key);
+        keys.resize(keys.size()>unmatched_?keys.size()-unmatched_:0);return keys;
     }
+    uint32_t window()const{return stage_==Stage::Claim?1u:depth_;}
     void Stop(Reason reason) {
         cancel_=true;reason_=reason;
         if(ClaimsInFlight()){stage_=Stage::Claim;return;}
@@ -79,10 +84,11 @@ public:
         reason_=Reason::Disconnected;cancel_=true;
         stage_=ClaimsInFlight()?Stage::Unknown:Stage::Stopped;
     }
+    // Times out when no answer arrived for `timeout` while requests are outstanding.
     void Tick(uint64_t now,uint64_t timeout) {
+        if(answers_!=tickAnswers_){tickAnswers_=answers_;progress_=now;}
         if(inflight_.empty() || stage_==Stage::Unknown)return;
-        const auto sent=inflight_.front().sent;
-        if(now>=sent && now-sent>=timeout) {
+        if(now>=progress_ && now-progress_>=timeout) {
             reason_=Reason::Timeout;cancel_=true;
             stage_=ClaimsInFlight()?Stage::Unknown:Stage::Stopped;
         }
@@ -90,7 +96,7 @@ public:
     std::optional<Request> Next()const {
         if(cancel_)return {};
         if(stage_==Stage::List)return inflight_.empty()?std::optional<Request>(Request{Operation::List,tab_,page_,{}}):std::nullopt;
-        if(inflight_.size()>=depth_)return {};
+        if(inflight_.size()>=window())return {};
         if(stage_==Stage::Check && checkIndex_<queue_.size())return Request{Operation::Check,tab_,0,queue_[checkIndex_]};
         if(stage_==Stage::Claim && claimIndex_<approved_.size())return Request{Operation::Claim,tab_,0,approved_[claimIndex_]};
         return {};
@@ -108,12 +114,13 @@ public:
             else if(!ClaimsInFlight())stage_=Stage::Stopped;
             return;
         }
-        inflight_.push_back({request.operation,request.key,now});since_=now;
+        inflight_.push_back({request.operation,request.key,now});
+        if(inflight_.size()==1)progress_=now;
     }
     bool Waiting(Operation op)const{return !inflight_.empty() && inflight_.front().operation==op;}
     bool ListReply(Tab tab,uint32_t total,const std::vector<Entry>& entries) {
         if(!Waiting(Operation::List) || tab!=tab_)return false;
-        inflight_.pop_front();
+        inflight_.pop_front();++answers_;
         if(cancel_){Settle();return true;}
         if(entries.size()>5 || total>1000000){Fail(Reason::Changed);return true;}
         std::set<Key> ids;
@@ -137,16 +144,19 @@ public:
         if(queue_.empty()){Finish();return true;}
         stage_=Stage::Check;return true;
     }
-    // Preflight reply. A refusal carries no reward ID: it belongs to the oldest
-    // outstanding preflight. A success must name exactly that reward.
+    // Preflight reply, matched by reward ID; a refusal is attributed once the
+    // other outstanding preflights have answered.
     bool CheckReply(Key key,bool allowed,bool choice=false,uint16_t error=0) {
         if(!Waiting(Operation::Check))return false;
-        const auto front=inflight_.front();
-        if(allowed && !(key==front.key)){inflight_.pop_front();Fail(Reason::Changed);return true;}
-        inflight_.pop_front();
-        if(!allowed){++skipped_;error_=error;refused_.insert(front.key);}
-        else if(choice){++manual_;refused_.insert(front.key);}
-        else if(!cancel_)approved_.push_back(front.key);
+        ++answers_;
+        if(allowed) {
+            const auto match=Find(Operation::Check,key);
+            if(match==inflight_.end()){Fail(Reason::Changed);ResolveRefusals();return true;}
+            const auto granted=match->key;inflight_.erase(match);
+            if(choice){++manual_;refused_.insert(granted);}
+            else if(!cancel_)approved_.push_back(granted);
+        }else {++unmatched_;++skipped_;error_=error;}
+        ResolveRefusals();
         if(cancel_){Settle();return true;}
         if(inflight_.empty() && checkIndex_>=queue_.size()) {
             if(approved_.empty()){Finish();return true;}
@@ -154,22 +164,19 @@ public:
         }
         return true;
     }
-    // Claim reply. Success names the granted reward; refusal belongs to the
-    // oldest outstanding claim and changed nothing on the server.
+    // Claim reply. Success names the granted reward; a refusal changed nothing
+    // on the server.
     bool ClaimReply(Key key,bool success,uint16_t error=0) {
         if(!Waiting(Operation::Claim))return false;
+        ++answers_;
         if(success) {
-            const auto match=std::find_if(inflight_.begin(),inflight_.end(),[&](const InFlightRequest& f){return f.operation==Operation::Claim && f.key==key;});
+            const auto match=Find(Operation::Claim,key);
             if(match==inflight_.end()){cancel_=true;reason_=Reason::Changed;stage_=Stage::Unknown;return true;}
-            const bool inOrder=match==inflight_.begin();
-            inflight_.erase(match);
-            if(!done_.insert(key).second){Fail(Reason::Changed);return true;}
+            const auto granted=match->key;inflight_.erase(match);
+            if(!done_.insert(granted).second){Fail(Reason::Changed);return true;}
             ++completed_;++roundCompleted_;
-            if(!inOrder){cancel_=true;reason_=Reason::Changed;stage_=Stage::Unknown;}
-        }else {
-            const auto front=inflight_.front();inflight_.pop_front();
-            ++skipped_;error_=error;refused_.insert(front.key);
-        }
+        }else {++unmatched_;++skipped_;error_=error;}
+        ResolveRefusals();
         if(cancel_){Settle();return true;}
         if(inflight_.empty() && claimIndex_>=approved_.size()){refreshing_=true;page_=0;stage_=Stage::List;}
         return true;
@@ -182,7 +189,22 @@ private:
     enum class Stage { Idle, List, Check, Claim, Complete, Stopped, Unknown };
     struct InFlightRequest {Operation operation;Key key;uint64_t sent;};
     static uint32_t LastPage(uint32_t total){return total?std::min<uint32_t>((total-1)/5,254):0;}
-    bool ClaimsInFlight()const{return std::any_of(inflight_.begin(),inflight_.end(),[](const InFlightRequest& f){return f.operation==Operation::Claim;});}
+    bool ClaimsInFlight()const {
+        const auto claims=std::count_if(inflight_.begin(),inflight_.end(),[](const InFlightRequest& f){return f.operation==Operation::Claim;});
+        return static_cast<uint32_t>(claims)>(Waiting(Operation::Claim)?unmatched_:0u);
+    }
+    // Gift claim replies echo only the note ID; item IDs are unique on their own.
+    std::deque<InFlightRequest>::iterator Find(Operation op,Key key) {
+        return std::find_if(inflight_.begin(),inflight_.end(),[&](const InFlightRequest& f) {
+            return f.operation==op && f.key.id==key.id && (!key.stamp || f.key.stamp==key.stamp);
+        });
+    }
+    // Every outstanding request of the kind has answered: the ones left are the refused.
+    void ResolveRefusals() {
+        if(!unmatched_ || inflight_.size()!=unmatched_)return;
+        for(const auto& f:inflight_)refused_.insert(f.key);
+        inflight_.clear();unmatched_=0;
+    }
     void Fail(Reason reason) {
         cancel_=true;reason_=reason;
         if(ClaimsInFlight()){stage_=Stage::Unknown;return;}
@@ -214,7 +236,7 @@ private:
         Finish();return true;
     }
     Stage stage_=Stage::Idle;Reason reason_=Reason::None;Tab tab_=Tab::Items;
-    uint64_t session_=0,since_=0;
+    uint64_t session_=0,progress_=0;uint32_t answers_=0,tickAnswers_=0,unmatched_=0;
     uint32_t page_=0,lastPage_=0,completed_=0,skipped_=0,manual_=0,collected_=0,total_=0,limit_=5000,depth_=8;
     uint32_t rounds_=0,roundCompleted_=0;uint16_t error_=0;
     std::vector<Key> queue_,approved_;size_t checkIndex_=0,claimIndex_=0;
