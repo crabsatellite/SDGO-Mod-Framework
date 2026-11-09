@@ -2738,6 +2738,19 @@ int __cdecl ClaimStoragePage(const SdgoGameTestContextV1* context) {
         return SDGO_GAME_TEST_FAIL;
     }
     if(result!=StorageTestActions::Complete)return SDGO_GAME_TEST_WAIT;
+    if(captureNativeFrames) {
+        // The finished batch and its status line, before the hangar readback leaves the page.
+        static int doneFrame=0;
+        if(doneFrame==0) {
+            const auto folder=sdgo_test::directory+L"\\visual";CreateDirectoryW(folder.c_str(),nullptr);
+            if(quietGraphics.CaptureNextFrame((folder+L"\\pages.storage.claim-done.bmp").c_str())){doneFrame=1;return SDGO_GAME_TEST_WAIT;}
+            doneFrame=2;
+        }
+        if(doneFrame==1) {
+            if(quietGraphics.CaptureFrameResult()==E_PENDING)return SDGO_GAME_TEST_WAIT;
+            doneFrame=2;context->Observe("native frame of the finished storage batch saved under visual\\");
+        }
+    }
     context->Assert(state.action_sequence==2 && state.reply_sequence>0 && !state.outstanding,
         "exactly two original button actions confirm one native list/claim batch and retain its server replies");
     {
