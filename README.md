@@ -47,8 +47,8 @@ Beta and Experimental after a feature name mark its release channel; unlabeled f
 | Wait-room window initialization guard <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created | [Use](docs/waitroom-window-fix.md) |
 | Native data and lifecycle guards <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate | [Use](docs/native-data-guard.md) |
 | Scene registration lifecycle fix <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area | [Use](docs/scene-lifecycle-fix.md) |
-| Hangar preview loading guard (Beta) <!-- catalog: `hangar_preview_guard` --> | Fall back to the native thumbnail when a unit-list model or GPU buffer cannot load | [Use](docs/hangar-preview-guard.md) |
-| Special-target selection guard (Beta) <!-- catalog: `special_target_guard` --> | Reject an invalid random target count through the existing native failure result | [Use](docs/special-target-guard.md) |
+| Hangar preview loading guard <!-- catalog: `hangar_preview_guard` --> | Fall back to the native thumbnail when a unit-list model or GPU buffer cannot load | [Use](docs/hangar-preview-guard.md) |
+| Special-target selection guard <!-- catalog: `special_target_guard` --> | Reject an invalid random target count through the existing native failure result | [Use](docs/special-target-guard.md) |
 | Multiplayer loading synchronization <!-- catalog: `loading_sync_fix` --> | Fix multiplayer starts that occasionally hang on the loading screen (BattleServer) | [Use](docs/loading-sync-fix.md) |
 | Native login recovery <!-- catalog: `login_recovery`, `login_recovery_client` --> | When a reconnect after a dropped connection is refused or stalls, clear the old session and retry a limited number of times | [Use](docs/login-recovery.md) |
 | Apsalus III transform input fix <!-- catalog: `transform_input_fix` --> | Release the native transform lock when a form has no transform animation | [Use](docs/transform-input-fix.md) |

@@ -42,8 +42,8 @@
 | 房间窗口初始化保护 <!-- catalog: `waitroom_window_fix` --> | 修复建房成功后客户端偶尔直接退出 | [使用说明](docs/waitroom-window-fix.zh-CN.md) |
 | 原生数据与生命周期修复 <!-- catalog: `native_data_guard` --> | 修复机体数据缺失或机体管理页等待数据时的闪退，并让闪退日志记录正确现场 | [使用说明](docs/native-data-guard.zh-CN.md) |
 | 场景登记生命周期修复 <!-- catalog: `scene_lifecycle_fix` --> | 修复场景对象切换区域后偶发的清理闪退 | [使用说明](docs/scene-lifecycle-fix.zh-CN.md) |
-| 机体列表三维预览加载保护（Beta） <!-- catalog: `hangar_preview_guard` --> | 模型或图形缓冲加载失败时，退回原生二维缩略图 | [使用说明](docs/hangar-preview-guard.zh-CN.md) |
-| 特殊攻击目标选择保护（Beta） <!-- catalog: `special_target_guard` --> | 随机目标数量非法时，使用已有原生失败结果阻止越界读取 | [使用说明](docs/special-target-guard.zh-CN.md) |
+| 机体列表三维预览加载保护 <!-- catalog: `hangar_preview_guard` --> | 模型或图形缓冲加载失败时，退回原生二维缩略图 | [使用说明](docs/hangar-preview-guard.zh-CN.md) |
+| 特殊攻击目标选择保护 <!-- catalog: `special_target_guard` --> | 随机目标数量非法时，使用已有原生失败结果阻止越界读取 | [使用说明](docs/special-target-guard.zh-CN.md) |
 | 多人加载同步修复 <!-- catalog: `loading_sync_fix` --> | 修复多人开局时偶发卡在加载画面（BattleServer） | [使用说明](docs/loading-sync-fix.zh-CN.md) |
 | 首次登录大厅音乐 <!-- catalog: `lobby_music_fix` --> | 恢复首次登录时的大厅音乐 | [使用说明](docs/lobby-music-fix.zh-CN.md) |
 | 异常断线登录恢复 <!-- catalog: `login_recovery`, `login_recovery_client` --> | 异常断线后重新登录被拒或卡在等待时，清理旧会话并自动有限重试 | [使用说明](docs/login-recovery.zh-CN.md) |

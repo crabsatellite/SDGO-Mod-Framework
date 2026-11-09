@@ -2476,7 +2476,7 @@ int PageResult(const SdgoGameTestContextV1* context,PageTestActions::Result resu
     return SDGO_GAME_TEST_PASS;
 }
 int __cdecl PreviewGuardFlow(const SdgoGameTestContextV1* context) {
-    return previewGuardActions.Poll(context,actions,hangarNavigation,previewGuardFaults,quietGraphics);
+    return previewGuardActions.Poll(context,actions,onboarding,hangarNavigation,previewGuardFaults,quietGraphics);
 }
 int __cdecl SpecialTargetGuardFlow(const SdgoGameTestContextV1* context) {
     return specialTargetGuardActions.Poll(context);
