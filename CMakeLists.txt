@@ -446,7 +446,7 @@ sdgo_add_mod(oc_custom_server SERVER DESCRIPTION "over-custom six-stat enhanceme
 sdgo_add_mod(oc_custom_battle SERVER DESCRIPTION "over-custom six-stat enhancement (Battle)"
              SOURCES mods/oc_custom_battle/oc_custom_battle.cpp)
 sdgo_add_mod(oc_custom_client DESCRIPTION "over-custom six-stat enhancement (client)"
-             SOURCES mods/oc_custom_client/oc_custom_client.cpp mods/oc_custom_client/original_ui.cpp mods/oc_custom_client/radar.cpp mods/oc_custom_client/room_marks.cpp
+             SOURCES mods/oc_custom_client/oc_custom_client.cpp mods/oc_custom_client/original_ui.cpp mods/oc_custom_client/radar.cpp mods/oc_custom_client/room_marks.cpp mods/oc_custom_client/g1_native.cpp mods/oc_custom_client/factory_l10n.cpp
              LIBS user32)
 
 
@@ -1412,6 +1412,12 @@ if(BUILD_TESTING)
     add_test(NAME room_commands_offline COMMAND room_commands_test)
     set_tests_properties(room_commands_offline PROPERTIES TIMEOUT 30)
 
+    add_executable(oc_room_system_test tests/oc_room_system_test.cpp)
+    target_link_libraries(oc_room_system_test PRIVATE sdgo_api)
+    sdgo_strict(oc_room_system_test)
+    add_test(NAME oc_room_system_offline COMMAND oc_room_system_test)
+    set_tests_properties(oc_room_system_offline PROPERTIES TIMEOUT 30)
+
     add_executable(room_random_test tests/room_random_test.cpp)
     add_executable(random_loadout_regression_test tests/random_loadout_regression_test.cpp)
     target_link_libraries(random_loadout_regression_test PRIVATE sdgo_api)
@@ -1472,7 +1478,7 @@ if(BUILD_TESTING)
     add_test(NAME game_test_fps_runner_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_fps*.py" -v)
     set_tests_properties(game_test_fps_runner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)
-    foreach(plan routes mission_plan shop_plan unit_selection reuse environment ai_teams multiplayer)
+    foreach(plan routes mission_plan shop_plan unit_selection reuse environment ai_teams multiplayer room_switch)
         add_test(NAME game_test_${plan}_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
             -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_game_test_${plan}.py" -v)
         set_tests_properties(game_test_${plan}_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60)

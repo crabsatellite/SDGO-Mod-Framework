@@ -171,3 +171,35 @@ using SdgoOcCustomClientG1CategoryV1Fn = int(__cdecl*)(uint32_t index, wchar_t* 
 using SdgoOcCustomClientGetSnapshotV2Fn = int(__cdecl*)(SdgoOcCustomClientSnapshotV2*);
 using SdgoOcCustomClientActionV2Fn = int(__cdecl*)(const SdgoOcCustomClientActionV2*);
 using SdgoOcCustomClientClickV2Fn = int(__cdecl*)(const char* window, const wchar_t* control);
+
+// G改 1.0 on the native 强化部件 page (exported as SdgoOcCustomClientG1NativeV1).
+#define SDGO_OC_CUSTOM_CLIENT_G1_NATIVE_VERSION 1u
+struct SdgoOcCustomClientG1NativeV1 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t bound;          // the native page hooks are installed
+    uint32_t tab_shown;      // the 强化部件 tab is on screen
+    uint32_t want;           // the player chose G改 1.0 on the page's switch
+    uint32_t active;         // the page holds the G改 1.0 data now
+    uint32_t rules;          // the G改 1.0 rule set is built
+    uint32_t categories;     // categories in the page's data manager (G改 1.0: 1 + types)
+    uint32_t entries;        // entries the last G改 1.0 load put into it
+    uint32_t loads;          // data manager loads served with G改 1.0 data
+    uint32_t entered;        // switches into G改 1.0
+    uint32_t left;           // switches back to the native data
+    uint32_t saves;          // native save requests answered with a G改 1.0 save
+    uint32_t resets;         // native reset requests answered with a G改 1.0 reset
+    uint32_t switch_clicks;  // clicks on the page's system switch that changed it
+    uint16_t shown[4];       // custom skills the page's unit record shows
+    void* page;              // the attribute page service (CServiceFactoryRoomAttribute)
+    void* switch_g2;         // the switch's G改 2.0 button
+    void* switch_g1;         // the switch's G改 1.0 button
+    void* bar;               // category bar (uirs\1254)
+    void* list;              // skill list (uirs\1253)
+    void* save_popup;        // CServiceAttributeSavePopup while open
+    void* reset_popup;       // CServiceAttributeResetPopup while open
+    void* reset_check_popup; // CServiceAttributeResetCheckPopup while open
+    uint32_t page_idle;      // the page takes input: no state runs, no reply pending, not dragging
+    wchar_t title[32];       // the factory title the Mod set on the tab
+};
+using SdgoOcCustomClientG1NativeV1Fn = int(__cdecl*)(SdgoOcCustomClientG1NativeV1*);

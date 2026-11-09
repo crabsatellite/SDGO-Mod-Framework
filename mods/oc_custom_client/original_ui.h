@@ -234,6 +234,7 @@ private:
     // lit level icons and NONE frames are created on the page like the entry.
     std::array<void*, kLevelIcons> level_icons_{};
     std::array<void*, kInfoItems> none_icons_{};
+    std::array<void*, kInfoItems> none_texts_{};
     // Item models shown in Item3DRender0..2 (loaded once per change).
     std::array<std::wstring, kInfoItems> models_shown_{};
     std::uint32_t models_loaded_ = 0;
@@ -285,6 +286,8 @@ private:
     void* entry_label_ = nullptr;
     std::array<bool, window_count> shown_{};
     bool entry_shown_ = false;
+    bool entry_caption_set_ = false;
+    bool entry_caption_lit_ = false;
     bool page_hidden_ = false;
     std::uint8_t page_visible_ = 1; // the page dialog's own visibility while hidden
     const char* last_failure_ = nullptr;

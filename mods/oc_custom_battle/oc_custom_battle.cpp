@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "sdgo/oc_custom_battle_observer.h"
 #include "sdgo/oc_custom_protocol.h"
 #include "sdgo/oc_room_system.h"
 #include "sdgo/room_titles_lookup.h"
@@ -58,6 +59,12 @@ LONG g_oc_room_builds = 0;
 LONG g_parts_room_builds = 0;
 LONG g_g1_room_builds = 0;
 LONG g_room_log_budget = 64;
+
+// The most recent room-system decisions, for the observer export.
+constexpr std::uint32_t kDecisionCapacity = 32;
+SRWLOCK g_decision_lock = SRWLOCK_INIT;
+SdgoOcCustomBattleDecisionV1 g_decisions[kDecisionCapacity] = {};
+std::uint32_t g_decision_count = 0; // total recorded; the ring holds the last kDecisionCapacity
 
 // Room context of the current stat-builder call (set by the naked entry).
 std::uintptr_t g_human_build = 0; // battle.build_human_unit
@@ -366,6 +373,28 @@ void LogNative(RoomSystem system, const std::uint8_t* room, const char* title, c
                                           : " (kept)");
 }
 
+void RecordDecision(RoomSystem system, const std::uint8_t* room, const char* title, const std::uint8_t* record,
+                    int form, const std::uint8_t* native_skills, const std::uint8_t* unit, bool oc_applied,
+                    bool g1_profile) noexcept {
+    SdgoOcCustomBattleDecisionV1 decision{};
+    decision.size = sizeof(decision);
+    decision.system = static_cast<std::uint8_t>(system == RoomSystem::oc ? 1 : system == RoomSystem::g1 ? 2 : 0);
+    decision.form = static_cast<std::uint8_t>(form < 0 || form > 3 ? 0 : form);
+    decision.oc_applied = oc_applied ? 1 : 0;
+    decision.g1_profile = g1_profile ? 1 : 0;
+    ReadAt(room, 0, &decision.room_key);
+    ReadAt(record, 8, &decision.uid);
+    std::memcpy(decision.native_skills, native_skills, sizeof(decision.native_skills));
+    std::uint8_t played[kCustomSkillCount * 2] = {};
+    ReadSkills(unit, kUnitCustomSkills, played);
+    std::memcpy(decision.battle_skills, played, sizeof(decision.battle_skills));
+    strncpy_s(decision.title, title ? title : "", _TRUNCATE);
+    AcquireSRWLockExclusive(&g_decision_lock);
+    decision.sequence = ++g_decision_count;
+    g_decisions[(decision.sequence - 1) % kDecisionCapacity] = decision;
+    ReleaseSRWLockExclusive(&g_decision_lock);
+}
+
 int __stdcall BuildStatsHook(
     std::uint8_t* unit,
     std::uint8_t* record,
@@ -394,10 +423,13 @@ int __stdcall BuildStatsHook(
         std::uint8_t skills[kCustomSkillCount * 2] = {};
         ReadSkills(unit, kUnitCustomSkills, skills);
         LogNative(system, room, title, unit, record, form, skills);
+        bool oc_applied = false;
         if (system == RoomSystem::oc) {
             InterlockedIncrement(&g_oc_room_builds);
             ClearUnitSkills(unit);
+            const LONG applied_before = g_applied;
             ApplyUnsafe(unit, record, definition, form, true);
+            oc_applied = g_applied != applied_before;
         } else if (system == RoomSystem::g1) {
             InterlockedIncrement(&g_g1_room_builds);
             // A unit without a G改 1.0 loadout plays without attributes.
@@ -410,6 +442,8 @@ int __stdcall BuildStatsHook(
         } else {
             InterlockedIncrement(&g_parts_room_builds);
         }
+        RecordDecision(system, room, title, record, form, skills, unit, oc_applied,
+                       (carrier.flags & carrier_g1_profile) != 0);
     }
     SetLastError(error);
     return result;
@@ -452,6 +486,20 @@ extern "C" __declspec(dllexport) unsigned __cdecl SdgoOcCustomBattleRoomBuildsV1
     builds[0] = static_cast<unsigned>(g_oc_room_builds);
     builds[1] = static_cast<unsigned>(g_parts_room_builds);
     return 2;
+}
+
+extern "C" __declspec(dllexport) std::uint32_t __cdecl SdgoOcCustomBattleRecentDecisionsV1(
+    SdgoOcCustomBattleDecisionV1* out, std::uint32_t capacity) {
+    if (!out || !capacity) return 0;
+    AcquireSRWLockShared(&g_decision_lock);
+    const std::uint32_t held = g_decision_count < kDecisionCapacity ? g_decision_count : kDecisionCapacity;
+    const std::uint32_t count = held < capacity ? held : capacity;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const std::uint32_t sequence = g_decision_count - count + 1 + i;
+        out[i] = g_decisions[(sequence - 1) % kDecisionCapacity];
+    }
+    ReleaseSRWLockShared(&g_decision_lock);
+    return count;
 }
 
 extern "C" __declspec(dllexport) unsigned __cdecl SdgoOcCustomBattleRoomBuildsV2(unsigned* builds, unsigned capacity) {

@@ -18,6 +18,7 @@
 #include "sdgo/battle_rewards_damage_observer.h"
 #include "sdgo/mission_behavior_profile.h"
 #include "sdgo/mission_behavior_server_observer.h"
+#include "sdgo/oc_custom_battle_observer.h"
 #include "sdgo/pvp_ai_observer.h"
 #include "sdgo/sdgo_api.h"
 
@@ -662,6 +663,8 @@ namespace
         }
     }
 
+    std::string OcRoomJson(const char* title);
+
     std::string EventJson(const SdgoPvpAiObserverEventV1& event)
     {
         std::string line =
@@ -702,8 +705,48 @@ namespace
                 ",\"colour\":" + std::to_string(slot.colour) +
                 ",\"is_ai\":" + std::string(slot.is_ai ? "true" : "false") + '}';
         }
-        line += "]}\n";
+        line += "]";
+        if (event.type == SDGO_PVP_AI_EVENT_BATTLE_END)
+            line += ",\"oc_room\":" + OcRoomJson(event.title);
+        line += "}\n";
         return line;
+    }
+
+    // The OC Battle Mod's room-system decisions for this room's units (room
+    // mode only; an empty list when the Mod is absent or decided nothing).
+    std::string OcRoomJson(const char* title)
+    {
+        const HMODULE library = GetModuleHandleW(L"oc_custom_battle.dll");
+        const auto recent = library ? reinterpret_cast<SdgoOcCustomBattleRecentDecisionsV1Fn>(
+            GetProcAddress(library, SDGO_OC_CUSTOM_BATTLE_DECISIONS_EXPORT)) : nullptr;
+        std::string json = "[";
+        if (!recent)
+            return json + "]";
+        SdgoOcCustomBattleDecisionV1 decisions[32] = {};
+        const uint32_t count = recent(decisions, 32);
+        bool first = true;
+        for (uint32_t i = 0; i < count && i < 32; ++i) {
+            const auto& d = decisions[i];
+            if (d.size != sizeof(d) || strncmp(d.title, title, sizeof(d.title) - 1) != 0)
+                continue;
+            if (!first)
+                json += ',';
+            first = false;
+            json += "{\"sequence\":" + std::to_string(d.sequence) +
+                ",\"room_key\":" + std::to_string(d.room_key) +
+                ",\"uid\":" + std::to_string(d.uid) +
+                ",\"system\":" + std::to_string(d.system) +
+                ",\"form\":" + std::to_string(d.form) +
+                ",\"oc_applied\":" + std::to_string(d.oc_applied) +
+                ",\"g1_profile\":" + std::to_string(d.g1_profile) + ",\"native_skills\":[";
+            for (int s = 0; s < 4; ++s)
+                json += (s ? "," : "") + std::to_string(d.native_skills[s]);
+            json += "],\"battle_skills\":[";
+            for (int s = 0; s < 4; ++s)
+                json += (s ? "," : "") + std::to_string(d.battle_skills[s]);
+            json += "]}";
+        }
+        return json + "]";
     }
 
     std::string DamageJson(const DamageEvent& event)
