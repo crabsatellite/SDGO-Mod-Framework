@@ -121,5 +121,6 @@ The compiler checks placement and camera work: spawn points, mission spawns, cut
 - If a mission does not start or units are missing, turn on "write the game's native debug log" in the Mod settings; the client `app_log` then names the missing record numbers.
 - Compile errors name the exact field (for example a spawn point below the ground, an undefined dialogue line, or an animation the actor's model does not have).
 - If the map looks washed out to white with Bloom (HDR) on, compile and install again with Manager 1.16.16 or later: earlier compilers left the map row's Bloom bright-pass threshold at 0.
+- To check a mission's movable areas, run the GameTest case `mission.import_flow`: it logs `imported mission local area x=[…] z=[…] on=… pos=(…) inside=…` for the client's own player whenever the area changes and every 10 seconds. A player outside a new area is moved to its edge.
 - If the example map download fails, check that the Manager can reach `raw.githubusercontent.com`; files already downloaded and verified are reused on the next try.
 - If "Check server" reports conflicts, the target database already has non-import rows with the same numbers and the apply is refused; make sure the client and the server come from the same original data.

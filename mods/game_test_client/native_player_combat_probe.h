@@ -50,6 +50,7 @@ class NativePlayerCombatProbe
     static constexpr size_t kUnitPlayerControlEnabled = 0x31E9;
     static constexpr size_t kMoveOwner = 0x21C;
     static constexpr size_t kNodePosition = 0x88;
+    static constexpr size_t kUnitTerrainArea = 0x3148;   // left x, right x, top z, bottom z, then u8 on
 
     void** unitManager_ = nullptr;
     ObjectIdFromPilotFn objectIdFromPilot_ = nullptr;
@@ -169,11 +170,12 @@ public:
         requestedWeaponSlot_ = api->SettingInt(mod, "BattlePlayerWeaponSlot", -1);
         if (requestedWeaponSlot_ < -1 || requestedWeaponSlot_ > 2)
             return false;
+        // the unit manager is also needed by ReadLocalArea (read-only) when combat input is off
+        unitManager_ = static_cast<void**>(
+            api->Symbol(mod, "game.unit_manager"));
         if (!enabled_)
             return true;
 
-        unitManager_ = static_cast<void**>(
-            api->Symbol(mod, "game.unit_manager"));
         objectIdFromPilot_ =
             reinterpret_cast<ObjectIdFromPilotFn>(
                 api->Symbol(
@@ -532,6 +534,25 @@ private:
     }
 
 public:
+    // Read-only view of the local unit for imported-mission observation: its scene position (x, y, z) and the
+    // movable area the client keeps it in (SetTerrainRect: left x, right x, top z, bottom z) with the on flag.
+    bool ReadLocalArea(float position[3], float area[4], uint8_t& enabled) const
+    {
+        using namespace battle_ai::native::detail;
+        const uint8_t* manager = nullptr;
+        if (!unitManager_ || !Read(reinterpret_cast<const uint8_t*>(unitManager_), 0, manager) || !manager)
+            return false;
+        uint8_t* unit = nullptr;
+        uint8_t* node = nullptr;
+        if (!ReadPointer(manager, kManagerLocalPlayer, unit) || !ReadPointer(unit, kUnitNode, node))
+            return false;
+        for (int i = 0; i < 3; ++i)
+            if (!Read(node, kNodePosition + 4 * i, position[i])) return false;
+        for (int i = 0; i < 4; ++i)
+            if (!Read(unit, kUnitTerrainArea + 4 * i, area[i])) return false;
+        return Read(unit, kUnitTerrainArea + 0x10, enabled);
+    }
+
     void Finish(
         const SdgoGameTestContextV1* context,
         ScoreboardActions& input)

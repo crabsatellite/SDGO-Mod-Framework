@@ -201,6 +201,10 @@ class CompileTests(unittest.TestCase):
             self.assertIn('if c.area ~= nil then SDGOMI.area(m, c.area) end', lua)
             self.assertIn('function SDGOM1_E1(m)\n  SDGOMI.area(m, {-1000,2000,1000,500})', lua)
             self.assertIn('unit:SetTerrainRect(r[1], r[2], r[3], r[4])', lua)
+            # the client's own player is reached through the document, as native single-player scripts do
+            self.assertIn('local me = CastingUnit(p)', lua)
+            self.assertIn('me:SetTerrainRect(r[1], r[2], r[3], r[4]); me:SetTerrainRectOnOff(true)', lua)
+            self.assertIn('if w.rect ~= nil then SDGOMI.local_area(w.rect) end', lua)
             for bad in ([2000, 1500, -2000, -1500], [-2000, -1500, 2000, 1500], [-5000, 1500, 2000, -1500]):
                 spec['area'] = bad
                 with self.assertRaisesRegex(M.MissionError, 'area'):

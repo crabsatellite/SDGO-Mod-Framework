@@ -5357,6 +5357,18 @@ int __cdecl ObserveImportedMissionFlow(const SdgoGameTestContextV1* context) {
     const auto end=rooms.BattleEndState();
     CaptureImportedReviewFrame(context);
     if(!ended) {
+        // the movable area the mission keeps the local player in, and where the player is (logged on change)
+        static float lastArea[4]={};
+        static uint64_t lastAreaLog=0;
+        float position[3]={},area[4]={};uint8_t areaOn=0;
+        if(nativePlayerCombat.ReadLocalArea(position,area,areaOn) &&
+           (memcmp(area,lastArea,sizeof(area))!=0 || context->elapsed_ms-lastAreaLog>=10000)) {
+            memcpy(lastArea,area,sizeof(area));lastAreaLog=context->elapsed_ms;
+            const bool inside=position[0]>=area[0]-1 && position[0]<=area[1]+1 && position[2]<=area[2]+1 && position[2]>=area[3]-1;
+            char text[200];sprintf_s(text,"imported mission local area x=[%.0f..%.0f] z=[%.0f..%.0f] on=%u pos=(%.0f,%.0f,%.0f) inside=%u",
+                area[0],area[1],area[3],area[2],areaOn,position[0],position[1],position[2],inside?1u:0u);
+            context->Observe(text);
+        }
         if(end.sequence<=observedMissionEndBaseline || !end.original_handler_completed) {
             if(context->elapsed_ms-lastProgress>=30000) {
                 lastProgress=context->elapsed_ms;

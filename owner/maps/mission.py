@@ -259,12 +259,22 @@ function SDGOMI.warp(m, w)
     local unit = GetPlayer(i - 1)
     if unit ~= nil and w.rect ~= nil then unit:SetTerrainRect(w.rect[1], w.rect[2], w.rect[3], w.rect[4]) end
   end
+  if w.rect ~= nil then SDGOMI.local_area(w.rect) end
+end
+function SDGOMI.local_area(r)
+  local doc = GetDocument()
+  if doc == nil then return end
+  local p = doc:GetLocalPlayer()
+  if p == nil then return end
+  local me = CastingUnit(p)
+  if me ~= nil then me:SetTerrainRect(r[1], r[2], r[3], r[4]); me:SetTerrainRectOnOff(true) end
 end
 function SDGOMI.area(m, r)
   for i = 1, GetNumPlayer() do
     local unit = GetPlayer(i - 1)
     if unit ~= nil then unit:SetTerrainRect(r[1], r[2], r[3], r[4]) end
   end
+  SDGOMI.local_area(r)
 end
 '''
 
