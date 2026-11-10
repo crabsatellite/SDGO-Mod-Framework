@@ -580,7 +580,14 @@ def validate_local_native_sql(private, work):
     finally:db.close()
 
 
-def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_id=None,mission_respawn_probe=None):
+# OC special (--oc-special): the development-only Battle fixture fills the host pilot's SP gauge at the
+# native special-request check (0x4C3AEA) so the client's special is admitted. Test copies only.
+OC_SPECIAL_PROBE_ID='oc_special_server_probe'
+OC_SPECIAL_PROBE_SYMBOL=('\n[gametest.oc_special_sp_gate]\nkind=site\nrva=0x000C3AEA\n'
+    'expect=8B 8D 24 D7 FC FF 81 79 05 30 75 00 00 73 36\n')
+
+def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_id=None,mission_respawn_probe=None,
+          oc_special_probe=None):
     work=work.resolve();stage=stage.resolve();startup_xml=startup_xml.resolve()
     private=json.loads((work/'private.json').read_text())
     manifest=json.loads((work/'backend.json').read_text())
@@ -611,6 +618,11 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
         raise RuntimeError('Mission respawn acceptance requires the explicit isolated native combat probe DLL')
     if mission_respawn_probe is not None and not respawn_policy:
         raise RuntimeError('Native combat probe requires a sealed mission respawn plan')
+    oc_special=client['plan'].get('oc_special') is True
+    if oc_special and (not native_local or oc_special_probe is None or not oc_special_probe.is_file()):
+        raise RuntimeError('OC special acceptance requires the explicit isolated native SP fixture DLL')
+    if oc_special_probe is not None and not oc_special:
+        raise RuntimeError('Native SP fixture requires a sealed OC special plan')
     if native_local:validate_local_native_sql(private,work)
     else:raise RuntimeError('Docker service startup is retired; use a copied native-local-test backend. Legacy cleanup remains available.')
     lock,lock_token=game_test.acquire_lock(work)
@@ -774,6 +786,19 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     text=symbols.read_text(encoding='utf-8-sig')
                     if '[gametest.mission_respawn_tick]' not in text:
                         symbols.write_text(text+'\n[gametest.mission_respawn_tick]\nkind=code\nrva=0x000884D9\nexpect=C7 45 F4 00 00 00 00\n',encoding='utf-8')
+                if oc_special:
+                    cfg['oc_special_probe']={
+                        'output':str(Path(client['client']['root'])/'sdgo/gametest'/('oc-special-server-'+client['run_id']+'.ini'))}
+                    probe=folder/'sdgo/mods'/OC_SPECIAL_PROBE_ID
+                    probe.mkdir(parents=True,exist_ok=True)
+                    shutil.copy2(oc_special_probe,probe/(OC_SPECIAL_PROBE_ID+'.dll'))
+                    (probe/'mod.ini').write_text('[mod]\ndistribution=public\nid='+OC_SPECIAL_PROBE_ID+'\nname=Native OC special SP fixture\n'
+                        'category=development\nfeature=game-test\nversion=1.0.0\napi=1\ndll='+OC_SPECIAL_PROBE_ID+'.dll\norder=900\n'
+                        'hosts=BattleServer-548A891D-0046C000\n')
+                    symbols=folder/'sdgo/symbols/BattleServer-548A891D-0046C000.ini'
+                    text=symbols.read_text(encoding='utf-8-sig')
+                    if '[gametest.oc_special_sp_gate]' not in text:
+                        symbols.write_text(text+OC_SPECIAL_PROBE_SYMBOL,encoding='utf-8')
                 game_test.write_ini(job/'run.ini',cfg)
                 env.update(SDGO_GAME_TEST_RUN=client['run_id'],SDGO_GAME_TEST_ROLE='server')
                 settings=game_test.read_ini(folder/'sdgo/sdgo.ini')
@@ -789,6 +814,7 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                     settings['features']['coop-wingmen']='1'
                 else:
                     settings['mods']['mission_respawn_server_probe']='0'
+                settings['mods'][OC_SPECIAL_PROBE_ID]='1' if oc_special else '0'
                 game_test.write_ini(folder/'sdgo/sdgo.ini',settings)
             for attempt in range(1,3):
                 console=work/(spec['folder']+'.console.log')
@@ -1031,6 +1057,7 @@ def build_parser():
     serve_cmd.add_argument('--host-pilot-id',type=int,
         help='actual reused account pilot ID for authenticated suites; omit for FPS')
     serve_cmd.add_argument('--mission-respawn-probe',type=Path,help='development-only native combat fixture for a sealed mission respawn plan')
+    serve_cmd.add_argument('--oc-special-probe',type=Path,help='development-only native SP fixture for a sealed --oc-special plan')
     stop_cmd=commands.add_parser('stop')
     stop_cmd.add_argument('--work',type=Path,required=True)
     stop_cmd.add_argument('--reason',default='bounded GameTest backend stop')
@@ -1050,7 +1077,8 @@ def main(argv=None):
         elif args.action=='serve':
             if not 60<=args.lifetime<=7200:raise RuntimeError('Lifetime must be between 60 and 7200 seconds')
             if not 30<=args.startup_timeout<=600:raise RuntimeError('Startup timeout must be between 30 and 600 seconds')
-            serve(args.work,args.client_run,args.lifetime,args.stage,args.startup_xml,args.startup_timeout,args.host_pilot_id,args.mission_respawn_probe)
+            serve(args.work,args.client_run,args.lifetime,args.stage,args.startup_xml,args.startup_timeout,args.host_pilot_id,args.mission_respawn_probe,
+                args.oc_special_probe)
         elif args.action=='stop':
             stop(args.work,args.reason)
         elif args.action=='cleanup':
