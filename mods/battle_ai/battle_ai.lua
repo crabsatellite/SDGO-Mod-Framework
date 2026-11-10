@@ -6,7 +6,9 @@ local defaults = { Enabled=1, DecisionMs=150, ReactionMs=300, StuckMs=1400,
 local C = {}
 for k,v in pairs(defaults) do C[k]=v end
 for k,v in pairs(config or SDGO_BattleAI_TestConfig or {}) do C[k]=v end
-local function Difficulty()
+-- Keep this helper on the captured config table: Lua 5.0 permits only 32
+-- upvalues per function, and the controller already reaches that limit.
+function C.GetDifficulty()
   if SDGO_BattleAI_Difficulty then return SDGO_BattleAI_Difficulty() end
   return C.Difficulty
 end
@@ -133,7 +135,7 @@ local function Control(npc,s,spec,now,dir,reason,random)
 end
 
 local function Before(npc,spec)
-  if Difficulty()<2 or C.GenericMode==1 then return end
+  if C.GetDifficulty()<2 or C.GenericMode==1 then return end
   if not Eligible(npc) then return false end
   local now=SDGO_BattleAI_Now()
   local id=npc:GetID()
@@ -150,7 +152,7 @@ local function Before(npc,spec)
 end
 
 local function After(npc,spec)
-  if Difficulty()<2 or C.GenericMode==1 or C.Enabled~=1 or M.faults>=3 or not Eligible(npc) then return end
+  if C.GetDifficulty()<2 or C.GenericMode==1 or C.Enabled~=1 or M.faults>=3 or not Eligible(npc) then return end
   if not Alive(npc) or npc:CheckHurt() then return end
   local now=SDGO_BattleAI_Now()
   local s=State(npc,now)
