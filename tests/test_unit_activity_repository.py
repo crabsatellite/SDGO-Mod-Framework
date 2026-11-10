@@ -1071,6 +1071,94 @@ class RepositoryTests(unittest.TestCase):
         self.assertFalse(connection.rolled_back)
         self.assertFalse(connection.closed)
 
+    def test_completed_renumber_allows_later_guarded_update(self):
+        source, target = renumber_configs()
+        self.apply(source)
+        moved = self.repository.renumber(target, MACHINE_ID)
+        self.assertEqual(moved["action"], "renumbered")
+        installed_hash = moved["installed_hash"]
+        self.backend.tables["tbl_ItemMachineShareIdxPrime"][target["id"]][0][
+            "CurPNum"
+        ] = 4_021
+        revised = copy.deepcopy(target)
+        revised["revision"] = "c" * 64
+        revised["price"] += 1
+        revised["pool"][0]["entries"] += 10
+        revised["pool"][1]["entries"] -= 10
+        connection = FakeConnection(self.backend)
+
+        repeated = self.repository.renumber(
+            revised,
+            MACHINE_ID,
+            connection=connection,
+            in_transaction=True,
+        )
+        self.assertEqual(repeated["action"], "unchanged")
+        self.assertFalse(repeated["writes_performed"])
+        self.assertEqual(repeated["revision"], target["revision"])
+        self.assertEqual(repeated["installed_hash"], installed_hash)
+        self.assertEqual(repeated["runtime_observation"]["share_cur_pnum"], 4_021)
+        self.assertEqual(
+            self.backend.ledger[target["id"]]["Revision"], target["revision"]
+        )
+
+        applied = self.repository.apply(
+            revised, connection=connection, in_transaction=True
+        )
+        self.assertEqual(applied["action"], "updated")
+        self.assertEqual(
+            self.backend.ledger[target["id"]]["Revision"], revised["revision"]
+        )
+        self.assertEqual(
+            self.backend.tables["tbl_ItemMachineShareIdxPrime"][target["id"]][0][
+                "CurPNum"
+            ],
+            4_021,
+        )
+        self.assertTrue(
+            self.repository.verify(revised, connection=connection)["verified"]
+        )
+
+    def test_completed_renumber_rejects_target_ownership_and_state_tamper(self):
+        source, target = renumber_configs()
+        self.apply(source)
+        self.repository.renumber(target, MACHINE_ID)
+        revised = copy.deepcopy(target)
+        revised["revision"] = "c" * 64
+
+        self.backend.ledger[target["id"]]["OwnerKey"] = "other-owner"
+        with self.assertRaisesRegex(ValueError, "其他活动机台提供者"):
+            self.repository.preflight_renumber(revised, MACHINE_ID)
+        self.backend.ledger[target["id"]]["OwnerKey"] = OWNER_KEY
+
+        self.backend.ledger[target["id"]]["InstalledHash"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "账本外修改"):
+            self.repository.preflight_renumber(revised, MACHINE_ID)
+        state = {
+            table: self.backend.tables[table][target["id"]]
+            for table, _ in STATE_TABLES
+        }
+        self.backend.ledger[target["id"]]["InstalledHash"] = canonical_state_hash(
+            state
+        )
+
+        removed = self.backend.tables["tbl_ItemMachinePrice"].pop(target["id"])
+        with self.assertRaises(ValueError):
+            self.repository.preflight_renumber(revised, MACHINE_ID)
+        self.backend.tables["tbl_ItemMachinePrice"][target["id"]] = removed
+
+    def test_completed_renumber_rejects_immutable_identity_change(self):
+        source, target = renumber_configs()
+        self.apply(source)
+        self.repository.renumber(target, MACHINE_ID)
+        revised = copy.deepcopy(target)
+        revised["revision"] = "c" * 64
+        revised["project_key"] = "fixture.other-project"
+        with self.assertRaisesRegex(
+            ValueError, "不能更换 project、根机体或原生模板身份"
+        ):
+            self.repository.preflight_renumber(revised, MACHINE_ID)
+
 
 if __name__ == "__main__":
     unittest.main()

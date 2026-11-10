@@ -1028,14 +1028,16 @@ def _renumber_config_identity(config: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _source_config(ledger: Mapping[str, Any], from_id: int) -> dict[str, Any]:
+def _ledger_config(
+    ledger: Mapping[str, Any], machine_id: int, *, subject: str
+) -> dict[str, Any]:
     try:
         raw = json.loads(ledger["ConfigJson"])
     except (TypeError, json.JSONDecodeError):
-        raise ValueError("原活动机台账本 ConfigJson 损坏") from None
+        raise ValueError(f"{subject}账本 ConfigJson 损坏") from None
     config = normalize_config(raw)
-    if config["id"] != from_id:
-        raise ValueError("原活动机台账本 ConfigJson 的 MachineID 不一致")
+    if config["id"] != machine_id:
+        raise ValueError(f"{subject}账本 ConfigJson 的 MachineID 不一致")
     if (
         ledger["Revision"] != config["revision"]
         or ledger["ProjectKey"] != config["project_key"]
@@ -1043,8 +1045,12 @@ def _source_config(ledger: Mapping[str, Any], from_id: int) -> dict[str, Any]:
         or ledger["TemplateMachineID"] != config["template_machine_id"]
         or ledger["ConfigJson"] != _canonical_json(config)
     ):
-        raise ValueError("原活动机台账本 ConfigJson 与所有权字段不一致")
+        raise ValueError(f"{subject}账本 ConfigJson 与所有权字段不一致")
     return config
+
+
+def _source_config(ledger: Mapping[str, Any], from_id: int) -> dict[str, Any]:
+    return _ledger_config(ledger, from_id, subject="原活动机台")
 
 
 def _player_machine_exists(cursor, machine_id: int, *, locked: bool) -> bool:
@@ -1102,12 +1108,21 @@ def _inspect_renumber(
             raise ValueError("原活动机台及其所有权账本不存在，无法改号")
         if not target_has_rows:
             raise ValueError("目标活动机台账本存在但原生五表记录缺失")
-        target_inspection = _inspect(cursor, config, locked=locked)
+        installed_config = _ledger_config(
+            target_ledger, config["id"], subject="目标活动机台"
+        )
+        target_inspection = _inspect(cursor, installed_config, locked=locked)
         if target_inspection["action"] != "unchanged":
             raise ValueError("目标活动机台不是同 owner 的已完成改号状态")
+        for key in ("project_key", "unit_id", "template_machine_id"):
+            if installed_config[key] != config[key]:
+                raise ValueError(
+                    "已完成改号的活动机台不能更换 project、根机体或原生模板身份"
+                )
         return {
             "action": "unchanged",
             "config": config,
+            "installed_revision": installed_config["revision"],
             "from_id": from_id,
             "source": None,
             "target": target_inspection,
@@ -1222,7 +1237,7 @@ class ActivityRepository:
             "machine_id": config["id"],
             "unit_id": config["unit_id"],
             "project_key": config["project_key"],
-            "revision": config["revision"],
+            "revision": inspection.get("installed_revision", config["revision"]),
             "action": inspection["action"],
             "installed_hash": inspection["target_hash"],
             "runtime_observation": inspection["runtime_observation"],
