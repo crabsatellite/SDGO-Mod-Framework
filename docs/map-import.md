@@ -73,7 +73,8 @@ Mission files live under `missions/` in the map package and are listed in `files
 | `lines` | Character dialogue: `portrait` (a client portrait `sprs\\NNNN.spr`), `speaker`, `text` |
 | `banners` | Banners: `image` (512×128 PNG), shown as an effect in cutscenes |
 | `presentation` | Optional mission list artwork in PNG, each replacing the template mission's image: `list_banner` (155×68), `room_icon` (120×83; like the shipped icons, keep rows 0..18 for the title lettering), `room_poster` (250×120), `title` (155×22, white lettering on a transparent background) and `loading` (1024×1024 loading screen) |
-| `sectors` | Sector change: `warp` (1..8 points), `facing`, optional `rect` (playable area) |
+| `area` | Movable area at the start: `[left x, top z, right x, bottom z]` (north is top). Players are kept inside it with the same call the shipped multi-area missions use. It is set when the `opening` cutscene starts, so it needs an opening. Without it the whole `terrain.play_area` is movable |
+| `sectors` | Sector change: `warp` (1..8 points), `facing`, optional `rect` (the new movable area, same order as `area`) |
 | `cutscenes` | Cutscenes, see below |
 | `phases` | 1..8 phases played in order, see below |
 | `opening`, `ending` | Cutscene played at the start and on success |
@@ -87,7 +88,7 @@ Mission files live under `missions/` in the map package and are listed in `files
 | `fail` | `time_limit`: time limit; `lose`: the mission fails when a given allied unit is destroyed |
 | `spawns` | Waves: `npc`, `positions`, `at` (seconds after the phase starts), `every` (interval), `side` (`enemy`/`ally`), `min_free` |
 | `slots` | On-screen unit limits: `ally` + `enemy` ≤ 10 |
-| `enter` | On entering the phase: `cutscene`, `lines` (dialogue), `sector` (sector change); use `opening` for the first phase |
+| `enter` | On entering the phase: `cutscene`, `lines` (dialogue), `sector` (sector change with warp), `area` (new movable area without a warp); use `opening` and the mission `area` for the first phase |
 | `reward` | Phase reward `points`, `unit_exp` |
 | `next` | Next phase (default: the following one) |
 

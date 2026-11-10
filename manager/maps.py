@@ -17,8 +17,8 @@ EXAMPLES = {
         'name': {'zh': '双谷要塞 · 奥德萨作战', 'en': 'Twin Valley Fortress · Operation Odessa'},
         'description': '南谷对战场、山脊要塞闸门和北谷基地，附 6 阶段 PvE 任务（过场、横幅、首领、核弹倒计时）。',
         'path': 'examples/maps/twin-valley-fortress',
-        'commit': '24b3f804fd25257ed8b7e4374bccf8e7ecbc4052',
-        'map_json': '366c32c663d0c1e56dddff82c36fd94ce6c83db0a4ebffc14e285eafb821a00f',
+        'commit': '821b2e07acbca8fad573e2e278f28d815c02aa85',
+        'map_json': 'd32a29523b189fff9b200be647755a3ca62e8211312c3e1e88e51b855d20c2b2',
     },
 }
 EXAMPLE_FILE_LIMIT = 16 * 1024 * 1024

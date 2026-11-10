@@ -73,7 +73,8 @@
 | `lines` | 人物对话：`portrait`（客户端已有头像 `sprs\\NNNN.spr`）、`speaker`、`text` |
 | `banners` | 横幅：`image`（512×128 PNG），在过场中以特效显示 |
 | `presentation` | 可选的任务列表图片（PNG），各自替换模板任务的对应图片：`list_banner`（155×68）、`room_icon`（120×83；与原版图标一样，第 0..18 行留给标题字）、`room_poster`（250×120）、`title`（155×22，透明底白字）、`loading`（1024×1024 读取画面） |
-| `sectors` | 区域切换：`warp`（1..8 个传送点）、`facing`、可选 `rect`（活动范围） |
+| `area` | 开局活动范围：`[左 x, 上 z, 右 x, 下 z]`（北为上）。玩家被限制在范围内，与原版多区域任务使用相同的调用。范围在 `opening` 过场开始时设置，因此需要开场过场；不写时整个 `terrain.play_area` 都可活动 |
+| `sectors` | 区域切换：`warp`（1..8 个传送点）、`facing`、可选 `rect`（新的活动范围，顺序同 `area`） |
 | `cutscenes` | 过场动画，见下表 |
 | `phases` | 1..8 个阶段，按顺序推进，见下表 |
 | `opening`、`ending` | 开场、通关时播放的过场名 |
@@ -87,7 +88,7 @@
 | `fail` | `time_limit`：限时；`lose`：指定友方单位被击破即失败 |
 | `spawns` | 刷怪：`npc`、`positions`、`at`（阶段开始后秒数）、`every`（间隔）、`side`（`enemy`/`ally`）、`min_free` |
 | `slots` | 同屏单位上限 `ally` + `enemy` ≤ 10 |
-| `enter` | 进入本阶段时：`cutscene`（过场）、`lines`（对话）、`sector`（切换区域）；第一阶段请使用 `opening` |
+| `enter` | 进入本阶段时：`cutscene`（过场）、`lines`（对话）、`sector`（带传送的区域切换）、`area`（不传送，只改活动范围）；第一阶段请使用 `opening` 和任务的 `area` |
 | `reward` | 阶段奖励 `points`、`unit_exp` |
 | `next` | 下一阶段（默认按顺序） |
 

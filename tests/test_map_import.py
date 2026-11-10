@@ -156,6 +156,31 @@ class CompileTests(unittest.TestCase):
                 compiler.map_row(pkg, 143, 'mission', 'Trns\\m143.trn', 'sprs\\m143p.spr',
                                  'Txrs\\m143r.txr', 'BGM\\0001.mp3')
 
+    def test_movable_areas_set_every_players_terrain_rect(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = mission_spec()
+            spec['area'] = [-2000, 1500, 2000, -1500]                    # applied when the opening starts
+            spec['phases'][1]['enter'] = {'area': [-1000, 2000, 1000, 500]}
+            pkg = P.load(write_package(Path(tmp), mission=spec))
+
+            def compile_lua():
+                build = M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                          templates=templates())
+                return build.lua.decode('utf-8') if isinstance(build.lua, bytes) else build.lua
+            lua = compile_lua()
+            self.assertRegex(lua, r"SDGOM1_C\d+ = \{id='SDGOM1_C\d+', frames=\d+, n=\d+, hide=1, area=\{-2000,1500,2000,-1500\}")
+            self.assertIn('if c.area ~= nil then SDGOMI.area(m, c.area) end', lua)
+            self.assertIn('function SDGOM1_E1(m)\n  SDGOMI.area(m, {-1000,2000,1000,500})', lua)
+            self.assertIn('unit:SetTerrainRect(r[1], r[2], r[3], r[4])', lua)
+            for bad in ([2000, 1500, -2000, -1500], [-2000, -1500, 2000, 1500], [-5000, 1500, 2000, -1500]):
+                spec['area'] = bad
+                with self.assertRaisesRegex(M.MissionError, 'area'):
+                    compile_lua()
+            spec['area'] = [-2000, 1500, 2000, -1500]
+            spec.pop('opening')
+            with self.assertRaisesRegex(M.MissionError, 'opening'):
+                compile_lua()
+
     def test_jpeg_layer_and_model_textures_compile(self):
         def jpeg(colour):
             out = io.BytesIO()

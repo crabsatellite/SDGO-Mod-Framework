@@ -203,6 +203,7 @@ function SDGOMI.init(m, c)
   local s = {frame = 0, next = 1, actors = {}, demo = 1}
   SDGOMI[c.id] = s
   m:DemoPlay()
+  if c.area ~= nil then SDGOMI.area(m, c.area) end
   if c.hide == 1 then
     s.hidden = {n = 0}
     local count = GetNumPlayer()
@@ -257,6 +258,12 @@ function SDGOMI.warp(m, w)
     PlayerWarp(i - 1, p, w.dir)
     local unit = GetPlayer(i - 1)
     if unit ~= nil and w.rect ~= nil then unit:SetTerrainRect(w.rect[1], w.rect[2], w.rect[3], w.rect[4]) end
+  end
+end
+function SDGOMI.area(m, r)
+  for i = 1, GetNumPlayer() do
+    local unit = GetPlayer(i - 1)
+    if unit ~= nil then unit:SetTerrainRect(r[1], r[2], r[3], r[4]) end
   end
 end
 '''
@@ -383,6 +390,22 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         build.resources.update(banner_effect(package.read(banner['image']), fx))
         banner_fx[key] = fx
 
+    def area_lua(rect, what: str) -> str:
+        """Movable area [left x, top z, right x, bottom z] (north up) in the order of the client's
+        SetTerrainRect, the call native missions use for their per-phase areas."""
+        left, top, right, bottom = _vec(rect, what, 4)
+        if not (left < right and bottom < top):
+            _fail(f'{what} 需要 [左 x, 上 z, 右 x, 下 z]，且左 < 右、下 < 上')
+        if max(abs(left), abs(right), abs(top), abs(bottom)) > package.half_extent:
+            _fail(f'{what} 超出地形范围')
+        return '{%s}' % ','.join(_num(v) for v in (left, top, right, bottom))
+
+    start_area = 'nil'
+    if spec.get('area') is not None:
+        if not spec.get('opening'):
+            _fail('area（开局活动范围）需要 opening 过场：范围在开场过场开始时设置')
+        start_area = area_lua(spec['area'], 'area')
+
     # -- cutscenes -> Lua tables
     lua_parts = [RUNTIME_LUA]
     cutscene_names: dict[str, tuple[str, float]] = {}
@@ -481,8 +504,9 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         hide = cut.get('hide_players', True)
         if not isinstance(hide, bool):
             _fail(f'cutscenes.{key}.hide_players 必须是布尔值')
-        lua_parts.append('%s = {id=%s, frames=%d, n=%d, hide=%d, cam0=%s, look0=%s, actors={%s}, events={\n  %s\n}}\n' % (
-            fn, _lua_string(fn), int(round(length * FPS)), len(events), 1 if hide else 0, _v3(p0), _v3(l0),
+        area = start_area if key == spec.get('opening') else 'nil'    # the opening applies the starting area
+        lua_parts.append('%s = {id=%s, frames=%d, n=%d, hide=%d, area=%s, cam0=%s, look0=%s, actors={%s}, events={\n  %s\n}}\n' % (
+            fn, _lua_string(fn), int(round(length * FPS)), len(events), 1 if hide else 0, area, _v3(p0), _v3(l0),
             ','.join(actors.values()),
             ',\n  '.join('{f=%d,%s}' % (max(1, int(round(t * FPS))), body) for t, body in events)))
         lua_parts.append('function %s_LuaInit(m) return SDGOMI.init(m, %s) end\n'
@@ -502,7 +526,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             _fail(f'sectors.{key}.warp 需要 1..8 个点')
         fx, fz = _vec(sector.get('facing', [0, 1]), f'sectors.{key}.facing', 2)
         rect = sector.get('rect')
-        rect_lua = 'nil' if rect is None else '{%s}' % ','.join(_num(v) for v in _vec(rect, f'sectors.{key}.rect', 4))
+        rect_lua = 'nil' if rect is None else area_lua(rect, f'sectors.{key}.rect')
         warp_tables[key] = '{n=%d,points={%s},dir=%s,rect=%s}' % (len(points), ','.join(_v3(p) for p in points),
                                                                    _v3((fx, 0, fz)), rect_lua)
 
@@ -516,6 +540,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             if enter['sector'] not in warp_tables:
                 _fail(f'phases[{phase_index}].enter.sector 未定义')
             body.append('  SDGOMI.warp(m, %s)' % warp_tables[enter['sector']])
+        if enter.get('area') is not None:
+            body.append('  SDGOMI.area(m, %s)' % area_lua(enter['area'], f'phases[{phase_index}].enter.area'))
         if not body:
             return ''
         fn = f'{ids.lua_prefix}_E{phase_index}'
@@ -618,7 +644,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             if enter.get('cutscene') and enter['cutscene'] not in cutscene_names:
                 _fail(f'phases[{p_index}].enter.cutscene 未定义')
             event_fn = event_function(p_index, enter) if d_index == 0 else f'{ids.lua_prefix}_E{p_index}' \
-                if any((enter.get('lines'), enter.get('sector'))) else ''
+                if any((enter.get('lines'), enter.get('sector'), enter.get('area') is not None)) else ''
             reward = phase.get('reward') or {}
             objective_text = _zh(phase.get('objective'), f'phases[{p_index}].objective', 49)
 
