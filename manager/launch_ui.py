@@ -17,6 +17,7 @@ from . import launch
 from .instance import Lease,local_open
 
 class IncompatibleSession(ValueError):pass
+class ManagerStartupError(ValueError):pass
 
 
 def command():
@@ -60,13 +61,22 @@ class Session:
         self.root=Path(root).resolve();self.token=token;self.workspace=self.root/'sdgo/local-state/manager'
         self.result={'status':'queued','message':'正在连接 Manager'};self.lock=threading.Lock();self.stop=threading.Event()
         self.retry=threading.Event();self.cancel=threading.Event();self.url=None;self.secret=None;self.host=None
+        self.backend_pid=None
 
     def record(self,stage,**values):
         from . import storage
         # This UI receipt is separate from the update worker's authoritative
         # result: a transient IPC error must not overwrite a completed launch.
         storage.atomic(launch.item(self.root,self.token,'session.json'),storage.json_bytes({
-            **values,'schema_version':1,'token':self.token,'manager_pid':os.getpid(),'stage':stage}))
+            **values,'schema_version':1,'token':self.token,'manager_pid':os.getpid(),'ui_pid':os.getpid(),
+            'backend_pid':self.backend_pid,'backend_url':self.url,'stage':stage}))
+
+    def session_changed(self):
+        from . import storage
+        try:current=storage.read_json(self.workspace/'manager-session.json',{})
+        except(OSError,ValueError):return False
+        return bool(self.url and current.get('url')and(current['url']!=self.url or
+            (self.backend_pid and current.get('pid')and current['pid']!=self.backend_pid)))
 
     def failed(self,stage,error):
         result={'status':'error','message':str(error),'error_type':type(error).__name__}
@@ -95,19 +105,30 @@ class Session:
             raise ValueError(message)from error
 
     def connect(self):
+        from . import storage
         lease=Lease(self.workspace)
+        backend=None
         if lease.file:
             lease.close()
-            subprocess.Popen([*command(),'--workspace',str(self.workspace),'--no-browser','--startup-client',str(self.root)],cwd=self.root,
+            storage.remove(launch.item(self.root,self.token,'server-error.json'))
+            backend=subprocess.Popen([*command(),'--workspace',str(self.workspace),'--no-browser','--startup-client',str(self.root),'--startup-request',self.token],cwd=self.root,
                              env=dict(os.environ,PYINSTALLER_RESET_ENVIRONMENT='1'),
                              creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0),close_fds=True)
         lease.close()
         deadline=time.monotonic()+90
         while not self.stop.is_set():
+            if backend:
+                error=storage.read_json(launch.item(self.root,self.token,'server-error.json'),{})
+                if error.get('token')==self.token and backend.pid in(error.get('manager_pid'),error.get('launcher_pid')):
+                    raise ManagerStartupError('配套 Manager 启动失败：'+error.get('message','未知错误'))
+                code=backend.poll()
+                if code not in(None,0):raise ManagerStartupError('配套 Manager 未完成启动，退出码：'+str(code))
             try:
                 self.url=lease.existing_url();identity=self.api('api/identity')
-                if identity.get('launch_gate')!=1:raise IncompatibleSession('当前 Manager 会话版本过旧，请正常退出旧 Manager 后重试')
-                self.secret=identity['session_token'];return
+                revision=identity.get('launch_service_revision',0)
+                if identity.get('launch_gate')!=1 or not isinstance(revision,int)or revision<launch.SERVICE_REVISION:
+                    raise IncompatibleSession('当前 Manager 后台尚未更新'+('（'+identity['manager_version']+'）'if identity.get('manager_version')else'')+'，请正常退出本目录的旧 Manager 后重试')
+                self.secret=identity['session_token'];self.backend_pid=identity.get('manager_pid');return
             except IncompatibleSession:raise
             except(OSError,ValueError)as error:
                 self.record('connect',status='working',message=str(error),error_type=type(error).__name__)
@@ -115,16 +136,20 @@ class Session:
                 self.stop.wait(.25)
 
     def work(self):
-        submitted=False;restarting=False;stage='connect';previous=None
+        submitted=False;restarting=False;stage='connect';previous=None;generation=None;resubmitted=False
         while not self.stop.is_set():
             try:
                 if self.completed():return
+                if self.session_changed():
+                    self.record('reconnect',status='working',message='Manager 会话已变化，重新连接启动任务')
+                    self.url=None;submitted=False;restarting=False
                 if not self.url:
                     stage='connect';self.record(stage,status='working')
                     self.connect();submitted=False
                     if self.stop.is_set():return
+                if generation!=(self.url,self.backend_pid):generation=(self.url,self.backend_pid);resubmitted=False
                 if self.cancel.is_set():
-                    if self.host:self.api('api/client-updates',{'action':'cancel','host':self.host})
+                    if self.host:self.api('api/client-updates',{'action':'cancel','host':self.host,'launch_token':self.token})
                     else:
                         launch.save(self.root,self.token,status='cancelled',message='启动已取消')
                         with self.lock:self.result={'status':'cancelled'}
@@ -137,6 +162,10 @@ class Session:
                     self.token=response.get('token',self.token);self.host=response.get('host',self.host);submitted=True
                     stage='poll';self.record(stage,status='working',host=self.host)
                 result=self.api('api/launch?'+urllib.parse.urlencode({'root':str(self.root),'token':self.token}))
+                if result.get('status')in(None,'unknown'):
+                    if resubmitted:raise ValueError('当前后台没有保留启动任务，请退出本目录的旧 Manager 后重新打开游戏')
+                    resubmitted=True;submitted=False;self.record('resubmit',status='working',message='重新提交同一启动请求')
+                    self.stop.wait(.25);continue
                 self.host=result.get('host',self.host)
                 with self.lock:self.result=result
                 snapshot=(result.get('status'),result.get('progress',{}).get('phase'),result.get('message'))
@@ -152,11 +181,12 @@ class Session:
                 self.stop.wait(.3)
             except Exception as error:
                 if self.completed():return
-                if restarting:
+                if restarting or self.session_changed():
                     self.url=None;restarting=False;continue
                 self.failed(stage,error)
                 while not self.stop.is_set()and not self.retry.wait(.25):
                     if self.completed():return
+                    if self.session_changed():break
                     if self.cancel.is_set():
                         with self.lock:self.result={'status':'cancelled'}
                         return
@@ -238,13 +268,22 @@ def run(root,token):
         current=storage.read_json(launch.folder(root)/'ui.json',{})
         pending=launch.state(root,current['token'])if current.get('token')else{}
         if pending.get('status')not in('launched','cancelled'):
+            revision=current.get('launch_service_revision',0)
+            if (not isinstance(revision,int)or revision<launch.SERVICE_REVISION)and current.get('pid'):
+                process=launch.creation(current['pid'])
+                if process and process[1].is_relative_to(Path(root).resolve())and process[1]!=Path(sys.executable).resolve():
+                    k.CloseHandle(mutex)
+                    raise IncompatibleSession('旧的启动进度仍在运行，请正常退出本目录的旧 Manager 后重试')
+            storage.atomic(launch.item(root,token,'session.json'),storage.json_bytes({
+                'schema_version':1,'token':token,'stage':'coalesced','status':'queued','target_token':current.get('token'),
+                'manager_pid':current.get('pid'),'launch_service_revision':current.get('launch_service_revision')}))
             k.CloseHandle(mutex);return
         # The previous launch is complete but its dialog is still unwinding.
         # Wait for that finite UI to close instead of dropping the next click.
         if k.WaitForSingleObject(mutex,15000)not in(0,0x80):
             k.CloseHandle(mutex);raise ValueError('上一次启动窗口仍在关闭，请稍后重试')
     from . import storage
-    storage.atomic(launch.folder(root)/'ui.json',storage.json_bytes({'token':token,'pid':os.getpid()}))
+    storage.atomic(launch.folder(root)/'ui.json',storage.json_bytes({'token':token,'pid':os.getpid(),'launch_service_revision':launch.SERVICE_REVISION}))
     session=Session(root,token);worker=threading.Thread(target=session.work,name='startup-progress',daemon=True);worker.start()
     try:dialog(session)
     finally:

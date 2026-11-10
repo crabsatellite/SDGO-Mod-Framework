@@ -24,6 +24,53 @@ def announce(url):
         except (OSError,ValueError):pass
 
 
+def serve(args,sibling=None,local_client=False):
+    lease=Lease(args.workspace);workspace=None;server=None;trace=None
+    try:
+        if not lease.file:
+            url=lease.existing_url()
+            if not args.no_browser:webbrowser.open(url)
+            announce(url);return
+        workspace=Workspace(args.workspace,ROOT/'mods')
+        if args.startup_client:
+            root=args.startup_client.resolve(strict=True)
+            if args.workspace.resolve()!=(root/'sdgo/local-state/manager').resolve():raise ValueError('启动工作区不属于这个客户端')
+            if not any(Path(h['path']).resolve()==root for h in workspace.settings['hosts']):workspace.add_host(root)
+        if local_client and not any(Path(h['path']).resolve()==sibling.resolve()for h in workspace.settings['hosts']):workspace.add_host(sibling)
+        attach(workspace)
+        from manager.updates import attach as attach_updates
+        executable=Path(sys.executable)if getattr(sys,'frozen',False)else None
+        if executable and args.startup_client:executable=args.startup_client.resolve()/'SDGO Mod Manager.exe'
+        attach_updates(workspace,ROOT,executable)
+        if executable and not args.no_browser:
+            from manager.entrypoints import create
+            try:create(workspace,executable)
+            except(OSError,ValueError):pass
+        server=make_server(workspace,args.port);url='http://127.0.0.1:'+str(server.server_port)+'/'
+        storage.atomic(workspace.root/'manager-session.json',storage.json_bytes({'application':'sdgo_mod_manager','url':url,'pid':os.getpid()}))
+        workspace.services.restore()
+        if not args.no_browser:webbrowser.open(url)
+        announce(url);server.serve_forever()
+    finally:
+        try:
+            if server:server.server_close()
+            if workspace:
+                if server and os.environ.get('SDGO_MANAGER_SHUTDOWN_TRACE')=='1':
+                    import faulthandler
+                    trace=(workspace.root/'shutdown-stacks.log').open('w',encoding='utf-8')
+                    trace.write('server closed; stopping workspace\n');trace.flush()
+                    faulthandler.dump_traceback_later(10,repeat=True,file=trace)
+                try:workspace.close()
+                finally:
+                    if trace:
+                        import threading
+                        trace.write('workspace closed; threads='+repr([(t.name,t.ident,t.daemon)for t in threading.enumerate()])+'\n');trace.flush()
+                        faulthandler.dump_traceback(file=trace);globals()['_shutdown_trace_file']=trace
+        finally:
+            lease.close()
+            if trace:trace.write('lease closed; returning main\n');trace.flush()
+
+
 def main(argv=None):
     effective=sys.argv[1:] if argv is None else argv
     if effective[:1]==['--launch-game']:
@@ -68,54 +115,23 @@ def main(argv=None):
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--startup-client',type=Path,help=argparse.SUPPRESS)
+    parser.add_argument('--startup-request',help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if not 0 <= args.port <= 65535: parser.error('port must be 0..65535')
-    lease=Lease(args.workspace)
-    if not lease.file:
-        url=lease.existing_url()
-        if not args.no_browser:webbrowser.open(url)
-        announce(url)
-        return
-    workspace = Workspace(args.workspace, ROOT / 'mods')
-    if args.startup_client:
-        root=args.startup_client.resolve(strict=True)
-        if args.workspace.resolve()!=root/'sdgo/local-state/manager':raise ValueError('启动工作区不属于这个客户端')
-        if not any(Path(h['path']).resolve()==root for h in workspace.settings['hosts']):workspace.add_host(root)
-    if local_client and not any(Path(h['path']).resolve()==sibling.resolve()for h in workspace.settings['hosts']):
-        workspace.add_host(sibling)
-    attach(workspace)
-    from manager.updates import attach as attach_updates
-    executable=Path(sys.executable) if getattr(sys,'frozen',False) else None
-    if executable and args.startup_client:executable=args.startup_client.resolve()/'SDGO Mod Manager.exe'
-    attach_updates(workspace,ROOT,executable)
-    if executable and not args.no_browser:
-        from manager.entrypoints import create
-        try:create(workspace,executable)
-        except (OSError, ValueError):pass  # A read-only desktop must not prevent opening Manager.
-    server = make_server(workspace, args.port)
-    url = 'http://127.0.0.1:' + str(server.server_port) + '/'
-    storage.atomic(workspace.root / 'manager-session.json', storage.json_bytes({'application': 'sdgo_mod_manager', 'url': url, 'pid': os.getpid()}))
-    workspace.services.restore()
-    if not args.no_browser: webbrowser.open(url)
-    announce(url)
-    try: server.serve_forever()
-    finally:
-        server.server_close()
-        trace=None
-        if os.environ.get('SDGO_MANAGER_SHUTDOWN_TRACE')=='1':
-            import faulthandler
-            trace=(workspace.root/'shutdown-stacks.log').open('w',encoding='utf-8')
-            trace.write('server closed; stopping workspace\n');trace.flush()
-            faulthandler.dump_traceback_later(10,repeat=True,file=trace)
-        try:workspace.close()
-        finally:
-            if trace:
-                import threading
-                trace.write('workspace closed; threads='+repr([(t.name,t.ident,t.daemon)for t in threading.enumerate()])+'\n');trace.flush()
-                faulthandler.dump_traceback(file=trace)
-                globals()['_shutdown_trace_file']=trace
-        lease.close()
-        if trace:trace.write('lease closed; returning main\n');trace.flush()
+    if args.startup_request and not args.startup_client:parser.error('--startup-request requires --startup-client')
+    try:return serve(args,sibling,local_client)
+    except Exception as error:
+        if not args.startup_client:raise
+        if args.startup_request:
+            from manager import launch
+            try:
+                launch.accept(args.startup_client,args.startup_request)
+                storage.atomic(launch.item(args.startup_client,args.startup_request,'server-error.json'),storage.json_bytes({
+                    'schema_version':1,'status':'error','stage':'manager_startup','token':args.startup_request,'manager_pid':os.getpid(),
+                    'launcher_pid':os.getppid()if getattr(sys,'frozen',False)else os.getpid(),
+                    'error_type':type(error).__name__,'message':str(error)}))
+            except(OSError,ValueError):pass
+        return 1
 
 
 if __name__ == '__main__': raise SystemExit(main())

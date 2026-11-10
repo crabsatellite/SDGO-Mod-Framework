@@ -106,10 +106,14 @@ class ClientRuntime:
         self.active_host=None
         self.cancel_event=threading.Event()
         class OperationStop:
-            def is_set(token):return self.stop_event.is_set()or self.cancel_event.is_set()
+            def is_set(token):return self.stop_event.is_set()or self.cancel_event.is_set()or self.should_yield()
         self.operation_stop=OperationStop()
         self.binding_requests={}
         self.launch_tokens={}
+        self.cancelled_launches={}
+        self.lifecycle_lock=threading.RLock();self.restart_requested=False;self.worker_error=None
+        self.active_action=None;self.waiting_for_busy=False
+        self.yield_requested=False;self.operation_context=threading.local()
 
     def launch(self,root,token):
         from . import launch
@@ -123,28 +127,51 @@ class ClientRuntime:
         launch.accept(root,token)
         with self.lock:
             existing=self.launch_tokens.get(host['id'])
-            if existing and self.results.get(host['id'],{}).get('status')in('queued','working','restart_required'):
-                return {'token':existing,'host':host['id'],'status':'queued'}
-            self.launch_tokens[host['id']]=token
-            self.jobs=[j for j in self.jobs if j[0]!=host['id']]
-            self.jobs.insert(0,(host['id'],'launch',token))
-            self.results[host['id']]={'status':'queued','launch_token':token}
+            if existing and launch.state(root,existing).get('status')not in('launched','cancelled','error'):
+                token=existing
+            else:
+                self.launch_tokens[host['id']]=token
+                self.jobs=[j for j in self.jobs if j[0]!=host['id']]
+                self.jobs.insert(0,(host['id'],'launch',token))
+                self.results[host['id']]={'status':'queued','launch_token':token}
+            if self.active_action=='auto_sync'and self.active_host!=host['id']:self.yield_requested=True
         self.start();return {'token':token,'host':host['id'],'status':'queued'}
 
     def launch_state(self,root,token):
         from . import launch
         root=Path(root).resolve()
+        result=None;resume=False
         with self.lock:
             for h in self.workspace.settings['hosts']:
-                result=self.results.get(h['id'],{})
-                if Path(h['path']).resolve()==root and result.get('launch_token')==token:return {**result,'host':h['id'],'token':token}
-        return {**launch.state(root,token),'token':token}
+                row=self.results.get(h['id'],{})
+                if Path(h['path']).resolve()!=root:continue
+                pending=self.launch_tokens.get(h['id'])==token
+                if row.get('launch_token')==token:result={**row,'host':h['id'],'token':token}
+                elif pending:result={'status':'queued','host':h['id'],'token':token}
+                resume=pending and(not self.thread or not self.thread.is_alive()or self.stop_event.is_set())
+                break
+        if resume:self.start()
+        if result is None:result={**launch.state(root,token),'token':token}
+        if not result.get('status'):
+            result.update(status='unknown',message='当前后台未登记此启动请求')
+        if result['status']=='queued':
+            result['progress']={'phase':'queue','message':'等待 Manager 当前操作完成'if self.busy.locked()else'准备处理启动请求'}
+        result['worker']=self.worker_state()
+        return result
+
+    def worker_state(self):
+        return {'running':bool(self.thread and self.thread.is_alive()),'stop_requested':self.stop_event.is_set(),
+                'restart_requested':self.restart_requested,'active_host':self.active_host,'active_action':self.active_action,
+                'queued_jobs':len(self.jobs),'waiting_for_busy':self.waiting_for_busy,'yield_requested':self.yield_requested,'error':self.worker_error}
+
+    def should_yield(self):
+        return self.yield_requested and threading.current_thread()is self.thread and not getattr(self.operation_context,'in_git',False)
 
     def report_progress(self,**values):
         if self.active_host:
             with self.lock:
                 row=self.results.setdefault(self.active_host,{'status':'working'})
-                if values.get('phase')!=row.get('progress',{}).get('phase')and 'phase'in values:row['progress']={}
+                if values.get('phase')!=row.get('progress',{}).get('phase')and 'phase'in values:row['progress']={'phase_started_at':time.time()}
                 row.setdefault('progress',{}).update(values)
 
     def git_progress(self,raw):
@@ -336,9 +363,13 @@ class ClientRuntime:
                         self.git_received=received;self.report_progress(wire_bytes=received)
                 except OSError:pass  # A pack can be atomically renamed while sampled.
             try:
-                result=run(
-                    ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=None if network else 1200 if output is not None or args[:1]==['cat-file']else 120,
-                    stop=self.operation_stop,env=git_source.environment(),input=input,output=output,**({'progress':self.git_progress,'poll':poll_pack}if fetching else{}))
+                self.operation_context.in_git=True
+                try:
+                    result=run(
+                        ['git','-C',str(repository),*prefix,*arguments],cwd=repository,timeout=None if network else 1200 if output is not None or args[:1]==['cat-file']else 120,
+                        stop=self.operation_stop,env=git_source.environment(),input=input,output=output,**({'progress':self.git_progress,'poll':poll_pack}if fetching else{}))
+                finally:self.operation_context.in_git=False
+                if self.should_yield():raise InterruptedError('常规同步在安全边界让位于游戏启动')
             except subprocess.TimeoutExpired:
                 errors.append('读取更新仓库超时');continue
             if result.returncode:
@@ -736,14 +767,27 @@ class ClientRuntime:
         with self.lock:self.jobs.append((identity,action,digest));self.results[identity]={'status':'queued'}
         self.start();return self.state()
 
-    def cancel(self,identity):
-        host=self.workspace.host(identity);host['client_updates_paused']=True;self.workspace.save_workspace()
+    def cancel(self,identity,launch_token=None):
+        host=self.workspace.host(identity)
         with self.lock:
+            token=self.launch_tokens.get(identity)
+            if launch_token:
+                from .launch import state
+                saved=state(host['path'],launch_token)
+                if token and token!=launch_token:raise storage.Conflict('启动请求已变化，保留当前任务')
+                if saved.get('status')=='launched':return self.state()
+                if token!=launch_token and saved.get('status')not in('error','cancelled','restart_required'):
+                    raise ValueError('没有对应的待取消启动请求')
+                token=launch_token
+            elif not token and self.results.get(identity,{}).get('status')=='error':token=self.results[identity].get('launch_token')
+            host['client_updates_paused']=True;self.workspace.save_workspace()
             self.jobs=[job for job in self.jobs if job[0]!=identity]
-            if self.active_host==identity:self.cancel_event.set()
+            if self.active_host==identity:
+                self.cancel_event.set()
+                if token:self.cancelled_launches[identity]=token
             else:
                 self.results[identity]={'status':'cancelled','message':'下载已取消；已校验文件保留，可继续下载'}
-                token=self.launch_tokens.get(identity)
+                self.launch_tokens.pop(identity,None)
                 if token:
                     from .launch import save
                     self.results[identity]['launch_token']=token
@@ -764,22 +808,21 @@ class ClientRuntime:
             from .owner_channel import mode
             rows.append({'id':host['id'],'name':host['name'],'mode':mode(host),'source':binding,'pending':self.binding_requests.get(host['id']),'error':error,'result':result,
                          'recovery_required':recovery})
-        return {'healthy':True,'running':bool(self.thread and self.thread.is_alive()),'hosts':rows,
+        return {'healthy':not bool(self.worker_error),'running':bool(self.thread and self.thread.is_alive()),'hosts':rows,'worker':self.worker_state(),
                 'automatic':self.workspace.services.desired(SERVICE)if hasattr(self.workspace,'services')else False}
 
     def start(self):
-        if self.thread and self.thread.is_alive():return
-        self.stop_event.clear()
         def loop():
             next_check=0
             while not self.stop_event.is_set():
-                with self.lock:job=self.jobs.pop(0)if self.jobs else None
+                with self.lock:job=self.jobs[0]if self.jobs else None
+                queued=job is not None
                 if job is None and self.workspace.services.desired(SERVICE)and time.monotonic()>=next_check:
                     next_check=time.monotonic()+3600
                     from .owner_channel import mode
                     for host in self.workspace.settings['hosts']:
                         if host['role']=='client'and mode(host)!='owner'and not host.get('client_updates_paused')and(Path(host['path'])/SOURCE).is_file():
-                            with self.lock:self.jobs.append((host['id'],'sync',None))
+                            with self.lock:self.jobs.append((host['id'],'auto_sync',None))
                     continue
                 if job is None:
                     for identity,result in list(self.results.items()):
@@ -788,16 +831,22 @@ class ClientRuntime:
                             if not updates.running(Path(host['path'])/'GOnline.exe'):
                                 job=(identity,'install',self.plans[identity]['digest']);break
                 if job:
-                    identity,action,digest=job
-                    with self.busy:
-                        with self.lock:self.active_host=identity;self.cancel_event.clear();self.results[identity]={'status':'working',**({'launch_token':digest}if action=='launch'else{})}
+                    if not self.busy.acquire(timeout=.25):
+                        self.waiting_for_busy=True;continue
+                    try:
+                        self.waiting_for_busy=False
+                        with self.lock:
+                            if self.jobs:job=self.jobs.pop(0)
+                            elif queued:continue
+                        identity,action,digest=job
+                        with self.lock:self.active_host=identity;self.active_action=action;self.yield_requested=False;self.cancel_event.clear();self.results[identity]={'status':'working',**({'launch_token':digest}if action=='launch'else{})}
                         try:
                             host=self.workspace.host(identity)
                             if action=='launch':
                                 from .launch import run
                                 result=run(self,host,digest)
-                            else:result=self.recover(host)if action=='recover'else self.plan(host)if action in('check','sync')else self.install(host,digest)
-                            if action=='sync'and result['status']=='available':result=self.install(host,result['digest'])
+                            else:result=self.recover(host)if action=='recover'else self.plan(host)if action in('check','sync','auto_sync')else self.install(host,digest)
+                            if action in('sync','auto_sync')and result['status']=='available':result=self.install(host,result['digest'])
                         except InterruptedError:result={'status':'cancelled','message':'操作已取消，已校验文件保留；缺失或不完整内容不会安装'}
                         except Exception as e:result={'status':'error','message':str(e)}
                         if action=='launch':
@@ -806,13 +855,64 @@ class ClientRuntime:
                             try:save(host['path'],digest,**{k:v for k,v in result.items()if k!='handoff'})
                             except(OSError,ValueError)as error:
                                 result={**result,'status':'error','message':'无法保存启动结果：'+str(error)}
-                        with self.lock:self.results[identity]=result;self.active_host=None;self.cancel_event.clear()
+                        with self.lock:cancelled=self.cancelled_launches.pop(identity,None)
+                        if cancelled:
+                            if not(action=='launch'and cancelled==digest and result.get('status')=='launched'):
+                                from .launch import save
+                                result={'status':'cancelled','message':'启动已取消，已校验文件保留','launch_token':cancelled}
+                                try:save(host['path'],cancelled,**result)
+                                except(OSError,ValueError)as error:result={**result,'status':'error','message':'无法保存取消结果：'+str(error)}
+                            with self.lock:
+                                if self.launch_tokens.get(identity)==cancelled:self.launch_tokens.pop(identity,None)
+                        with self.lock:
+                            if action=='auto_sync'and(self.cancel_event.is_set()or self.yield_requested)and not self.stop_event.is_set()and self.workspace.services.desired(SERVICE)and not host.get('client_updates_paused')and not any(j[0]==identity for j in self.jobs):
+                                self.jobs.append((identity,'auto_sync',None))
+                            self.results[identity]=result;self.active_host=None;self.active_action=None;self.yield_requested=False;self.cancel_event.clear()
+                            if action=='launch'and result['status']!='restart_required'and self.launch_tokens.get(identity)==digest:
+                                self.launch_tokens.pop(identity,None)
+                    finally:self.busy.release()
                 self.stop_event.wait(.25)
-        self.thread=threading.Thread(target=loop,name='client-runtime-updates',daemon=True);self.thread.start()
+
+        def consume():
+            try:loop()
+            except Exception as error:
+                self.stop_event.set();self.worker_error={'error_type':type(error).__name__,'message':str(error)}
+                try:storage.atomic(self.cache/'worker-error.json',storage.json_bytes(self.worker_error))
+                except(OSError,ValueError):pass
+                from . import launch
+                with self.lock:
+                    for identity,token in list(self.launch_tokens.items()):
+                        host=next((h for h in self.workspace.settings['hosts']if isinstance(h,dict)and h.get('id')==identity),None)
+                        row={'status':'error','message':'启动消费线程异常：'+str(error),'launch_token':token}
+                        if host:
+                            try:
+                                prior=launch.state(host['path'],token)
+                                if prior.get('status')in('launched','cancelled'):row={**prior,'launch_token':token}
+                                else:launch.save(host['path'],token,**row)
+                            except(OSError,ValueError):pass
+                        self.results[identity]=row
+                    self.jobs=[j for j in self.jobs if j[1]!='launch'];self.launch_tokens.clear()
+            finally:
+                with self.lifecycle_lock:
+                    if self.thread is threading.current_thread():
+                        self.thread=None;self.active_host=None;self.active_action=None;self.waiting_for_busy=False
+                        if self.restart_requested and not self.manager_closing():self.start()
+        with self.lifecycle_lock:
+            if self.manager_closing():raise storage.Conflict('Manager 正在退出，请重新打开游戏')
+            if self.thread and self.thread.is_alive():
+                if self.stop_event.is_set():self.restart_requested=True
+                return
+            self.restart_requested=False;self.worker_error=None;self.stop_event.clear()
+            self.thread=threading.Thread(target=consume,name='client-runtime-updates',daemon=True);self.thread.start()
+
+    def manager_closing(self):
+        event=getattr(getattr(self.workspace,'services',None),'stop_event',None)
+        return bool(event and event.is_set())
 
     def stop(self):
-        self.stop_event.set()
-        if self.thread:self.thread.join(timeout=25)
+        with self.lifecycle_lock:
+            self.restart_requested=False;self.stop_event.set();thread=self.thread
+        if thread and thread is not threading.current_thread():thread.join(timeout=25)
 
 
 def attach(workspace):

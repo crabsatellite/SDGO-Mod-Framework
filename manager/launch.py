@@ -18,6 +18,7 @@ from .target_locks import lease
 REQUEST = struct.Struct('<8sIIQII')
 PERMIT = struct.Struct('<8sQ32s32sI')
 PROTOCOL = b'SDGO_LAUNCH_GATE_V1'
+SERVICE_REVISION = 2
 TOKEN = re.compile('[0-9a-f]{32}')
 
 
@@ -129,7 +130,10 @@ def start_original(command,root,env):
 def run(controller,host,token):
     from .client_runtime import installed_source,matches,RECEIPT
     from .owner_channel import mode
-    root=Path(host['path']).resolve();request=read_request(root,token)
+    root=Path(host['path']).resolve()
+    completed=state(root,token)
+    if completed.get('status')in('launched','cancelled'):return completed
+    request=read_request(root,token)
     def progress(phase,**values):controller.report_progress(phase=phase,**values)
     def wait(phase,message):
         progress(phase,message=message)
@@ -167,6 +171,8 @@ def run(controller,host,token):
             result=controller.plan(host)
             if result['status']!='current'or controller.plans[host['id']]['commit']!=plan['commit']:continue
         with lease('host:'+str(root).casefold()):
+            completed=state(root,token)
+            if completed.get('status')in('launched','cancelled'):return completed
             if installed_source(root)!=initial or mode(host)!='player':raise storage.Conflict('启动前维护方式或更新源已变化')
             progress('verify',total_files=len(plan['effective']),verified_files=0)
             for number,(name,entry)in enumerate(plan['effective'].items(),1):

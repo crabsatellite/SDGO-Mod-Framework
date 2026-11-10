@@ -2,6 +2,7 @@
 from __future__ import annotations
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import secrets
 import threading
@@ -85,7 +86,11 @@ def make_server(workspace, port=0):
                     from .entrypoints import create
                     rows=create(workspace,executable)
                     return self.send_json(200,{'created':sum(r['status']=='created' for r in rows),'kept':sum(r['status']=='kept' for r in rows)})
-                if method == 'GET' and path == '/api/identity': return self.send_json(200, {'application': 'sdgo_mod_manager', 'workspace_id': storage.revision(str(workspace.root).encode()),'session_token':token,'launch_gate':1})
+                if method == 'GET' and path == '/api/identity':
+                    from .launch import SERVICE_REVISION
+                    return self.send_json(200, {'application': 'sdgo_mod_manager', 'workspace_id': storage.revision(str(workspace.root).encode()),
+                        'session_token':token,'launch_gate':1,'launch_service_revision':SERVICE_REVISION,
+                        'manager_version':getattr(getattr(workspace,'updates',None),'current',None),'manager_pid':os.getpid()})
                 if path=='/api/launch':
                     controller=workspace.client_runtime
                     if method=='POST':return self.send_json(200,controller.launch(body.get('root'),body.get('token')))
@@ -116,7 +121,7 @@ def make_server(workspace, port=0):
                     if controller is None:raise ValueError('完整客户端更新尚未初始化')
                     if method=='GET':return self.send_json(200,controller.state())
                     if method=='POST':
-                        if body.get('action')=='cancel':return self.send_json(200,controller.cancel(body.get('host')))
+                        if body.get('action')=='cancel':return self.send_json(200,controller.cancel(body.get('host'),body.get('launch_token')))
                         if body.get('action')=='profile_install':
                             return self.send_json(200,controller.bind_profile(body.get('host'),body.get('feeds',[]),body.get('offline')))
                         if body.get('action')=='profile_publish':

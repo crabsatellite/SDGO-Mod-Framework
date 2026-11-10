@@ -38,6 +38,12 @@ Concurrent clicks share a verified helper copy. Its executable is written by one
 
 Startup progress connects directly to the local Manager over loopback, bypassing system and environment HTTP proxies. Remote programme and content downloads keep their existing network configuration. If a request is accepted but the game does not open, inspect the connection, submission or polling stage and error in `sdgo/local-state/launch/<token>.session.json`. The update worker writes its final result to the same token's `.result.json`; `.accepted` records custody of the request, not successful game startup. Quotes and trailing spaces in the original command line are preserved.
 
+Completed launch intents retire before a subsequent background check, so later clicks queue a new launch. A Manager workspace redirected with a Windows directory junction is compared using its resolved path. Backend initialization errors are returned in `<token>.server-error.json` and displayed in startup progress.
+
+Replacing the EXE does not replace an already-running process. If startup identifies an older background Manager or progress window, exit that client's old Manager normally, including its background session, then open the game again. `/api/identity` reports the actual backend's `manager_version` and `launch_service_revision`; the revision for this launch lifecycle is at least 2.
+
+The progress receipt identifies its UI process separately from `backend_pid` and `backend_url`. It follows a replacement Manager session and resubmits the same intent if that backend has no record of it. Repeated delivery checks the terminal receipt under the client lease before issuing another permit. `/api/client-updates` includes consumer state, its active task, queue size and error; an empty host result is not evidence that that backend received the intent.
+
 ## Owner publication
 
 Choose owner DIY for your editing client. Review and adopt the intended upstream programs, set shared parameters and generate custom content. Check the program upstream before the first profile export or after adopting a different program version.

@@ -34,6 +34,7 @@ Unofficial fan project; no game files are included. [简体中文](README.zh-CN.
 **Players:** obtain a compatible original client, install the framework in Manager and import the server owner's profile to receive its selected Mods, shared settings and assets.
 Then open `GOnline.exe` as usual: Manager shows update progress, verifies the installation and starts the game.
 Updates preserve personal settings. See [installation and updates before launch](docs/owner-updates.md).
+Launches remain queued during background checks and support redirected Manager workspaces; outdated running backends are identified explicitly.
 
 **Server owners:** open **0_更新与管理** at the top of the client folder or **SDGO Mod Manager.exe** from the framework package.
 The official starter pack is the default; choose DIY to take over configuration, content and compatibility.

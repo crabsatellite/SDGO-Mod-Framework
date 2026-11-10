@@ -10,8 +10,9 @@ import threading
 import urllib.request
 import json
 from types import SimpleNamespace
+from contextlib import contextmanager
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch,Mock
 from manager import launch,storage,client_runtime
 from tests import test_server_profiles as profile_fixtures
 
@@ -56,6 +57,102 @@ class LaunchGate(unittest.TestCase):
         with patch('manager.server_profiles.resolve',wraps=__import__('manager.server_profiles',fromlist=['resolve']).resolve)as resolve:
             self.run_launch();self.assertGreaterEqual(resolve.call_count,2)
         self.assertEqual((self.game/'sprs/new-unit.spr').read_bytes(),b'new custom unit')
+
+    def test_replayed_completed_intent_does_not_need_deleted_request_or_spawn_again(self):
+        first=self.run_launch()
+        with patch.object(launch.subprocess,'Popen')as spawned:
+            result=launch.run(self.controller,self.host,self.token)
+        self.assertEqual(result['pid'],first['pid']);spawned.assert_not_called()
+
+    def test_completion_from_another_backend_is_rechecked_before_grant(self):
+        @contextmanager
+        def another_backend_finished(key):
+            launch.save(self.game,self.token,status='launched',pid=654)
+            yield
+        with patch.object(launch,'creation',return_value=None),patch.object(launch,'lease',another_backend_finished),patch.object(launch.subprocess,'Popen')as spawned:
+            result=launch.run(self.controller,self.host,self.token)
+        self.assertEqual(result['pid'],654);spawned.assert_not_called()
+
+    def test_consumer_failure_is_returned_to_accepted_launch(self):
+        import time
+        self.workspace.host=lambda identity:self.host;self.workspace.services=SimpleNamespace(desired=lambda identity:False)
+        broken=SimpleNamespace(acquire=Mock(side_effect=RuntimeError('consumer fixture failure')),locked=lambda:False)
+        with patch.object(self.controller,'busy',broken),patch.object(launch,'creation',return_value=(456,self.game/'GOnline.exe')):
+            try:
+                self.controller.launch(self.game,self.token);deadline=time.monotonic()+3
+                while launch.state(self.game,self.token).get('status')!='error'and time.monotonic()<deadline:time.sleep(.01)
+                result=launch.state(self.game,self.token)
+                self.assertEqual(result['status'],'error');self.assertIn('consumer fixture failure',result['message'])
+                self.assertEqual(self.controller.worker_error['error_type'],'RuntimeError')
+            finally:self.controller.stop()
+
+    def test_periodic_sync_yields_after_git_releases_its_atomic_files(self):
+        completed=[];self.controller.thread=threading.current_thread();self.controller.yield_requested=True
+        def command(*args,**kwargs):
+            self.assertFalse(kwargs['stop'].is_set(),'periodic yield must not kill Git with shallow/index locks held')
+            completed.append(True);return SimpleNamespace(returncode=0,stdout=b'',stderr=b'')
+        try:
+            with patch('manager.owned_process.run',side_effect=command):
+                with self.assertRaises(InterruptedError):client_runtime.ClientRuntime.git(self.controller,self.game.parent/'git-fixture',['fetch','origin'])
+            self.assertEqual(completed,[True]);self.assertFalse(self.controller.operation_context.in_git)
+        finally:self.controller.thread=None;self.controller.yield_requested=False
+
+    def test_startup_failure_keeps_a_token_bound_backend_error(self):
+        from tools import mod_manager
+        with patch.object(mod_manager,'serve',side_effect=ValueError('startup fixture failed')),patch.object(launch,'creation',return_value=(456,self.game/'GOnline.exe')):
+            code=mod_manager.main(['--workspace',str(self.game/'sdgo/local-state/manager'),'--no-browser',
+                '--startup-client',str(self.game),'--startup-request',self.token])
+        self.assertEqual(code,1)
+        error=storage.read_json(launch.item(self.game,self.token,'server-error.json'))
+        self.assertEqual(error['token'],self.token);self.assertEqual(error['stage'],'manager_startup')
+        self.assertEqual(error['message'],'startup fixture failed')
+        self.assertFalse(launch.item(self.game,self.token,'result.json').exists())
+
+    def test_launch_arriving_while_consumer_stops_is_consumed_by_successor(self):
+        import time
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        self.workspace.services=SimpleNamespace(desired=lambda identity:False)
+        waiting=threading.Event();exiting=threading.Event();resume=threading.Event();original_wait=self.controller.stop_event.wait
+        def paused_wait(timeout):
+            waiting.set();value=original_wait(timeout)
+            if self.controller.stop_event.is_set():exiting.set();self.assertTrue(resume.wait(5))
+            return value
+        with patch.object(self.controller.stop_event,'wait',side_effect=paused_wait),patch.object(launch,'creation',return_value=(456,self.game/'GOnline.exe')),patch.object(launch,'run',return_value={'status':'launched','pid':789}):
+            stopper=None
+            try:
+                self.controller.start();self.assertTrue(waiting.wait(3))
+                stopper=threading.Thread(target=self.controller.stop);stopper.start();self.assertTrue(exiting.wait(3))
+                response=self.controller.launch(self.game,self.token);self.assertEqual(response['status'],'queued')
+                resume.set();stopper.join(3);deadline=time.monotonic()+3
+                while launch.state(self.game,self.token).get('status')!='launched'and time.monotonic()<deadline:time.sleep(.01)
+                self.assertEqual(launch.state(self.game,self.token).get('status'),'launched','accepted launch must survive the exiting consumer')
+            finally:
+                resume.set()
+                if stopper:stopper.join(3)
+                self.controller.stop()
+
+    def test_other_client_background_sync_cannot_hold_an_accepted_launch(self):
+        import time
+        other_root=self.game.parent/'other-client';other_root.mkdir()
+        storage.atomic(other_root/'sdgo/client-source.json',storage.json_bytes(self.source))
+        other={'id':'other','path':str(other_root),'role':'client','name':'other'}
+        self.workspace.settings['hosts'].insert(0,other)
+        self.workspace.host=lambda identity:next(h for h in self.workspace.settings['hosts']if h['id']==identity)
+        self.workspace.save_workspace=lambda:None;self.workspace.services=SimpleNamespace(desired=lambda identity:True)
+        entered=threading.Event();resume=threading.Event()
+        def plan(host):
+            if host['id']=='other':
+                entered.set()
+                while not self.controller.operation_stop.is_set()and not resume.wait(.01):pass
+                if self.controller.operation_stop.is_set():raise InterruptedError('background sync yielded')
+            return {'status':'current'}
+        with patch.object(self.controller,'plan',side_effect=plan),patch.object(launch,'creation',return_value=(456,self.game/'GOnline.exe')),patch.object(launch,'run',return_value={'status':'launched','pid':789}):
+            try:
+                self.controller.start();self.assertTrue(entered.wait(3))
+                self.controller.launch(self.game,self.token);deadline=time.monotonic()+3
+                while launch.state(self.game,self.token).get('status')!='launched'and time.monotonic()<deadline:time.sleep(.01)
+                self.assertEqual(launch.state(self.game,self.token).get('status'),'launched','another directory periodic sync must yield without changing its source')
+            finally:resume.set();self.controller.stop()
 
     def test_original_handoff_keeps_graphics_compatibility_without_requesting_elevation(self):
         environment={'__COMPAT_LAYER':'HIGHDPIAWARE RunAsAdmin Win7RTM','SDGO_LAUNCH_PERMIT':self.token}
@@ -139,8 +236,143 @@ class LaunchGate(unittest.TestCase):
             state=self.controller.launch_state(self.game,first['token'])
             self.assertEqual(state['status'],'cancelled');self.assertEqual(state['token'],first['token'])
 
+    def test_next_launch_is_not_lost_while_a_background_check_is_working(self):
+        import time
+        self.workspace.host=lambda identity:self.host
+        self.workspace.save_workspace=lambda:None
+        self.workspace.services=SimpleNamespace(desired=lambda identity:False)
+        checking=threading.Event();resume=threading.Event()
+        def plan(host):
+            checking.set();self.assertTrue(resume.wait(5));return {'status':'current'}
+        with patch.object(launch,'creation',return_value=(456,self.game/'GOnline.exe')),patch.object(launch,'run',return_value={'status':'launched','pid':789}),patch.object(self.controller,'plan',side_effect=plan):
+            try:
+                self.controller.launch(self.game,self.token)
+                deadline=time.monotonic()+3
+                while launch.state(self.game,self.token).get('status')!='launched'and time.monotonic()<deadline:time.sleep(.01)
+                self.assertEqual(launch.state(self.game,self.token)['status'],'launched')
+                self.controller.request(self.host['id'],'check');self.assertTrue(checking.wait(3))
+                self.token='d'*32;self.request()
+                response=self.controller.launch(self.game,self.token)
+                self.assertEqual(response['token'],self.token,'a new click must not reuse a finished launch token')
+                resume.set();deadline=time.monotonic()+3
+                while launch.state(self.game,self.token).get('status')!='launched'and time.monotonic()<deadline:time.sleep(.01)
+                self.assertEqual(launch.state(self.game,self.token)['status'],'launched')
+            finally:resume.set();self.controller.stop()
+
+    def test_cancelling_launch_queued_behind_background_check_is_acknowledged(self):
+        import time
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        self.workspace.services=SimpleNamespace(desired=lambda identity:False)
+        checking=threading.Event();resume=threading.Event()
+        def plan(host):checking.set();self.assertTrue(resume.wait(5));return {'status':'current'}
+        with patch.object(launch,'creation',return_value=(456,self.game/'GOnline.exe')),patch.object(launch,'run')as run,patch.object(self.controller,'plan',side_effect=plan):
+            try:
+                self.controller.request(self.host['id'],'check');self.assertTrue(checking.wait(3))
+                self.controller.launch(self.game,self.token);self.controller.cancel(self.host['id']);resume.set()
+                deadline=time.monotonic()+3
+                while launch.state(self.game,self.token).get('status')!='cancelled'and time.monotonic()<deadline:time.sleep(.01)
+                self.assertEqual(launch.state(self.game,self.token)['status'],'cancelled');run.assert_not_called()
+            finally:resume.set();self.controller.stop()
+
+    def test_failed_launch_can_be_cancelled_after_a_later_background_check(self):
+        import time
+        self.workspace.host=lambda identity:self.host;self.workspace.save_workspace=lambda:None
+        self.workspace.services=SimpleNamespace(desired=lambda identity:False)
+        with patch.object(launch,'creation',return_value=(456,self.game/'GOnline.exe')),patch.object(launch,'run',side_effect=ValueError('fixture start error')),patch.object(self.controller,'plan',return_value={'status':'current'}):
+            try:
+                self.controller.launch(self.game,self.token);deadline=time.monotonic()+3
+                while launch.state(self.game,self.token).get('status')!='error'and time.monotonic()<deadline:time.sleep(.01)
+                self.controller.request(self.host['id'],'check');deadline=time.monotonic()+3
+                while self.controller.results[self.host['id']]['status']!='current'and time.monotonic()<deadline:time.sleep(.01)
+                self.controller.cancel(self.host['id'],self.token)
+                self.assertEqual(launch.state(self.game,self.token)['status'],'cancelled')
+            finally:self.controller.stop()
+
 
 class LaunchSession(unittest.TestCase):
+    def test_manager_session_replacement_resubmits_the_same_intent(self):
+        from manager.launch_ui import Session
+        with tempfile.TemporaryDirectory()as temporary:
+            session=Session(Path(temporary),'a'*32);session.url='http://127.0.0.1:1111/';session.backend_pid=111
+            old=session.url;new='http://127.0.0.1:2222/';posted=[]
+            storage.atomic(session.workspace/'manager-session.json',storage.json_bytes({'url':old,'pid':111}))
+            def connect():session.url=new;session.backend_pid=222
+            def api(path,body=None):
+                if body is not None:
+                    posted.append((session.url,body['token']));return {'status':'queued','host':'client','token':session.token}
+                if session.url==old:
+                    storage.atomic(session.workspace/'manager-session.json',storage.json_bytes({'url':new,'pid':222}))
+                    return {'status':'queued','host':'client','token':session.token}
+                return {'status':'launched','pid':789}
+            with patch.object(session,'api',side_effect=api),patch.object(session,'connect',side_effect=connect):
+                worker=threading.Thread(target=session.work);worker.start();worker.join(3)
+                try:
+                    self.assertFalse(worker.is_alive());self.assertEqual(posted,[(old,session.token),(new,session.token)])
+                    self.assertEqual(session.result['status'],'launched')
+                    receipt=storage.read_json(launch.item(session.root,session.token,'session.json'))
+                    self.assertEqual(receipt['backend_pid'],222);self.assertEqual(receipt['backend_url'],new)
+                finally:session.stop.set();worker.join(3)
+
+    def test_unknown_delivery_is_retried_once_without_a_new_token(self):
+        from manager.launch_ui import Session
+        with tempfile.TemporaryDirectory()as temporary:
+            session=Session(Path(temporary),'a'*32);session.url='http://127.0.0.1:1/';posts=[]
+            def api(path,body=None):
+                if body is not None:posts.append(body['token']);return {'status':'queued','host':'client','token':session.token}
+                return {'status':'unknown'}if len(posts)<2 else{'status':'launched','pid':789}
+            with patch.object(session,'api',side_effect=api):
+                worker=threading.Thread(target=session.work);worker.start();worker.join(3)
+                try:self.assertFalse(worker.is_alive());self.assertEqual(posts,[session.token,session.token]);self.assertEqual(session.result['status'],'launched')
+                finally:session.stop.set();worker.join(3)
+
+    def test_later_replacement_session_recovers_after_transport_failure(self):
+        from manager.launch_ui import Session
+        import time
+        with tempfile.TemporaryDirectory()as temporary:
+            session=Session(Path(temporary),'a'*32);session.url='http://127.0.0.1:1111/';session.backend_pid=111
+            old=session.url;new='http://127.0.0.1:2222/';posts=[]
+            storage.atomic(session.workspace/'manager-session.json',storage.json_bytes({'url':old,'pid':111}))
+            def connect():session.url=new;session.backend_pid=222
+            def api(path,body=None):
+                if body is not None:posts.append(session.url);return {'status':'queued','token':session.token,'host':'client'}
+                if session.url==old:raise OSError('old backend exited')
+                return {'status':'launched','pid':789}
+            with patch.object(session,'connect',side_effect=connect),patch.object(session,'api',side_effect=api):
+                worker=threading.Thread(target=session.work);worker.start()
+                try:
+                    deadline=time.monotonic()+3
+                    while session.result.get('status')!='error'and time.monotonic()<deadline:time.sleep(.01)
+                    self.assertEqual(session.result['status'],'error')
+                    storage.atomic(session.workspace/'manager-session.json',storage.json_bytes({'url':new,'pid':222}))
+                    worker.join(3);self.assertFalse(worker.is_alive());self.assertEqual(posts,[old,new])
+                    self.assertEqual(session.result['status'],'launched')
+                finally:session.stop.set();worker.join(3)
+    def test_a_new_executable_does_not_silently_reuse_an_old_backend(self):
+        from manager.launch_ui import Session,IncompatibleSession
+        with tempfile.TemporaryDirectory()as temporary:
+            session=Session(Path(temporary),'a'*32)
+            lease=SimpleNamespace(file=None,close=lambda:None,existing_url=lambda:'http://127.0.0.1:1/')
+            with patch('manager.launch_ui.Lease',return_value=lease),patch.object(session,'api',return_value={'launch_gate':1,'session_token':'fixture'}):
+                with self.assertRaisesRegex(IncompatibleSession,'后台尚未更新'):session.connect()
+
+    def test_backend_startup_error_is_reported_without_waiting_for_session_timeout(self):
+        from manager.launch_ui import Session,ManagerStartupError
+        session=None
+        with tempfile.TemporaryDirectory()as temporary:
+            session=Session(Path(temporary),'a'*32)
+            class FakeLease:
+                file=True
+                def __init__(self,*args):pass
+                def close(self):self.file=None
+                def existing_url(self):raise ValueError('no session')
+            def spawn(*args,**kwargs):
+                self.assertIn('--startup-request',args[0])
+                storage.atomic(launch.item(session.root,session.token,'server-error.json'),storage.json_bytes({
+                    'token':session.token,'manager_pid':789,'message':'invalid workspace'}))
+                return SimpleNamespace(pid=789,poll=lambda:1)
+            with patch('manager.launch_ui.Lease',FakeLease),patch('manager.launch_ui.subprocess.Popen',side_effect=spawn):
+                with self.assertRaisesRegex(ManagerStartupError,'invalid workspace'):session.connect()
+
     def test_unexpected_worker_failure_is_persisted_before_waiting_for_retry(self):
         from manager.launch_ui import Session
         import time
@@ -253,6 +485,7 @@ class LaunchSession(unittest.TestCase):
             try:
                 with urllib.request.urlopen(f'http://127.0.0.1:{server.server_port}/api/identity')as response:identity=json.load(response)
                 self.assertEqual(identity['launch_gate'],1);self.assertTrue(identity['session_token'])
+                self.assertEqual(identity['launch_service_revision'],launch.SERVICE_REVISION)
             finally:server.shutdown();thread.join(timeout=5);server.server_close()
 
 

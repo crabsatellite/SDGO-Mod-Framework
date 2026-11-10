@@ -18,6 +18,7 @@ import struct
 import sys
 import time
 import urllib.request
+import urllib.parse
 import zipfile
 import uuid
 from contextlib import contextmanager
@@ -166,10 +167,15 @@ def run_sealed(base,build):
     return {'status':'pass','checks':checks}
 
 
-def run(base,build,with_owner=False,manager_handoff=False,environment=None):
+def run(base,build,with_owner=False,manager_handoff=False,environment=None,redirected_workspace=False,background_check=False,restart_backend=False):
     sealed=run_sealed(base,build)
     game,profile_dir,profile,env=prepare(base,build,with_owner,manager_handoff);checks=[];owned=[]
     env.update(environment or {})
+    if redirected_workspace:
+        state=base/'manager-workspace';state.mkdir()
+        linked=game/'sdgo/local-state/manager';linked.parent.mkdir(parents=True,exist_ok=True)
+        subprocess.run(['cmd','/d','/c','mklink','/J',str(linked),str(state)],check=True,capture_output=True)
+        checks.append('redirected_workspace_cold_start')
     checks.extend(sealed['checks'])
     def start(**extra):
         process=WindowsBackgroundProcess([str(game/'GOnline.exe'),'--example','中文 参数'],cwd=game,env={**env,**extra},
@@ -237,6 +243,71 @@ def run(base,build,with_owner=False,manager_handoff=False,environment=None):
             assert(game/'sdgo/owner-mods/fixture_owner/fixture_owner.dll').read_bytes()==b'owner programme revision 2 '+distribution.OWNER_MARKER
             assert storage.read_json(game/'sdgo/local-state/client-runtime.json')['owner_programme']['revision']==2
             (game/'native-entry.txt').unlink();checks.append('next_launch_updates_locked_owner_programme')
+        if background_check:
+            started=threading.Event();stop_checks=threading.Event();errors=[]
+            def check_repeatedly():
+                while not stop_checks.is_set():
+                    try:
+                        state=api(game,'api/client-updates');identity=state['hosts'][0]['id']
+                        api(game,'api/client-updates',{'action':'check','host':identity});started.set()
+                    except urllib.error.HTTPError as error:
+                        if error.code!=409:errors.append(str(error))
+                        error.close()
+                        break
+                    except(OSError,ValueError)as error:errors.append(str(error));break
+                    stop_checks.wait(.05)
+            checker=threading.Thread(target=check_repeatedly,daemon=True);checker.start()
+            try:
+                assert started.wait(10)
+                pending=start();assert pending.wait(40)==0
+                wait(lambda:(game/'native-entry.txt').is_file(),90)
+                assert not errors,errors
+                checks.append('next_launch_survives_active_background_checks')
+                wait(lambda:not(launch.folder(game)/'ui.json').exists(),15)
+                (game/'native-entry.txt').unlink()
+            finally:stop_checks.set();checker.join(10)
+        if restart_backend:
+            revised=b'content verified after backend replacement';profile['revision']+=1
+            profile['files']['sprs/fixture.spr']={'bytes':len(revised),'sha256':updates.digest(revised)}
+            storage.atomic(profile_dir/'content/sprs/fixture.spr',revised);storage.atomic(profile_dir/'server-profile.json',storage.json_bytes(profile))
+            held=start(SDGO_LAUNCH_PERMIT='f'*32)
+            wait(lambda:any(w['class_name']=='#32770'for w in held._api.desktop_state(held._desktop_handle,held.pid).target_windows),15)
+            before=set(launch.folder(game).glob('*.request'))
+            try:
+                crossing=start();assert crossing.wait(40)==0
+                request=wait(lambda:next((p for p in launch.folder(game).glob('*.request')if p not in before),None),30)
+                token=request.name.split('.')[0]
+                def registered(fresh=False):
+                    state=api(game,'api/launch?'+urllib.parse.urlencode({'root':str(game),'token':token}))
+                    progress=(state or{}).get('progress',{})
+                    return state if state and state.get('status')=='working'and progress.get('phase')=='waiting'and(not fresh or time.time()-progress.get('phase_started_at',0)<.05)else None
+                old=storage.read_json(game/'sdgo/local-state/manager/manager-session.json')
+                processes={row['pid']:row for row in process_snapshot()};row=processes[old['pid']]
+                assert Path(row['image_path']).resolve().is_relative_to(base)
+                parent=processes.get(row['parent_pid'])
+                kernel=c.WinDLL('kernel32',use_last_error=True);kernel.OpenProcess.argtypes=(w.DWORD,w.BOOL,w.DWORD);kernel.OpenProcess.restype=w.HANDLE
+                kernel.TerminateProcess.argtypes=(w.HANDLE,w.UINT);kernel.WaitForSingleObject.argtypes=(w.HANDLE,w.DWORD);kernel.CloseHandle.argtypes=(w.HANDLE,)
+                wait(lambda:registered(True),30)
+                handle=kernel.OpenProcess(0x100001,False,old['pid']);assert handle
+                try:
+                    assert kernel.TerminateProcess(handle,1);assert kernel.WaitForSingleObject(handle,15000)==0
+                finally:kernel.CloseHandle(handle)
+                if parent and parent.get('image_path')and Path(parent['image_path']).resolve().is_relative_to(base):
+                    subprocess.run(['taskkill','/PID',str(parent['pid']),'/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                replacement=WindowsBackgroundProcess([str(game/updates.MANAGER),'--workspace',str(game/'sdgo/local-state/manager'),'--no-browser'],
+                    cwd=game,env=env,stdout=None,stderr=None,run_id='replacement-'+uuid.uuid4().hex,allow_named_desktop_fallback=True)
+                owned.append(replacement)
+                wait(lambda:storage.read_json(game/'sdgo/local-state/manager/manager-session.json',{}).get('pid')not in(None,old['pid']),45)
+                wait(registered,45)
+                assert not(game/'native-entry.txt').exists(),'replacement must still perform the final verification before entry'
+            finally:
+                if held.poll()is None:held.kill();held.wait(10)
+            wait(lambda:(game/'native-entry.txt').is_file(),45)
+            assert(game/'sprs/fixture.spr').read_bytes()==revised
+            result=wait(lambda:launch.state(game,token)if launch.state(game,token).get('status')=='launched'else None,15)
+            assert result['origin_pid']==crossing.pid
+            wait(lambda:not(launch.folder(game)/'ui.json').exists(),15)
+            (game/'native-entry.txt').unlink();checks.append('accepted_intent_survives_backend_replacement')
         # Unavailable content never reaches native main; cancellation closes UI.
         previous_content=(game/'sprs/fixture.spr').read_bytes()
         profile['revision']+=1;profile['files']['sprs/fixture.spr']={'bytes':5,'sha256':updates.digest(b'wrong')}
@@ -265,7 +336,7 @@ def run(base,build,with_owner=False,manager_handoff=False,environment=None):
                 try:process.wait(5)
                 except subprocess.TimeoutExpired:process.kill();process.wait(10)
             process.close()
-        wait(lambda:not any(row.get('image_path')and Path(row['image_path']).resolve().is_relative_to(game)for row in process_snapshot()),90)
+        wait(lambda:not any(row.get('image_path')and Path(row['image_path']).resolve().is_relative_to(base)for row in process_snapshot()),90)
 
 
 @contextmanager
@@ -284,12 +355,13 @@ def blocked_proxy():
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--build',type=Path,default=ROOT/'build');parser.add_argument('--work',type=Path,required=True)
-    parser.add_argument('--sealed-only',action='store_true');parser.add_argument('--owner-programmes',action='store_true');parser.add_argument('--manager-handoff',action='store_true');parser.add_argument('--proxy',action='store_true');args=parser.parse_args()
+    parser.add_argument('--sealed-only',action='store_true');parser.add_argument('--owner-programmes',action='store_true');parser.add_argument('--manager-handoff',action='store_true');parser.add_argument('--proxy',action='store_true')
+    parser.add_argument('--redirected-workspace',action='store_true');parser.add_argument('--background-check',action='store_true');parser.add_argument('--restart-backend',action='store_true');args=parser.parse_args()
     args.work.mkdir(parents=True,exist_ok=False)
     if args.proxy:
         with blocked_proxy()as(environment,intercepted):
-            result=run(args.work.resolve(),args.build.resolve(),args.owner_programmes,args.manager_handoff,environment)
+            result=run(args.work.resolve(),args.build.resolve(),args.owner_programmes,args.manager_handoff,environment,args.redirected_workspace,args.background_check,args.restart_backend)
             assert not intercepted,intercepted
             result['checks'].append('loopback_launch_bypasses_player_http_proxy')
-    else:result=run_sealed(args.work.resolve(),args.build.resolve())if args.sealed_only else run(args.work.resolve(),args.build.resolve(),args.owner_programmes,args.manager_handoff)
+    else:result=run_sealed(args.work.resolve(),args.build.resolve())if args.sealed_only else run(args.work.resolve(),args.build.resolve(),args.owner_programmes,args.manager_handoff,None,args.redirected_workspace,args.background_check,args.restart_backend)
     storage.atomic(args.work/'native-result.json',storage.json_bytes(result));print(json.dumps(result))
