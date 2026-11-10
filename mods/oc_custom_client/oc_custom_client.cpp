@@ -520,7 +520,7 @@ void RenderWindows(bool active, const ui::EntryView& entry, const ui::OverView& 
     }
 }
 
-void HideUnderWindows(bool oc_page) noexcept;
+void HideUnderWindows(bool oc_page, void* only_service = nullptr) noexcept;
 void RestoreHidden() noexcept;
 void ForgetHidden() noexcept;
 void SetTabLook(bool oc) noexcept;
@@ -528,6 +528,7 @@ bool OcModeActive(bool active);
 bool UpgradeTabSelected() noexcept;
 bool OcTabPending() noexcept; // the OC tab was clicked; the menu has not switched yet
 void ApplyOcTitle(bool oc_tab) noexcept;
+void ApplyCurrentFactoryActions() noexcept; // the page actions under the unit follow g_oc_page_shown
 bool g_oc_page_shown = false; // the OC tab page is on screen (factory actions hidden)
 
 // A custom skill's name from the native skill table. The shared localization
@@ -743,6 +744,7 @@ void Render() {
     }
     ApplyOcTitle(active && (oc_tab || pending));
     g_oc_page_shown = active && (oc_tab || pending);
+    ApplyCurrentFactoryActions();
 }
 
 // --- Requests ---------------------------------------------------------------
@@ -1603,6 +1605,10 @@ void __fastcall PageUpdateHook(void* owner, void*) {
             if (pending || (g_ui.Loaded() && !g_ui.entry_ready() &&
                             g_ui.component() == static_cast<std::uint8_t*>(owner) + kPageComponent))
                 AttachUnsafe();
+            // Until the menu has switched to the slot the OC page takes, every
+            // frame checks it, so the OC page shows in the frame the native
+            // page would have.
+            else if (OcTabPending() && g_ui.Alive()) Render();
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_ui.Detach();
@@ -2001,7 +2007,12 @@ void __fastcall InventoryUpdateHook(void* service, void*) {
         slot->service = service;
         slot->tick = now;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
     }
+    // The inventory of the 经验值转换 page slides in from the right edge when
+    // the menu shows that page; it is hidden in the same frame, wherever it is
+    // on its way, so it never shows on the OC tab.
+    if (g_oc_page_shown) HideUnderWindows(true, service);
 }
 
 // The factory header (uirs\0804.uir, "FACTORY" and the tab name). A native
@@ -2044,6 +2055,8 @@ struct HiddenAction {
     std::uint8_t enabled = 0;
 };
 std::array<HiddenAction, 2> g_hidden_actions{};
+void* g_factory_service = nullptr; // the factory main service, updated every frame while it is open
+ULONGLONG g_factory_tick = 0;
 constexpr std::size_t kFactoryActions[2] = {0xA8 + 0x3C, 0xA8 + 0x40}; // SaveBtn, ReturnBtn
 
 void RestoreFactoryActions() noexcept {
@@ -2103,17 +2116,89 @@ void FindModelDialog(void* service) noexcept {
 using Multi3DDraw = void(__thiscall*)(void*);
 Multi3DDraw g_multi3d_draw_original = nullptr;
 
+// What a frame shows from the click on the OC tab until it is left: the
+// native 经验值转换 page drawn, an inventory dialog in the OC page's areas, or
+// the page actions under the unit count as native content (the frame is
+// judged at the unit model's draw, once per frame).
+std::size_t OcAreas(bool oc_page, std::array<Rect, ui::window_count>& areas) noexcept;
+bool UnderOcArea(const Rect& rect, const std::array<Rect, ui::window_count>& areas, std::size_t count) noexcept;
+std::size_t InventoryDialogs(void* only_service, void** dialogs, std::size_t capacity) noexcept;
+
+struct SwitchWatch {
+    std::uint32_t frames = 0;       // frames with the OC tab requested or open
+    std::uint32_t pending = 0;      // of them, before the OC page took the slot
+    std::uint32_t native = 0;       // of them, frames showing native 经验值转换 content
+    std::uint32_t page_draws = 0;   // radar::PageDraws() at the last frame
+    std::uint32_t opening = 0;      // frames of the current opening
+    std::uint32_t opening_native = 0;
+    std::uint32_t reported = 0;     // native frames logged in the current opening
+};
+SwitchWatch g_watch;
+
+void StartSwitchWatch() noexcept {
+    g_watch.page_draws = radar::PageDraws();
+    g_watch.opening = 0;
+    g_watch.opening_native = 0;
+    g_watch.reported = 0;
+}
+
+void WatchFrame() noexcept {
+    if (!g_tab.requested && !g_tab.mode) return;
+    ++g_watch.frames;
+    ++g_watch.opening;
+    const bool pending = g_tab.requested && !g_tab.mode;
+    if (pending) ++g_watch.pending;
+    const char* what = nullptr;
+    void* which = nullptr;
+    const auto draws = radar::PageDraws();
+    if (draws != g_watch.page_draws) what = "the native page was drawn", which = g_ui.page_dialog();
+    g_watch.page_draws = draws;
+    __try {
+        void* factory = g_factory_service && GetTickCount64() - g_factory_tick < 2000 ? g_factory_service : nullptr;
+        if (!what && factory && Read<void*>(factory) == g_factory_vtable)
+            for (std::size_t index = 0; index < 2 && !what; ++index) {
+                void* control = Read<void*>(factory, kFactoryActions[index]);
+                if (control && Read<std::uint8_t>(control, 0x162)) what = "a page action under the unit is shown", which = control;
+            }
+        if (!what) {
+            std::array<Rect, ui::window_count> areas{};
+            const std::size_t area_count = OcAreas(true, areas);
+            void* dialogs[16]{};
+            const std::size_t count = area_count ? InventoryDialogs(nullptr, dialogs, 16) : 0;
+            for (std::size_t index = 0; index < count && !what; ++index) {
+                void* dialog = dialogs[index];
+                if (!dialog || OwnDialog(dialog) || !Read<std::uint8_t>(dialog, 0x162)) continue;
+                if (UnderOcArea(RectOf(dialog), areas, area_count)) what = "an inventory dialog is shown in the OC page", which = dialog;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    if (!what) return;
+    ++g_watch.native;
+    ++g_watch.opening_native;
+    if (g_watch.reported < 4) {
+        ++g_watch.reported;
+        float x = 0.0f;
+        __try {
+            if (which) x = Read<float>(which, 0x148);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        LogF(SDGO_LOG_WARN, "oc tab switch frame %u%s: %s (%p at x=%.0f)", g_watch.opening, pending ? " (pending)" : "", what,
+             which, x);
+    }
+}
+
 void __fastcall Multi3DDrawHook(void* control, void*) {
     g_multi3d_draw_original(control);
     radar::AfterModelDraw(control);
+    if (radar::ModelControl(control)) WatchFrame();
 }
 
-void __fastcall FactoryUpdateHook(void* service, void*) {
-    g_factory_update_original(service);
-    ExitButtonOf(service);
+// The page actions follow the OC page: hidden while it is shown (also right
+// at the OC tab click, from Render), their own visibility back otherwise.
+void ApplyFactoryActions(void* service) noexcept {
     __try {
-        if (Read<void*>(service) != g_factory_vtable) return;
-        FindModelDialog(service);
+        if (!service || Read<void*>(service) != g_factory_vtable) return;
         if (!g_oc_page_shown) {
             RestoreFactoryActions();
             return;
@@ -2133,6 +2218,27 @@ void __fastcall FactoryUpdateHook(void* service, void*) {
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
+}
+
+// The live factory main service (none once it stopped updating).
+void* LiveFactory() noexcept {
+    return g_factory_service && GetTickCount64() - g_factory_tick < 2000 ? g_factory_service : nullptr;
+}
+
+void ApplyCurrentFactoryActions() noexcept { ApplyFactoryActions(LiveFactory()); }
+
+void __fastcall FactoryUpdateHook(void* service, void*) {
+    g_factory_update_original(service);
+    ExitButtonOf(service);
+    __try {
+        if (Read<void*>(service) != g_factory_vtable) return;
+        g_factory_service = service;
+        g_factory_tick = GetTickCount64();
+        FindModelDialog(service);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return;
+    }
+    ApplyFactoryActions(service);
 }
 
 // 0: no live header, 1: a native title is still pending, 2: ready (title set).
@@ -2210,38 +2316,70 @@ std::size_t ServiceDialogs(void* service, void** out, std::size_t capacity) {
     return count;
 }
 
-// Hide the inventory dialogs lying mostly under one of the open OC windows
-// (the 0800 page on the left and the 0794 window on the right are judged
-// separately, so the factory's middle column is never swallowed).
-void HideUnderWindows(bool oc_page) noexcept {
+// The areas the OC windows own. On the OC tab the page column on each side
+// belongs to the OC page up to the screen edge: 0800 on the left, 0794 on the
+// right (a native dialog sliding in from the edge is in it all the way). The
+// 0800 page and the 0794 window are judged separately, so the factory's
+// middle column is never swallowed.
+std::size_t OcAreas(bool oc_page, std::array<Rect, ui::window_count>& areas) noexcept {
+    std::size_t count = 0;
+    for (int window = 0; window < ui::window_count; ++window) {
+        const auto id = static_cast<ui::Window>(window);
+        // The OC tab owns both page areas even while the challenge window
+        // stands in front of 0794, so native dialogs never surface there.
+        const bool page_area = oc_page && (id == ui::window_over || id == ui::window_info);
+        if ((!g_ui.window_shown(id) && !page_area) || !g_ui.window_dialog(id)) continue;
+        auto rect = RectOf(g_ui.window_dialog(id));
+        if (page_area && id == ui::window_over) rect.right = 1.0e6f;
+        if (page_area && id == ui::window_info) rect.left = -1.0e6f;
+        areas[count++] = rect;
+    }
+    return count;
+}
+
+// At least half of the dialog lies in one of the areas.
+bool UnderOcArea(const Rect& rect, const std::array<Rect, ui::window_count>& areas, std::size_t count) noexcept {
+    if (rect.empty()) return false;
+    const float width = rect.right - rect.left, height = rect.bottom - rect.top;
+    float covered = 0.0f;
+    for (std::size_t area = 0; area < count; ++area) {
+        const float overlap_w = std::min(rect.right, areas[area].right) - std::max(rect.left, areas[area].left);
+        const float overlap_h = std::min(rect.bottom, areas[area].bottom) - std::max(rect.top, areas[area].top);
+        if (overlap_w > 0 && overlap_h > 0) covered = std::max(covered, overlap_w * overlap_h);
+    }
+    return covered >= 0.5f * width * height;
+}
+
+// The inventory dialogs of the live inventory instances (one instance only
+// when given).
+std::size_t InventoryDialogs(void* only_service, void** dialogs, std::size_t capacity) noexcept {
+    std::size_t count = 0;
+    const auto now = GetTickCount64();
+    for (const auto& seen : g_inventories) {
+        if (!seen.service || now - seen.tick >= 2000 || (only_service && seen.service != only_service)) continue;
+        count += ServiceDialogs(seen.service, dialogs + count, capacity - count);
+    }
+    return count;
+}
+
+// Hide the inventory dialogs lying mostly in the areas of the open OC windows.
+void HideUnderWindows(bool oc_page, void* only_service) noexcept {
     __try {
         std::array<Rect, ui::window_count> areas{};
-        std::size_t area_count = 0;
-        for (int window = 0; window < ui::window_count; ++window) {
-            const auto id = static_cast<ui::Window>(window);
-            // The OC tab owns both page areas even while the challenge window
-            // stands in front of 0794, so native dialogs never surface there.
-            const bool page_area = oc_page && (id == ui::window_over || id == ui::window_info);
-            if ((!g_ui.window_shown(id) && !page_area) || !g_ui.window_dialog(id)) continue;
-            areas[area_count++] = RectOf(g_ui.window_dialog(id));
-        }
+        const std::size_t area_count = OcAreas(oc_page, areas);
         if (!area_count) {
-            RestoreHidden();
+            if (!only_service) RestoreHidden();
             return;
         }
         static bool traced = false;
         void* dialogs[16]{};
-        std::size_t count = 0;
-        const auto now = GetTickCount64();
-        std::size_t live = 0;
-        for (const auto& seen : g_inventories)
-            if (seen.service && now - seen.tick < 2000) {
-                ++live;
-                count += ServiceDialogs(seen.service, dialogs + count, 16 - count);
-            }
+        const std::size_t count = InventoryDialogs(only_service, dialogs, 16);
         static bool reported = false;
-        if (!reported) {
+        if (!reported && !only_service) {
             reported = true;
+            std::size_t live = 0;
+            const auto now = GetTickCount64();
+            for (const auto& seen : g_inventories) live += seen.service && now - seen.tick < 2000 ? 1 : 0;
             char line[120];
             std::snprintf(line, sizeof(line), "oc windows open: %u live inventory instance(s), %u dialog(s)",
                           static_cast<unsigned>(live), static_cast<unsigned>(count));
@@ -2252,20 +2390,14 @@ void HideUnderWindows(bool oc_page) noexcept {
             if (!child || OwnDialog(child)) continue;
             const auto rect = RectOf(child);
             if (rect.empty()) continue;
-            const float width = rect.right - rect.left, height = rect.bottom - rect.top;
-            float covered = 0.0f;
-            for (std::size_t area = 0; area < area_count; ++area) {
-                const float overlap_w = std::min(rect.right, areas[area].right) - std::max(rect.left, areas[area].left);
-                const float overlap_h = std::min(rect.bottom, areas[area].bottom) - std::max(rect.top, areas[area].top);
-                if (overlap_w > 0 && overlap_h > 0) covered = std::max(covered, overlap_w * overlap_h);
-            }
             if (!traced && Read<std::uint8_t>(child, 0x162)) {
                 char line[200];
                 std::snprintf(line, sizeof(line), "oc inventory dialog %p at %.0f,%.0f %.0fx%.0f visible=%u (of %u)", child,
-                              rect.left, rect.top, width, height, Read<std::uint8_t>(child, 0x162), static_cast<unsigned>(count));
+                              rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                              Read<std::uint8_t>(child, 0x162), static_cast<unsigned>(count));
                 Log(SDGO_LOG_INFO, line);
             }
-            if (covered < 0.5f * width * height) continue;
+            if (!UnderOcArea(rect, areas, area_count)) continue;
             traced = true;
             bool known = false;
             for (std::size_t slot = 0; slot < g_hidden_count; ++slot) known = known || g_hidden[slot].dialog == child;
@@ -2311,6 +2443,8 @@ bool OcModeActive(bool active) {
         }
         if (shown) {
             g_tab.mode = true;
+            LogF(SDGO_LOG_INFO, "oc tab took the 经验值转换 slot after %u frame(s); %u frame(s) showed native content",
+                 g_watch.opening, g_watch.opening_native);
             // The menu wrote the slot's native title while the OC tab was
             // pending; the OC title goes on again.
             g_title_applied = false;
@@ -2325,6 +2459,8 @@ bool OcTabPending() noexcept { return g_tab.requested && !g_tab.mode; }
 // before the menu switches pages, so the menu's own hide/show applies to them.
 void ExitOcMode() {
     if (!g_tab.mode && !g_tab.requested) return;
+    LogF(SDGO_LOG_INFO, "oc tab left after %u frame(s); %u frame(s) showed native 经验值转换 content", g_watch.opening,
+         g_watch.opening_native);
     g_tab.mode = g_tab.requested = false;
     auto& s = g_state_data;
     s.challenge_open = false;
@@ -2569,6 +2705,7 @@ void __fastcall TabUpdateHook(void* service, void*) {
                 if (s.mode_known && s.server_oc_mode) CreateTab(service);
             }
             SyncSelectedTab();
+            if (OcTabPending() && g_ui.Alive()) Render();
             UpdateAttributePage();
             if (g_ui.Alive()) l10n::InfoPage(g_ui.window_dialog(ui::window_info), g_ui.window_shown(ui::window_info));
         }
@@ -2638,6 +2775,7 @@ bool MenuAccepts(void* service, const char* when) noexcept {
 void __stdcall TabCallbackHook(void* service, std::uint32_t event, std::uintptr_t second, void* control) {
     if (control && control == g_tab.button && service == g_tab.service) {
         if (event == kButtonClickEvent && MenuAccepts(service, "OC tab click")) {
+            if (!g_tab.requested && !g_tab.mode) StartSwitchWatch();
             g_tab.requested = true;
             g_state_data.owned_wanted = true; // the ITEM box lists the current holdings
             if (g_ui.Alive() && PageActive() && UpgradeTabSelected()) {
@@ -2645,9 +2783,12 @@ void __stdcall TabCallbackHook(void* service, std::uint32_t event, std::uintptr_
                 Render();
             } else if (g_tab.unit_up) {
                 // Select the 经验值转换 slot natively first (the menu hides the
-                // page that was shown), then the OC content takes it over.
+                // page that was shown), then the OC content takes it over. The
+                // page in that slot, its inventory and its actions are held
+                // back from this click on, before the menu's posted switch.
                 g_tab.selected = g_tab.unit_up;
                 g_tab_callback_original(service, kRadioEvent, 0, g_tab.unit_up);
+                if (g_ui.Alive()) Render();
             }
         }
         return;
@@ -2825,6 +2966,9 @@ int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
     snapshot.create_toggles = room_marks::CreateToggles();
     snapshot.create_system = room_marks::CreateSystem();
     snapshot.battle_skills_seen = g_battle_skills_seen;
+    snapshot.oc_switch_frames = g_watch.frames;
+    snapshot.oc_pending_frames = g_watch.pending;
+    snapshot.native_flash_frames = g_watch.native;
     snapshot.battle_skills_offset = g_battle_skills_offset;
     for (std::size_t slot = 0; slot < kCustomSkillCount; ++slot) snapshot.battle_skills[slot] = g_battle_skills[slot];
     const auto& shape = radar::Current();

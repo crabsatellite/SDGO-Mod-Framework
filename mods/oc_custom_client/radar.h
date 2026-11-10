@@ -61,5 +61,7 @@ void SetDrawOrder(bool after_model, bool hide_page) noexcept; // per frame
 void AfterModelDraw(void* control) noexcept;                  // from the CUIMulti3DRender draw hook
 std::uint32_t AfterModelFrames() noexcept;                    // charts drawn after the unit model
 std::uint32_t NativeTurnFrames() noexcept;                    // charts drawn in 0794's turn while after_model was asked
+std::uint32_t PageDraws() noexcept;                           // shown native page draws that were not held back
+bool ModelControl(void* control) noexcept;                    // the control is the factory's unit model
 
 } // namespace sdgo::oc_custom::client::radar

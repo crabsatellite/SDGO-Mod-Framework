@@ -61,6 +61,7 @@ bool g_after_model = false;
 bool g_hide_page = false;
 volatile LONG g_after_frames = 0;
 volatile LONG g_native_turns = 0; // charts drawn in 0794's turn while after_model was asked
+volatile LONG g_page_draws = 0;   // shown native page draws that were not held back
 
 struct Vertex {
     float x, y, z, rhw;
@@ -177,6 +178,10 @@ void __fastcall RenderHook(void* self, void*, void* argument) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     if (skip) return;
+    __try {
+        if (self == g_page && g_page && Read<std::uint8_t>(self, kVisible)) InterlockedIncrement(&g_page_draws);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
     g_render(self, argument);
     __try {
         if (self == g_dialog) {
@@ -288,5 +293,9 @@ void AfterModelDraw(void* control) noexcept {
 std::uint32_t AfterModelFrames() noexcept { return static_cast<std::uint32_t>(g_after_frames); }
 
 std::uint32_t NativeTurnFrames() noexcept { return static_cast<std::uint32_t>(g_native_turns); }
+
+std::uint32_t PageDraws() noexcept { return static_cast<std::uint32_t>(g_page_draws); }
+
+bool ModelControl(void* control) noexcept { return control && control == g_model; }
 
 } // namespace sdgo::oc_custom::client::radar

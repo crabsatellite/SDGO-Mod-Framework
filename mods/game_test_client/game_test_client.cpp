@@ -4290,10 +4290,10 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     static int phase=0;static void* page=nullptr;static uint32_t beforeReplies=0;static uint64_t readyAt=0;
     static int captureState=0;static int afterCapture=0;static HangarNavigation::Result previous=HangarNavigation::kUnbound;
     static uint32_t sumBefore=0,leftBefore=0,revisionBefore=0;static uint8_t speedBefore=0;static uint32_t resetWork=1;static bool agilityNormal=true;
-    static std::array<uint8_t,6> keepNormal{},keepOver{};static uint32_t keepRevision=0,keepLevel=0,keepFrames=0,clicksBefore=0;static std::array<uint16_t,4> keepCustom{};
+    static std::array<uint8_t,6> keepNormal{},keepOver{};static uint32_t keepRevision=0,keepLevel=0,keepFrames=0,clicksBefore=0,keepSwitch=0,keepPending=0,keepFlash=0;static std::array<uint16_t,4> keepCustom{};
     if(!context->tick){phase=0;page=nullptr;beforeReplies=0;readyAt=0;captureState=0;afterCapture=0;previous=HangarNavigation::kUnbound;
         sumBefore=leftBefore=revisionBefore=0;speedBefore=0;resetWork=1;agilityNormal=true;
-        keepNormal={};keepOver={};keepRevision=keepLevel=keepFrames=clicksBefore=0;keepCustom={};}
+        keepNormal={};keepOver={};keepRevision=keepLevel=keepFrames=clicksBefore=keepSwitch=keepPending=keepFlash=0;keepCustom={};}
     const auto capture=[&](const wchar_t* name)->int {
         if(captureState==0) {
             if(GetTickCount64()-readyAt<1200)return SDGO_GAME_TEST_WAIT;
@@ -4404,6 +4404,11 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
             s.over[0],s.over[1],s.over[2],s.over[3],s.over[4],s.over[5],s.normal_points_left,s.over_points_left,s.carrier_present);
         context->Observe(attached);
         context->Assert(s.unit_uid==playUnitUid,"the OC windows follow the page's active unit record, which is the configured play unit");
+        char watch[160];sprintf_s(watch,"oc tab opened from 经验值转换: %u frame(s) watched, %u with native 经验值转换 content",
+            s.oc_switch_frames,s.native_flash_frames);
+        context->Observe(watch);
+        context->Assert(s.oc_switch_frames>=10 && s.native_flash_frames==0,
+            "from the click on, no frame of the OC tab shows the native 经验值转换 page, its inventory or its actions");
         readyAt=GetTickCount64();phase=2;return SDGO_GAME_TEST_WAIT;
     }
     if(phase==2) {
@@ -4598,7 +4603,17 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
     }
     if(phase==72){clicksBefore=s.tab_clicks_accepted;return press("tab",L"SkillPartsRadio",73);}
     if(phase==74){clicksBefore=s.tab_clicks_accepted;return press("tab",L"StatusRadio",78);}
-    if(phase==79){keepFrames=s.radar_frames;return press("tab",L"OverCustomRadio",75);}
+    if(phase==79) {
+        keepFrames=s.radar_frames;keepSwitch=s.oc_switch_frames;keepPending=s.oc_pending_frames;keepFlash=s.native_flash_frames;
+        return press("tab",L"OverCustomRadio",80);
+    }
+    // A frame while the menu switches pages and the inventory of the
+    // 经验值转换 page would slide in from the right edge.
+    if(phase==80) {
+        if(GetTickCount64()-readyAt<250)return SDGO_GAME_TEST_WAIT;
+        if(capture(L"oc-switch-transition")!=SDGO_GAME_TEST_PASS)return SDGO_GAME_TEST_WAIT;
+        phase=75;return SDGO_GAME_TEST_WAIT;
+    }
     if(phase==75) {
         const uint32_t wanted=SDGO_OC_WINDOW_OVER|SDGO_OC_WINDOW_INFO|SDGO_OC_WINDOW_ENTRY|SDGO_OC_WINDOW_TAB_ACTIVE;
         if((s.windows&wanted)!=wanted || !s.page_hidden || s.busy || s.radar_frames<keepFrames+10 || !s.upgrade_tab_selected || !s.oc_title) {
@@ -4610,6 +4625,14 @@ int __cdecl OcPanel(const SdgoGameTestContextV1* context) {
         bool same=s.revision==keepRevision && s.oc_level==keepLevel;
         for(int i=0;i<6;++i)same=same && s.normal[i]==keepNormal[i] && s.over[i]==keepOver[i];
         context->Assert(same,"the OC allocation and level are unchanged after switching to the native pages and back");
+        {
+            const uint32_t frames=s.oc_switch_frames-keepSwitch,pending=s.oc_pending_frames-keepPending,flash=s.native_flash_frames-keepFlash;
+            char watch[200];sprintf_s(watch,"oc tab opened from 强化部件: %u frame(s) watched, %u before the OC page took the slot, %u with native 经验值转换 content",
+                frames,pending,flash);
+            context->Observe(watch);
+            context->Assert(frames>=10 && flash==0,
+                "opening the OC tab from 强化部件 shows no frame of the native 经验值转换 page, its sliding inventory or its actions");
+        }
         bool slots=true;for(int i=0;i<4;++i)slots=slots && s.record_custom[i]==keepCustom[i];
         context->Assert(slots,"the unit record's custom part slots are unchanged by the round trip");
         char back[260];sprintf_s(back,"oc tab reopened: normal=%u/%u/%u/%u/%u/%u over=%u/%u/%u/%u/%u/%u revision=%u level=%u record_custom=%u/%u/%u/%u",

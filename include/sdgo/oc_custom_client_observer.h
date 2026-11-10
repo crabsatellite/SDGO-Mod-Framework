@@ -97,6 +97,11 @@ struct SdgoOcCustomClientSnapshotV2 {
     uint32_t create_shown;          // create windows that showed the row
     uint32_t create_toggles;        // system changes made with the row's arrows
     int32_t create_system;          // system of the open window's room name: 0 current, 1 OC, -1 none
+    // Frames from an OC tab click until the tab is left, judged once per frame
+    // at the factory unit model's draw.
+    uint32_t oc_switch_frames;      // frames with the OC tab requested or open
+    uint32_t oc_pending_frames;     // of them, before the OC page took the 经验值转换 slot
+    uint32_t native_flash_frames;   // of them, frames showing the native 经验值转换 page, its inventory or its actions
 };
 
 // Actions: 1 refresh; 2 save one more normal point on stat (direct request
