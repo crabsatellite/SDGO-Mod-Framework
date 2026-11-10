@@ -55,6 +55,10 @@ WEAPON_COPY_FIRST = 9_700_000     # client-only weapon copies with an NPC's dama
 UNIT_WEAPON_SLOTS = (585, 589, 593)   # unit record: weapons 1..3 (u32 ids); +597 is the special attack
 UNIT_SPECIAL_SLOT = 597
 WEAPON_DAMAGE = 108                   # weapon record: DamageSize (u32)
+DROP_CONDITION_BASE = 1_000_000       # native mission drop ids: 1000000 + group * 1000 + difficulty level
+DROP_MACHINE_BASE = 390_000           # imported rare dice machines: 390000 + group * 10 + level
+NATIVE_NORMAL_MACHINE = 101_000       # the shipped missions' normal drops per level: 101000 + level (levels 1..5)
+DICE_TOTAL = 1000                     # every dice machine's probabilities add up to 1000 (per mille)
 SIZES = {UNIT_KIND: UNIT_RECORD_BYTES, WEAPON_KIND: WEAPON_RECORD_BYTES, GAME_MODE_KIND: 1090, CLEAR_KIND: 391, NPC_TEMPLATE_KIND: 598, CATALOGUE_KIND: 1309, ROUTE_KIND: 34,
          OBJECTIVE_KIND: 634, SPEECH_KIND: 506, SPAWN_KIND: 152}
 CLEAR_ID_LIMIT = 3238001          # client looks up kind 0x37 text for Clear IDs >= this
@@ -160,6 +164,7 @@ class Templates:
     unit_labels: Callable[[int], set] | None = None   # unit id -> action labels of its model
     unit_record: Callable[[int], bytes | None] | None = None   # unit id -> client unit record (for NPC labels)
     weapon_record: Callable[[int], bytes | None] | None = None  # weapon id -> client weapon record (NPC attack)
+    blueprints: dict[int, list[tuple[int, str]]] | None = None  # output unit -> [(blueprint item category, name)]
 
 
 def _lua_string(text: str) -> str:
@@ -341,6 +346,81 @@ def _weapon_copy(build: 'MissionBuild', templates: Templates, ids: 'MissionIds',
     return ident
 
 
+def _drop_blueprints(drops, npcs: dict, npc_units: dict, templates: Templates) -> list[tuple[int, str]]:
+    """Blueprint items a mission can drop: those whose output unit appears in the mission (`"mission"`, the
+    default: each NPC's unit, or the player unit of the same name for an NPC-only unit such as "高达 阿姆罗") or
+    the listed unit ids."""
+    if drops is None:
+        return []
+    if not isinstance(drops, dict) or set(drops) - {'normal', 'blueprints', 'blueprint_per_mille'}:
+        _fail('drops 只能包含 normal、blueprints、blueprint_per_mille')
+    if not isinstance(drops.get('normal', True), bool):
+        _fail('drops.normal 必须是布尔值')
+    wanted = drops.get('blueprints', 'mission')
+    if wanted in (None, []):
+        return []
+    if templates.blueprints is None:
+        _fail('drops.blueprints 需要读取目标服务端的设计图')
+    if wanted == 'mission':
+        def name(unit):
+            raw = templates.unit_record(unit) if templates.unit_record else None
+            return raw[5:105].decode('utf-16-le', 'ignore').split('\0')[0].strip() if raw else ''
+        by_name: dict[str, set] = {}
+        for unit in templates.blueprints:
+            by_name.setdefault(name(unit), set()).add(unit)
+        units = set()
+        for unit in npc_units.values():
+            units.add(unit)
+            full = name(unit)
+            for alias in {full, full.split('(')[0].split('（')[0].strip(), full.split(' ')[0]}:
+                if alias:
+                    units |= by_name.get(alias, set())
+    elif isinstance(wanted, list) and all(isinstance(u, int) and not isinstance(u, bool) and u > 0 for u in wanted):
+        units = set(wanted)
+    else:
+        _fail('drops.blueprints 需要 "mission" 或机体编号列表')
+    return sorted({item for unit in units for item in templates.blueprints.get(unit, [])})
+
+
+def _drop_rows(tables: dict, drops, items: list, group: int, level: int) -> int:
+    """Server rows for one difficulty's drops; returns its DropConditionID (0 = no drops)."""
+    if drops is None:
+        return 0
+    normal = drops.get('normal', True)
+    per_mille = drops.get('blueprint_per_mille', 2)
+    if isinstance(per_mille, bool) or not isinstance(per_mille, int) or not 1 <= per_mille <= 50:
+        _fail('drops.blueprint_per_mille 需要 1..50（每张设计图的千分比）')
+    total = per_mille * len(items)
+    if total > 500:
+        _fail(f'设计图掉落总概率 {total}‰ 超过 500‰，请降低 blueprint_per_mille 或指定更少的机体')
+    if normal and not 1 <= level <= 5:
+        _fail('drops.normal 只适用于等级 1..5（原版任务掉落）')
+    if not normal and not items:
+        return 0
+    if not 1 <= level <= 9:
+        _fail('掉落需要等级 1..9')
+    drop_id = DROP_CONDITION_BASE + group * 1000 + level
+    machine = DROP_MACHINE_BASE + group * 10 + level if items else 0
+    if any(r['DropConditionID'] == drop_id for r in tables.get('tbl_BattleResultItemDropSetting', [])):
+        _fail('同一任务的不同难度不能使用相同的等级（掉落编号会重复）')
+    tables.setdefault('tbl_BattleResultItemDropSetting', []).append({
+        'DropConditionID': drop_id, 'NormalMachineID': NATIVE_NORMAL_MACHINE + level if normal else 0,
+        'RareMachineID': machine, 'UniqueMachineID': 0})
+    if items:
+        # the server rolls 0..999 and takes the first row whose cumulative SumProb reaches the roll: "nothing" first,
+        # then each blueprint with exactly `per_mille` of the 1000 rolls
+        dice = tables.setdefault('tbl_BattleResultItemDropDice', [])
+        cumulative = DICE_TOTAL - 1 - total
+        dice.append({'ItemMachineID': machine, 'CategoryID': 0, 'Prob': DICE_TOTAL - total, 'ItemName': 'none',
+                     'Amount': 1, 'Opt': 0, 'RareDice': 5, 'SumProb': cumulative})
+        for category, _name in items:
+            cumulative += per_mille
+            dice.append({'ItemMachineID': machine, 'CategoryID': category, 'Prob': per_mille,
+                         'ItemName': _ascii(f'blueprint {category}', 50), 'Amount': 1, 'Opt': 0, 'RareDice': 5,
+                         'SumProb': cumulative})
+    return drop_id
+
+
 def _validate_npcs(spec: dict, templates: Templates) -> dict:
     npcs = {}
     if not isinstance(spec, dict) or not spec:
@@ -474,6 +554,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         build.server.setdefault('tbl_NpcData', []).append(data)
         npc_ids[key] = ident
         npc_units[key] = unit
+
+    drop_items = _drop_blueprints(spec.get('drops'), npcs, npc_units, templates)
 
     # -- speech rows for dialogue lines
     speech_ids: dict[str, int] = {}
@@ -727,10 +809,12 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             'MissionGroupIndex': ids.group, 'GameMap': map_no, 'ScriptTime': int(math.ceil(opening[1])),
             'GameTime': time_limit, 'GameLife': lives, 'GameNpc': min(MAX_SLOTS, max_slots), 'GameAllyNpc': 0,
             'DropConditionID': 0, 'NeedEvent': 0, 'Min2PlayerTime': 30, 'Min3PlayerTime': 30, 'Min4PlayerTime': 30})
+        drop_id = _drop_rows(tables, spec.get('drops'), drop_items, ids.group, level)
+        tables['tbl_MissionMode'][-1]['DropConditionID'] = drop_id
         # Ranking/boss summary row: every listed native mission room reads it before starting.
         bosses = [npc_ids[k] for k, n in npcs.items() if n.get('boss')][:5]
         tables.setdefault('tbl_MissionRankBossData', []).append({
-            'MissionID': mode_id, 'DropConditionID': 0, 'ClearPoint': 20,
+            'MissionID': mode_id, 'DropConditionID': drop_id, 'ClearPoint': 20,
             'DifficultPoint': min(255, 5 * level), **{f'BossID_{i + 1}': (bosses[i] if i < len(bosses) else 0)
                                                      for i in range(5)}})
         route_id = ids.route_first + d_index

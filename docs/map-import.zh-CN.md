@@ -52,7 +52,7 @@
 | `terrain.fog`、`terrain.sky` | 雾的颜色与起止距离；天空 `zenith`/`horizon`/`ground` 颜色 |
 | `terrain.play_area` | 可活动范围 `half_x`、`half_z` 和高度上限 `ceiling` |
 | `objects` | 最多 1024 个物件：`model`（包内 glTF）或 `native_model`（目标客户端已有的模型），`position`、`rotation_y`、`scale`、`collision`（`auto`、`none` 或碰撞盒列表）、可选 `id`、`only`（`pvp`/`mission`）、`initially_hidden` |
-| `spawns` | `team_a`、`team_b` 各 6 个，`shared` 1..12 个，`grid` 模式另需 `grid_respawn_a`/`grid_respawn_b`；每个点 `position` 与 `facing` |
+| `spawns` | `team_a`、`team_b` 各 6 个，`shared` 1..12 个，`grid` 模式另需 `grid_respawn_a`/`grid_respawn_b`；每个点 `position` 与 `facing`。任务地形中的 shared 点即复活点：第 *p* 阶段阵亡的驾驶员在第 2*p*−2 或 2*p*−1 个 shared 点复活，因此编译器为每个阶段生成一对复活点——第 1 阶段为 `shared[0]`/`shared[1]`，进入区域（sector）的阶段为该区域前两个 `warp` 点，设置新 `enter.area` 的阶段移入该范围内，其余阶段沿用上一阶段 |
 | `sectors` | 任务分区出生点（`{name: {spawns: [...]}}`），供任务切换区域使用 |
 | `item_patterns` | 道具刷新组，`red` 与 `blue` 组数相同 |
 | `presentation` | `preview`（地图预览 PNG）、`minimap`（小地图 PNG，覆盖整个地形）、`bgm`（包内 MP3 或 `{"native": "BGM\\NNNN.mp3"}`）。编译器按原版地图的做法由小地图生成地图图像：活动区保持原比例放在方形贴图中，四周画出橙黄色边界线；任务行的地图图像还会框出任务用到的每个活动范围。`boundary_lines`（默认 `true`）在地面上画出边界线，使用原版对战地图的边界色带：对战地图画在活动区边缘，任务地图画在任务用到的每个活动范围边缘（任务没有活动范围时画在活动区边缘） |
@@ -74,6 +74,7 @@
 | `banners` | 横幅：`image`（512×128 PNG），在过场中以特效显示 |
 | `presentation` | 可选的任务列表图片（PNG），各自替换模板任务的对应图片：`list_banner`（155×68）、`room_icon`（120×83；与原版图标一样，第 0..18 行留给标题字）、`room_poster`（250×120）、`title`（155×22，透明底白字）、`loading`（1024×1024 读取画面海报）。`loading_screen` 选择进入战斗时的读取画面：`poster` 显示 `loading` 海报（给了 `loading` 时的默认值），`random` 使用游戏自带的随机读取图 |
 | `area` | 开局活动范围：`[左 x, 上 z, 右 x, 下 z]`（北为上）。玩家被限制在范围内，与原版多区域任务使用相同的调用。范围在 `opening` 过场开始时设置，因此需要开场过场；不写时整个 `terrain.play_area` 都可活动 |
+| `drops` | 可选的任务掉落，与原版任务一样在结束时结算：`normal`（默认 `true`）保留该等级原版任务的掉落（等级 1–5）；`blueprints` 为 `"mission"`（默认：任务中出现的机体只要有设计图都会掉落，只在 NPC 中存在的机体按同名玩家机体计算）或机体编号列表；`blueprint_per_mille`（1–50，默认 2）为每张设计图每 1000 次通关的掉落次数（合计不超过 500）。掉落物进入玩家的掉落箱 |
 | `sectors` | 区域切换：`warp`（1..8 个传送点）、`facing`、可选 `rect`（新的活动范围，顺序同 `area`） |
 | `cutscenes` | 过场动画，见下表 |
 | `phases` | 1..8 个阶段，按顺序推进，见下表 |

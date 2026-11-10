@@ -38,6 +38,8 @@ TABLE_KEYS = {
     'tbl_MissionExp': ('MissionExpID',),
     'tbl_NpcData': ('NpcDataID',),
     'tbl_MissionRankBossData': ('MissionID',),
+    'tbl_BattleResultItemDropSetting': ('DropConditionID',),
+    'tbl_BattleResultItemDropDice': ('ItemMachineID', 'SumProb'),
 }
 
 

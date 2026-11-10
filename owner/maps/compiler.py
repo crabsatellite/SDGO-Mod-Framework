@@ -26,7 +26,7 @@ from typing import Callable
 from PIL import Image, ImageDraw, ImageFilter
 
 from . import gltf, mod_format, trn_format, txr_format
-from .package import GRID, Package, MapPackageError
+from .package import GRID, Package, MapPackageError, Spawn
 
 MAP_KIND = 0x0F
 MAP_ROW_BYTES = 0x34C
@@ -397,6 +397,60 @@ def mission_areas(package: Package) -> list[tuple[float, float, float, float]]:
     return found
 
 
+
+# A mission respawns a dead pilot (player or AI wingman) of phase p at shared start point 2p-2 or 2p-1 (the
+# server picks one of the pair at random; the client looks the point up by that index and fails without it).
+# The shipped mission terrains carry 12 shared points for at most six phases; an imported mission's terrain gets
+# one pair per phase, placed where that phase is played.
+RESPAWN_MARGIN = 150.0
+RESPAWN_LIFT = 50.0
+
+
+def mission_respawns(package: Package, terrain=None) -> list[Spawn]:
+    """Shared start points 0..2n-1 for the first mission with phases: phase 1 keeps spawns.shared[0..1]; a phase
+    that enters a sector respawns at its warp points; a phase that sets a new area keeps the previous pair moved
+    inside it; any other phase keeps the previous pair."""
+    base = package.spawns['shared']
+    for name in package.manifest.get('missions') or []:
+        try:
+            spec = json.loads(package.read(name).decode('utf-8'))
+        except (ValueError, KeyError):
+            continue
+        phases = [p for p in spec.get('phases') or [] if isinstance(p, dict)]
+        if not phases:
+            continue
+        sectors = spec.get('sectors') or {}
+        pair = [base[0], base[1] if len(base) > 1 else base[0]]
+        result = []
+
+        def ground(x, z, y=None):
+            low = terrain.at(x, z) + RESPAWN_LIFT if terrain is not None else 0.0
+            return low if y is None else max(float(y), low)
+
+        for index, phase in enumerate(phases):
+            enter = phase.get('enter') or {}
+            sector = sectors.get(enter.get('sector')) if enter.get('sector') else None
+            if index and isinstance(sector, dict) and sector.get('warp'):
+                warp = [w for w in sector['warp'] if isinstance(w, list) and len(w) == 3]
+                facing = sector.get('facing', [0, 1])
+                facing = (float(facing[0]), float(facing[1])) if isinstance(facing, list) and len(facing) == 2 else (0.0, 1.0)
+                if warp:
+                    picks = [warp[0], warp[1] if len(warp) > 1 else warp[0]]
+                    pair = [Spawn((float(w[0]), ground(w[0], w[2], w[1]), float(w[2])), facing) for w in picks]
+            area = enter.get('area')
+            if index and isinstance(area, list) and len(area) == 4 and all(isinstance(v, (int, float)) for v in area):
+                left, top, right, bottom = (float(v) for v in area)
+                moved = []
+                for s in pair:
+                    x = min(max(s.position[0], min(left, right) + RESPAWN_MARGIN), max(left, right) - RESPAWN_MARGIN)
+                    z = min(max(s.position[2], min(top, bottom) + RESPAWN_MARGIN), max(top, bottom) - RESPAWN_MARGIN)
+                    moved.append(s if (x, z) == (s.position[0], s.position[2])
+                                 else Spawn((x, ground(x, z), z), s.facing))
+                pair = moved
+            result += pair
+        return result
+    return []
+
 # Boundary lines painted on the ground, as the shipped PvP maps do: terrain decals with the client's own
 # boundary band (red outside -> yellow inside) centred on the edge. A decal's size is its transform scale times
 # DECAL_UNIT; the shipped maps use segments of at most 1024 units, a band 1.2 units wide and one texture repeat
@@ -558,9 +612,15 @@ def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'p
         if s.position[1] < ground + 20:
             raise MapCompileError(f'{what} 低于地面（地面高度 {ground:.0f}）')
         builder.add_start_point(colour, index, s.position, (s.facing[0], 0.0, s.facing[1]))
+    respawns = mission_respawns(package, terrain) if variant == 'mission' else []
     for colour, key in ((1, 'team_a'), (2, 'team_b'), (0, 'shared'), (3, 'grid_respawn_a'), (4, 'grid_respawn_b')):
-        for index, s in enumerate(package.spawns[key]):
-            spawn(colour, index, s, f'spawns.{key}[{index}]')
+        points = package.spawns[key]
+        if key == 'shared' and respawns:
+            # a mission terrain's shared points are its per-phase respawn pairs (then the package's remaining ones)
+            points = respawns + points[len(respawns):]
+        for index, s in enumerate(points):
+            spawn(colour, index, s, f'spawns.{key}[{index}]' if index >= len(respawns) or key != 'shared'
+                  else f'phase {index // 2 + 1} respawn point {index % 2 + 1}')
 
     # -- item patterns (item point type byte = its index, as in every shipped map)
     item_rows = []

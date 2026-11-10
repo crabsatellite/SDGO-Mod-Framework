@@ -359,6 +359,39 @@ def compile_spec(spec, tpl=None):
 
 
 class MissionFeatureTests(unittest.TestCase):
+    def test_drops_keep_native_drops_and_add_mission_blueprints(self):
+        tpl = record_templates()
+        # unit 1001 (the template NPC's unit) has two blueprints; unit 3003 is not in the mission
+        tpl.blueprints = {1001: [(1520002, 'bp a'), (1540075, 'bp b')], 3003: [(1520099, 'other')]}
+        spec = mission_spec()
+        spec['drops'] = {'blueprint_per_mille': 3}
+        built = compile_spec(spec, tpl)
+        setting = built.server['tbl_BattleResultItemDropSetting']
+        self.assertEqual(setting, [{'DropConditionID': 1_040_001, 'NormalMachineID': 101_001,
+                                    'RareMachineID': 390_401, 'UniqueMachineID': 0}])
+        dice = built.server['tbl_BattleResultItemDropDice']
+        self.assertEqual([(d['CategoryID'], d['Prob'], d['SumProb']) for d in dice],
+                         [(0, 994, 993), (1520002, 3, 996), (1540075, 3, 999)])
+        self.assertEqual(sum(d['Prob'] for d in dice), 1000)
+        self.assertEqual(built.server['tbl_MissionMode'][0]['DropConditionID'], 1_040_001)
+        self.assertEqual(built.server['tbl_MissionRankBossData'][0]['DropConditionID'], 1_040_001)
+        # explicit units, native drops only, no drops
+        spec['drops'] = {'blueprints': [3003], 'normal': False}
+        self.assertEqual([d['CategoryID'] for d in compile_spec(spec, tpl).server['tbl_BattleResultItemDropDice']],
+                         [0, 1520099])
+        spec['drops'] = {'blueprints': []}
+        built = compile_spec(spec, tpl)
+        self.assertNotIn('tbl_BattleResultItemDropDice', built.server)
+        self.assertEqual(built.server['tbl_BattleResultItemDropSetting'][0]['RareMachineID'], 0)
+        spec.pop('drops')
+        built = compile_spec(spec, tpl)
+        self.assertEqual(built.server['tbl_MissionMode'][0]['DropConditionID'], 0)
+        self.assertNotIn('tbl_BattleResultItemDropSetting', built.server)
+        for bad in ({'blueprint_per_mille': 0}, {'blueprint_per_mille': 300}, {'blueprints': 'all'}, {'chance': 1}):
+            spec['drops'] = bad
+            with self.assertRaises(M.MissionError):
+                compile_spec(spec, tpl)
+
     def test_kill_any_goal_and_timed_waves_use_absolute_time(self):
         spec = mission_spec()
         spec['phases'][0]['goal'] = {'kill_any': 3}
@@ -443,6 +476,43 @@ class MissionFeatureTests(unittest.TestCase):
         spec['phases'][1]['spawns'][0]['positions'] = [[0, 150, 300]]
         with self.assertRaisesRegex(M.MissionError, r'phases\[1\]\.spawns\[0\]\.positions\[0\] 不在本阶段的活动范围内'):
             compile_spec(spec)
+
+    def test_mission_terrain_has_a_respawn_pair_per_phase(self):
+        # the server respawns a pilot of phase p at shared start point 2p-2 or 2p-1; the shipped terrains have
+        # 12 shared points (six phases), so a longer mission needs its own pairs or a late respawn finds none
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = mission_spec()
+            first = spec['phases'][0]
+            phases = [dict(first, key='p%d' % i, next=None) for i in range(1, 9)]
+            for phase in phases:
+                phase.pop('next')
+            phases[5]['enter'] = {'sector': 'north'}
+            phases[6]['enter'] = {'area': [-1000, 2000, -600, 1200]}
+            spec['phases'] = phases
+            spec['sectors'] = {'north': {'warp': [[-300, 120, 1800], [300, 120, 1800]], 'facing': [0, 1],
+                                         'rect': [-1500, 2000, 1500, 1000]}}
+            root = write_package(Path(tmp), mission=spec)
+            manifest = json.loads((root / 'map.json').read_text(encoding='utf-8'))
+            manifest['missions'] = ['missions/m.json']
+            (root / 'map.json').write_text(json.dumps(manifest), encoding='utf-8')
+            pkg = P.load(root)
+            shared = {}
+            pvp = compiler.compile_map(pkg, map_no=143, map_id=500, variant='pvp', prefix='m143', shared=shared)
+            mission = compiler.compile_map(pkg, map_no=144, map_id=500, variant='mission', prefix='m143', shared=shared)
+            pvp_points = compiler.verify_trn(pvp.resources['trns/m143.trn']).start_points
+            points = compiler.verify_trn(mission.resources['trns/m143x.trn']).start_points
+            self.assertEqual([p.index for p in pvp_points if p.colour == 0], list(range(len(pkg.spawns['shared']))))
+            shared_points = {p.index: p.position for p in points if p.colour == 0}
+            self.assertEqual(sorted(shared_points), list(range(max(16, len(pkg.spawns['shared'])))))
+            base = [s.position for s in pkg.spawns['shared'][:2]]
+            base = base if len(base) == 2 else base * 2  # a single shared spawn serves both points of a pair
+            for phase in range(5):                       # phases 1..5 respawn at the opening pair
+                self.assertEqual([shared_points[2 * phase], shared_points[2 * phase + 1]], base)
+            self.assertEqual([(x, z) for x, _, z in (shared_points[10], shared_points[11])], [(-300, 1800), (300, 1800)])
+            for index in (12, 13):                       # phase 7 moves the pair into its new area
+                x, _, z = shared_points[index]
+                self.assertTrue(-1000 + 150 <= x <= -600 - 150 and 1200 + 150 <= z <= 2000 - 150, (x, z))
+            self.assertEqual(shared_points[14], shared_points[12])
 
     def test_boundary_lines_are_painted_on_the_ground(self):
         from owner.maps import trn_format

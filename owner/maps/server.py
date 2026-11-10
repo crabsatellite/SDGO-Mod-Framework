@@ -40,10 +40,16 @@ COLUMNS = {
                                 'BossID_3', 'BossID_4', 'BossID_5'),
     'tbl_NpcData': ('NpcDataID', 'NpcName', 'UseUnitID', 'UseUnitHP', 'NpcPoint', 'ObjectHpUp', 'NpcType', 'AddUnitEXP',
                     'AddPoint', 'BossFlag', 'NpcUnitLevel', 'ItemBuffNumber', 'CreateUnitHp', 'DestroyUnitHp'),
+    # mission drops: the drop setting picks a normal and a rare dice machine; dice rows (identity idx) are keyed by
+    # machine and cumulative probability
+    'tbl_BattleResultItemDropSetting': ('DropConditionID', 'NormalMachineID', 'RareMachineID', 'UniqueMachineID'),
+    'tbl_BattleResultItemDropDice': ('ItemMachineID', 'CategoryID', 'Prob', 'ItemName', 'Amount', 'Opt', 'RareDice',
+                                     'SumProb'),
 }
 # Insert order respects references (NPC data before spawns, modes before their rows).
-TABLE_ORDER = ('tbl_MapData', 'tbl_MapFile', 'tbl_MapItemPath', 'tbl_NpcData', 'tbl_MissionMode', 'tbl_MissionModeStart',
-               'tbl_MissionClear', 'tbl_MissionNpc', 'tbl_MissionExp', 'tbl_MissionRankBossData')
+TABLE_ORDER = ('tbl_MapData', 'tbl_MapFile', 'tbl_MapItemPath', 'tbl_NpcData', 'tbl_BattleResultItemDropDice',
+               'tbl_BattleResultItemDropSetting', 'tbl_MissionMode', 'tbl_MissionModeStart', 'tbl_MissionClear',
+               'tbl_MissionNpc', 'tbl_MissionExp', 'tbl_MissionRankBossData')
 
 
 def load_plan(path) -> dict:

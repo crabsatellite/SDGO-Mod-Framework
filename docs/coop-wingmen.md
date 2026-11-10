@@ -174,6 +174,7 @@ mission_ai: mission 1: 3 wingmen
 | wingmen never revive or disappear after death | update both server and client AI components from the same framework version, restart updated hosts, and start a new round; `inf` removes only the AI quota |
 | server adds wingmen, a client log has no `AI participant` line | that client does not have `mission_ai` |
 | client: `AI participant ...: creating NPC N failed` | that client has no NPC record N (client table `0198`) |
+| your adjutant speaks when a wingman uses its special | update `battle_ai`: since 1.16.20 the host's adjutant no longer voices AI pilots' specials; its log shows `adjutant line withheld for AI pilot` when it keeps a line off |
 
 ## How it works
 
