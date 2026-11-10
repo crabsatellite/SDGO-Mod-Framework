@@ -1806,7 +1806,7 @@ add_dependencies(ace_ai_server_test ace_ai_server ace_ai_server_data)
 if(BUILD_TESTING)
     add_test(NAME ace_ai_provider_offline COMMAND ace_ai_test)
     set_tests_properties(ace_ai_provider_offline PROPERTIES TIMEOUT 30)
-    foreach(ace_server_case success overlay missing invalid-overlay)
+    foreach(ace_server_case success overlay missing invalid-overlay unreadable-overlay oversize-overlay directory-overlay)
         add_test(NAME ace_ai_server_${ace_server_case}_offline
             COMMAND ace_ai_server_test
                 "$<TARGET_FILE:ace_ai_server>"

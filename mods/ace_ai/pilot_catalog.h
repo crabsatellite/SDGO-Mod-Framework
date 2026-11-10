@@ -18,17 +18,31 @@ struct PilotEntry {
 };
 class PilotCatalog {
     std::map<uint32_t, PilotEntry> entries_;
-    static bool ReadFile(const std::wstring& path, std::string& out) {
+    enum class ReadResult { Ok, Missing, Error };
+    static ReadResult ReadFile(const std::wstring& path, std::string& out) {
         FILE* file = nullptr;
-        if (_wfopen_s(&file, path.c_str(), L"rb") || !file) return false;
-        if (fseek(file, 0, SEEK_END)) { fclose(file); return false; }
+        if (_wfopen_s(&file, path.c_str(), L"rb") || !file) {
+            WIN32_FIND_DATAW data{};
+            const HANDLE found = FindFirstFileW(path.c_str(), &data);
+            if (found != INVALID_HANDLE_VALUE) {
+                FindClose(found);
+                return ReadResult::Error;
+            }
+            const DWORD error = GetLastError();
+            return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND
+                ? ReadResult::Missing : ReadResult::Error;
+        }
+        if (fseek(file, 0, SEEK_END)) { fclose(file); return ReadResult::Error; }
         const long size = ftell(file);
-        if (size < 0 || size > 2 * 1024 * 1024) { fclose(file); return false; }
+        if (size < 0 || size > 2 * 1024 * 1024) {
+            fclose(file);
+            return ReadResult::Error;
+        }
         rewind(file);
         out.resize(static_cast<size_t>(size));
         const size_t read = size ? fread(out.data(), 1, out.size(), file) : 0;
         fclose(file);
-        return read == out.size();
+        return read == out.size() ? ReadResult::Ok : ReadResult::Error;
     }
     static std::wstring Wide(const std::string& value) {
         if (value.empty()) return {};
@@ -47,9 +61,12 @@ class PilotCatalog {
     bool Merge(const std::wstring& path, bool required, std::string& error) {
         using namespace sdgo::announcements::json;
         std::string bytes;
-        if (!ReadFile(path, bytes)) {
-            if (required) error = "base-pilots.json is missing or unreadable";
-            return !required;
+        const ReadResult read = ReadFile(path, bytes);
+        if (read == ReadResult::Missing && !required) return true;
+        if (read != ReadResult::Ok) {
+            error = required ? "base-pilots.json is missing, unreadable, or too large"
+                             : "owner-pilots.json is unreadable or too large";
+            return false;
         }
         try {
             const Value root = Parser(bytes).Parse();

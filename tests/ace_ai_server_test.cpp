@@ -55,7 +55,7 @@ std::set<uint32_t> UnitIds(const fs::path& path) {
 
 int wmain(int argc, wchar_t** argv) {
     if (argc != 4) {
-        std::fprintf(stderr, "usage: ace_ai_server_test <dll> <staged-mod-dir> <success|overlay|missing|invalid-overlay>\n");
+        std::fprintf(stderr, "usage: ace_ai_server_test <dll> <staged-mod-dir> <success|overlay|missing|invalid-overlay|unreadable-overlay|oversize-overlay|directory-overlay>\n");
         return 2;
     }
     const fs::path sourceDll = argv[1];
@@ -64,6 +64,7 @@ int wmain(int argc, wchar_t** argv) {
     const fs::path root = fs::temp_directory_path() /
         (L"sdgo-ace-ai-server-test-" + std::to_wstring(GetCurrentProcessId()));
     std::error_code ignored;
+    HANDLE lockedOverlay = INVALID_HANDLE_VALUE;
     fs::remove_all(root, ignored);
     const fs::path directory = root / L"ace_ai_server";
     fs::create_directories(directory);
@@ -75,12 +76,24 @@ int wmain(int argc, wchar_t** argv) {
     const fs::path base = sourceDirectory / L"base-pilots.json";
     if (mode != L"missing")
         fs::copy_file(base, directory / L"base-pilots.json", fs::copy_options::overwrite_existing);
+    const fs::path overlay = directory / L"owner-pilots.json";
     if (mode == L"overlay") {
-        std::ofstream(directory / L"owner-pilots.json", std::ios::binary) <<
+        std::ofstream(overlay, std::ios::binary) <<
             "{\"schema_version\":1,\"pilots\":["
             "{\"unit_id\":9000000,\"display_name\":\"Owner Ace\",\"kind\":\"named\"}]}";
     } else if (mode == L"invalid-overlay") {
-        std::ofstream(directory / L"owner-pilots.json", std::ios::binary) << "{not-json";
+        std::ofstream(overlay, std::ios::binary) << "{not-json";
+    } else if (mode == L"unreadable-overlay") {
+        lockedOverlay = CreateFileW(overlay.c_str(), GENERIC_WRITE, 0, nullptr,
+                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CHECK(lockedOverlay != INVALID_HANDLE_VALUE);
+    } else if (mode == L"oversize-overlay") {
+        std::ofstream stream(overlay, std::ios::binary);
+        stream.seekp(2 * 1024 * 1024);
+        stream.put('x');
+        CHECK(static_cast<bool>(stream));
+    } else if (mode == L"directory-overlay") {
+        CHECK(fs::create_directory(overlay));
     }
 
     modDirectory = directory.wstring();
@@ -102,6 +115,10 @@ int wmain(int argc, wchar_t** argv) {
         api.ModDirectory = &ModDirectory;
         api.Log = &Log;
         const int loaded = load(&api, reinterpret_cast<SdgoMod*>(1));
+        if (lockedOverlay != INVALID_HANDLE_VALUE) {
+            CHECK(CloseHandle(lockedOverlay) != 0);
+            lockedOverlay = INVALID_HANDLE_VALUE;
+        }
         const bool expectedSuccess = mode == L"success" || mode == L"overlay";
         CHECK((loaded != 0) == expectedSuccess);
         CHECK(active() == (expectedSuccess ? 1 : 0));
@@ -125,6 +142,7 @@ int wmain(int argc, wchar_t** argv) {
             CHECK(eligible(9000000) == 0);
         }
     }
+    if (lockedOverlay != INVALID_HANDLE_VALUE) CloseHandle(lockedOverlay);
     if (module) FreeLibrary(module);
     fs::remove_all(root, ignored);
     std::printf("%d checks, %d failures\n", checks, failures);
