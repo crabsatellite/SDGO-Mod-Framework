@@ -184,8 +184,12 @@ public:
 
         __try {
             const uint32_t appState = native_->AppState();
-            if (appState == kHangarAppState)
+            if (appState == kHangarAppState) {
+                // The lobby request is complete; returning later from another
+                // page (e.g. the Game Room) needs a new original request.
+                lobbyRequestInvoked_ = false;
                 return EnsureUnitManager();
+            }
 
             if (lobbyRequestInvoked_)
                 return Publish(kWaitingForHangar);
