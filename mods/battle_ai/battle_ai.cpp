@@ -17,6 +17,7 @@
 #include "sdgo/sdgo_api.h"
 #include "combat_math.h"
 #include "native_capabilities.h"
+#include "ace_profile_registry.h"
 #include "native_navigation.h"
 #include "native_map_gate.h"
 #include "native_map_geometry.h"
@@ -87,6 +88,7 @@ SdgoMod* g_mod = nullptr;
 constexpr int kGlobals = -10001;
 thread_local uint8_t* g_current = nullptr;
 std::unordered_map<uint8_t*, uint64_t> g_generations;
+battle_ai::ace::UnitProfileRegistry g_unitProfiles;
 uint64_t g_serial = 0;
 lua_State* g_loaded = nullptr;
 std::wstring g_script, g_config;
@@ -355,7 +357,7 @@ thread_local const char* g_nativeCallback=nullptr;
 thread_local bool g_nativeFallback=false;
 std::atomic<DWORD> g_gameThread{0};
 std::mutex g_pendingMutex;
-std::vector<uint8_t*> g_pendingInit;
+std::vector<battle_ai::ace::UnitProfileInit> g_pendingInit;
 struct SpNotice {
     uint32_t pilot=0,weapon=0,victimPilot=0,damage=0;
     int32_t value=-1;
@@ -413,6 +415,9 @@ Actor& ActorFor(uint8_t* unit) {
         }
     }
     return a;
+}
+int EffectiveDifficulty(uint8_t* unit) {
+    return g_unitProfiles.Get(unit, g_runtime.difficulty);
 }
 bool ObjectIsA(uint8_t* object,int kind) {
     __try {
@@ -673,7 +678,7 @@ bool ArmMeleeCompletion(uint8_t* unit,Actor& actor,const SpNotice& notice,uint64
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
 bool AllowZeroDamageCompletion(uint8_t* fsm,uint8_t* owner,uint8_t* result) {
-    if(GetCurrentThreadId()!=g_gameThread||!g_runtime.enabled||g_runtime.difficulty<1||
+    if(GetCurrentThreadId()!=g_gameThread||!g_runtime.enabled||EffectiveDifficulty(owner)<1||
        g_preparationFault||!PlayerBotRulesMode(owner)) return false;
     __try {
         if(!Owned(owner)||!fsm||!result||owner[0xEC8]!=0||*reinterpret_cast<uint8_t**>(owner+0x9CC)!=fsm||
@@ -1970,7 +1975,7 @@ void ObserveBlockingGate(Observation& o,Actor& actor,ULONGLONG now,Vec3 percepti
 void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
     const auto previousMovement=actor.defence.movement;
     actor.defence={};
-    if(!g_runtime.enabled||g_runtime.difficulty<1) {actor.defenceEpisode=false;return;}
+    if(!g_runtime.enabled||EffectiveDifficulty(g_current)<1) {actor.defenceEpisode=false;return;}
     if(actor.defenceEpisode&&now-actor.defenceEpisodeAt>1000) actor.defenceEpisode=false;
     auto& plan=actor.defence;plan.at=now;
     plan.meleeBusy=o.caps.meleeBusy;plan.specialBusy=o.caps.specialBusy;plan.hurt=o.hurt;
@@ -2023,7 +2028,7 @@ void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
             plan.movement.destination=previousMovement.destination;plan.movement.relocate=true;
         }
         if(plan.movement.relocate) {
-            const float radius=g_runtime.difficulty>=2?1200.0f:480.0f;
+            const float radius=EffectiveDifficulty(g_current)>=2?1200.0f:480.0f;
             Vec3 currentOffset=o.pos-actor.defenceAnchor;currentOffset.y=0;
             Vec3 destinationOffset=plan.movement.destination-actor.defenceAnchor;destinationOffset.y=0;
             double currentDistance=battle_ai::Length(currentOffset);
@@ -2044,7 +2049,7 @@ void PlanDefence(const Observation& o,Actor& actor,ULONGLONG now) {
     // The relocation's destination may have a different optimal angle. While
     // travelling, protect the actor at its observed position on this frame.
     plan.movement.facing=facing;
-    if(g_runtime.difficulty<2) plan.shielding=false;
+    if(EffectiveDifficulty(g_current)<2) plan.shielding=false;
 }
 bool CaptureUnsafe(Observation& o) {
     o.failure="ownership and native world context";
@@ -2573,8 +2578,8 @@ int __cdecl Cadence(lua_State* L) {
         a.ownsAim=true;
     }
     double interval=g_lua.tonumber(L,1);
-    a.intervalMs=g_runtime.difficulty==1?g_runtime.mediumAttackIntervalMs:
-        (g_runtime.difficulty>=2?0:(std::isfinite(interval)?static_cast<int>((std::max)(0.0,(std::min)(10000.0,interval))):0));
+    a.intervalMs=EffectiveDifficulty(g_current)==1?g_runtime.mediumAttackIntervalMs:
+        (EffectiveDifficulty(g_current)>=2?0:(std::isfinite(interval)?static_cast<int>((std::max)(0.0,(std::min)(10000.0,interval))):0));
     if(!a.intervalMs) a.nextPulse=0;
     return 0;
 }
@@ -2690,7 +2695,7 @@ bool RequestNativeWeapon(uint8_t* unit,int slot) {
 int __cdecl RequestTransform(lua_State* L) {
     bool queued=false;
     if(GetCurrentThreadId()==g_gameThread&&g_runtime.enabled&&g_runtime.autoTransform&&
-       g_runtime.difficulty>=1&&!g_preparationFault&&Owned(g_current)&&PlayerBotRulesMode(g_current)) {
+       EffectiveDifficulty(g_current)>=1&&!g_preparationFault&&Owned(g_current)&&PlayerBotRulesMode(g_current)) {
         __try {
             auto& actor=ActorFor(g_current);const auto now=GetTickCount64();
             battle_ai::native::Capabilities caps{};
@@ -3247,10 +3252,10 @@ int __cdecl Cover(lua_State* L) {
     return 1;
 }
 bool WantsGeneric(uint8_t* unit) {
-    return g_runtime.enabled&&g_runtime.generic&&Owned(unit)&&!g_preparationFault;
+    return g_runtime.enabled&&g_runtime.generic&&EffectiveDifficulty(unit)>=1&&Owned(unit)&&!g_preparationFault;
 }
 bool WantsAim(uint8_t* unit) {
-    return g_runtime.enabled&&g_runtime.aim&&(g_runtime.generic||g_runtime.difficulty==1)&&Owned(unit)&&!g_preparationFault;
+    return g_runtime.enabled&&g_runtime.aim&&EffectiveDifficulty(unit)>=1&&Owned(unit)&&!g_preparationFault;
 }
 Vec3 ShieldDirection(uint8_t* unit,const DefencePlan& plan,Vec3 current) {
     if(!plan.shielding) return plan.movement.facing.direction;
@@ -3331,7 +3336,7 @@ void ApplyDefence(uint8_t* unit,Actor& a) {
             struct Alternative {Vec3 point;double rear,risk;};
             Alternative options[12];size_t count=0;
             const Vec3 position=Position(unit);
-            const float radius=g_runtime.difficulty>=2?1200.0f:480.0f;
+            const float radius=EffectiveDifficulty(g_current)>=2?1200.0f:480.0f;
             for(int i=0;i<12;++i) {
                 Vec3 p=position+battle_ai::Heading(i*2*battle_ai::kPi/12)*240.0f;
                 Vec3 offset=p-a.defenceAnchor;offset.y=0;
@@ -3372,7 +3377,7 @@ void ApplyDefence(uint8_t* unit,Actor& a) {
     if(std::abs(cacheDelta)>=0.01f) g_rotate(unit,cacheDelta,0);
 }
 void __fastcall FacingUpdate(uint8_t* unit,void*) {
-    if(GetCurrentThreadId()==g_gameThread&&unit==g_current&&g_runtime.enabled&&g_runtime.difficulty>=1&&!g_preparationFault&&Owned(unit)&&*reinterpret_cast<int*>(unit+0x38)>0) {
+    if(GetCurrentThreadId()==g_gameThread&&unit==g_current&&g_runtime.enabled&&EffectiveDifficulty(unit)>=1&&!g_preparationFault&&Owned(unit)&&*reinterpret_cast<int*>(unit+0x38)>0) {
         __try {
             auto actor=g_actors.find(unit);
             if(actor!=g_actors.end()) ApplyDefence(unit,actor->second);
@@ -3385,19 +3390,19 @@ int __cdecl Dispatch(const char* name,uint8_t* unit) {
     const char* prior=g_nativeCallback;
     g_nativeCallback=name;
     int result=0;
-    if(unit==g_current && !g_nativeFallback && g_runtime.enabled && g_runtime.difficulty>=1 && Owned(unit)) {
+    if(unit==g_current && !g_nativeFallback && g_runtime.enabled && EffectiveDifficulty(unit)>=1 && Owned(unit)) {
         auto& policy=ActorFor(unit);policy.policySerial=policy.thinkSerial;policy.lastPolicyAt=GetTickCount64();
         result=g_preparationFault||!g_policyReady ? 123:g_dispatch("SDGO_BattleAI_GenericUpdate",unit);
     } else {
         result=g_dispatch(name,unit);
-        if(unit==g_current&&!g_nativeFallback&&g_runtime.enabled&&g_runtime.difficulty==1&&Owned(unit)&&!g_preparationFault)
+        if(unit==g_current&&!g_nativeFallback&&g_runtime.enabled&&EffectiveDifficulty(unit)==1&&Owned(unit)&&!g_preparationFault)
             g_dispatch("SDGO_BattleAI_ProfileUpdate",unit);
     }
     g_nativeCallback=prior;
     return result;
 }
 bool NeutralPolicyAvailable(uint8_t* unit) {
-    if(!WantsGeneric(unit)||g_runtime.difficulty<1||!g_policyReady||g_nativeFallback)return false;
+    if(!WantsGeneric(unit)||EffectiveDifficulty(unit)<1||!g_policyReady||g_nativeFallback)return false;
     using namespace battle_ai::native::detail;
     ReadableRegionCache regions{};ScopedReadableRegionCache scope(regions);
     uint8_t* attack=nullptr;uint8_t* movement=nullptr;uint8_t* control=nullptr;
@@ -3417,7 +3422,7 @@ bool __fastcall EffectActive(uint8_t* unit,void*,uint8_t effect) {
     // Only the stock NPC scheduler's Boost Down pause is replaced. Player
     // physics, boost depletion and every other effect query see the real bit.
     if(active&&effect==5&&caller==g_aiBoostPauseReturn&&GetCurrentThreadId()==g_gameThread&&
-       unit==g_current&&!g_nativeFallback&&g_policyReady&&g_runtime.difficulty>=1&&WantsGeneric(unit))return false;
+       unit==g_current&&!g_nativeFallback&&g_policyReady&&EffectiveDifficulty(unit)>=1&&WantsGeneric(unit))return false;
     return active;
 }
 Ray3* __fastcall RangedRay(uint8_t* fsm,void*,Ray3* out) {
@@ -3638,9 +3643,13 @@ void __fastcall AttackAdmission(uint8_t* fsm,void*) {
     uint8_t* pacedOwner=nullptr;
     uint64_t pacedGeneration=0;
     int pacedInterval=0;
-    if(GetCurrentThreadId()==g_gameThread&&g_runtime.enabled&&g_runtime.difficulty>=1&&!g_preparationFault) {
+    uint8_t* owner=nullptr;
+    if(GetCurrentThreadId()==g_gameThread&&g_runtime.enabled&&!g_preparationFault) {
+        __try { owner=*reinterpret_cast<uint8_t**>(fsm+0xB2C); }
+        __except(EXCEPTION_EXECUTE_HANDLER) { owner=nullptr; }
+    }
+    if(owner&&EffectiveDifficulty(owner)>=1) {
         __try {
-            auto owner=*reinterpret_cast<uint8_t**>(fsm+0xB2C);
             auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
             const int selected=*reinterpret_cast<int*>(fsm+0x240);
             if(WantsGeneric(owner)&&record&&selected>=0&&selected<3&&record[0x69]!=2&&
@@ -3717,7 +3726,7 @@ void ApplySpNotice(const SpNotice& notice) {
             g_spSnapshots[unit]={notice.sequence,notice.value};
             ApplyNativeAbsoluteSp(unit,notice.value);return;
         }
-        if(!g_runtime.enabled||g_runtime.difficulty<1||g_preparationFault) return;
+        if(!g_runtime.enabled||EffectiveDifficulty(unit)<1||g_preparationFault) return;
         if(!Owned(unit)||found==g_actors.end()||*reinterpret_cast<uint32_t*>(unit+0x2B68)!=notice.pilot) return;
         auto& actor=found->second;
         if(notice.begin) {
@@ -3851,7 +3860,7 @@ void ClearStartup(uint8_t* unit,Actor& a,bool face) {
     a.cueAngle=0;
 }
 bool QuickSwingSafe(uint8_t* fsm,uint8_t* owner) {
-    if(g_runtime.difficulty<2||!WantsGeneric(owner)||ControlBlocked(owner)||fsm[0x9B1]||*reinterpret_cast<int*>(owner+0x38)<=0) return false;
+    if(EffectiveDifficulty(owner)<2||!WantsGeneric(owner)||ControlBlocked(owner)||fsm[0x9B1]||*reinterpret_cast<int*>(owner+0x38)<=0) return false;
     auto target=FindObject(*reinterpret_cast<uint32_t*>(fsm+0x200));
     auto record=*reinterpret_cast<uint8_t**>(fsm+0x248);
     if(!target||Destroyable(target)||!CombatTargetAlive(target)||!record||record[0x6A]!=1) return false;
@@ -4117,6 +4126,7 @@ void Register(lua_State* L, const char* name, LuaFn fn) {
     g_lua.pushstring(L, name); g_lua.pushcclosure(L, fn, 0); g_lua.settable(L, kGlobals);
 }
 int __cdecl Now(lua_State* L) { g_lua.pushnumber(L, static_cast<double>(GetTickCount64())); return 1; }
+int __cdecl Difficulty(lua_State* L) { g_lua.pushnumber(L, EffectiveDifficulty(g_current)); return 1; }
 int __cdecl Log(lua_State* L) {
     const char* s = g_lua.tostring(L, 1);
     if (s) g_api->Log(g_mod, SDGO_LOG_INFO, "%s", s);
@@ -4204,11 +4214,14 @@ std::string ConfigChunk(RuntimeSettings& next,int roomDifficulty) {
         }
         std::string key;
         for (const wchar_t* p = o.name; *p; ++p) key.push_back(static_cast<char>(*p));
-        if(key=="GenericMode") value=next.difficulty>=1?1:0;
-        if(next.difficulty>=1&&(key=="DecisionMs"||key=="ReactionMs"||key=="TargetHoldMs"||key=="WeaponHoldMs"||
-           key=="AttackIntervalMs"||key=="BurstMs"||key=="BurstPauseMs"||key=="TacticCooldownMs")) value=0;
-        if(key=="SwingCancelChance"&&next.difficulty<2) value=0;
-        if(key=="AimAssist"||key=="ProjectileLead") value=next.difficulty>=1?1:0;
+        // Load the superset once. Per-unit admission below and in Lua uses
+        // EffectiveDifficulty, so an Easy room can keep ordinary bots native
+        // while only its Ace receives Medium behavior, and a Medium Ace can
+        // receive the complete Hard policy without changing its teammates.
+        if(key=="GenericMode") value=1;
+        if(key=="DecisionMs"||key=="ReactionMs"||key=="TargetHoldMs"||key=="WeaponHoldMs"||
+           key=="AttackIntervalMs"||key=="BurstMs"||key=="BurstPauseMs"||key=="TacticCooldownMs") value=0;
+        if(key=="AimAssist"||key=="ProjectileLead") value=1;
         code += key + "=" + std::to_string(value) + ",\n";
         if(key=="Enabled") next.enabled=value!=0;
         if(key=="AutoTransform") next.autoTransform=value!=0;
@@ -4244,6 +4257,7 @@ void Prepare() {
         g_api->Log(g_mod, SDGO_LOG_ERROR, "cannot read AI policy scripts"); return;
     }
     Register(L,"SDGO_BattleAI_Now",Now);
+    Register(L,"SDGO_BattleAI_Difficulty",Difficulty);
     Register(L,"SDGO_BattleAI_Log",Log);
     Register(L,"SDGO_BattleAI_Fault",PolicyFault);
     Register(L,"SDGO_BattleAI_Authority",Authority);
@@ -4291,17 +4305,44 @@ void GuardedPrepare() {
         g_api->Log(g_mod, SDGO_LOG_ERROR, "AI policy preparation failed");
     }
 }
-void ResetLifecycle(uint8_t* unit) {
+void ResetLifecycle(const battle_ai::ace::UnitProfileInit& event) {
+    uint8_t* unit = static_cast<uint8_t*>(event.unit);
+    if (!unit) return;
+    bool currentBattle = false;
+    g_unitProfiles.Reset(event, &currentBattle);
+    // An Init observed just before BeginBattle can be queued after the new
+    // generation starts. It must not erase the new battle actor at a reused
+    // address; only current-generation native Init events own lifecycle reset.
+    if (!currentBattle) return;
     g_terrainRays.ClearLayouts();
     g_transportCatalog.Clear();
-    if(g_generations.size()>=1024) g_generations.clear();
     g_generations[unit]=++g_serial;
     g_actors.erase(unit);g_rangedShots.erase(unit);g_contacts.erase(unit);g_incoming.erase(unit);g_spSnapshots.erase(unit);
 }
 void DrainPendingInit() {
-    std::vector<uint8_t*> pending;
+    std::vector<battle_ai::ace::UnitProfileInit> pending;
     {std::lock_guard<std::mutex> lock(g_pendingMutex);pending.swap(g_pendingInit);}
-    for(uint8_t* unit:pending) ResetLifecycle(unit);
+    for(const auto& event:pending) ResetLifecycle(event);
+}
+void BeginBattleProfiles(uint32_t generation) {
+    if (!generation) return;
+    {
+        std::lock_guard<std::mutex> lock(g_pendingMutex);
+        g_pendingInit.clear();
+    }
+    g_unitProfiles.BeginBattle(generation);
+    g_generations.clear();
+    g_actors.clear();
+    g_rangedShots.clear();
+    g_contacts.clear();
+    g_incoming.clear();
+    g_spSnapshots.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_loadoutMutex);
+        g_loadouts.clear();
+    }
+    g_terrainRays.ClearLayouts();
+    g_transportCatalog.Clear();
 }
 battle_ai::native::profile::Totals g_mapQueryProfile{};
 bool __fastcall ThinkImpl(uint8_t* unit, void*) {
@@ -4323,7 +4364,7 @@ bool __fastcall ThinkImpl(uint8_t* unit, void*) {
     if(actor!=g_actors.end())SynchronizePhaseGeometry(unit,actor->second);
     if(actor!=g_actors.end())ReconcileTransportRoute(unit,actor->second);
     if(actor!=g_actors.end()&&actor->second.specialSlotLease>=0&&
-       (!g_runtime.enabled||g_runtime.difficulty<1||g_preparationFault)&&Owned(unit)) {
+       (!g_runtime.enabled||EffectiveDifficulty(unit)<1||g_preparationFault)&&Owned(unit)) {
         g_dispatch("SDGO_BattleAI_ProfileRelease",unit);
     }
     if(actor!=g_actors.end()) {
@@ -4358,7 +4399,7 @@ bool __fastcall ThinkImpl(uint8_t* unit, void*) {
                 ClearStartup(unit,startup->second,!ControlBlocked(unit));
         } __except(EXCEPTION_EXECUTE_HANDLER) {}
     }
-    if(WantsGeneric(unit)||(g_runtime.enabled&&g_runtime.difficulty>=1&&Owned(unit))) {
+    if(WantsGeneric(unit)||(g_runtime.enabled&&EffectiveDifficulty(unit)>=1&&Owned(unit))) {
         auto it=g_actors.find(unit);
         if(it!=g_actors.end() && (!it->second.path.empty()||it->second.geometryOwned||it->second.transport.active)&&(WantsGeneric(unit)||it->second.defenceMoveOwned)) {
             __try { FollowPath(unit,it->second); } __except(EXCEPTION_EXECUTE_HANDLER) { it->second.path.clear(); }
@@ -4367,10 +4408,10 @@ bool __fastcall ThinkImpl(uint8_t* unit, void*) {
     QueryPerformanceCounter(&costEnd);
     auto costActor=g_actors.find(unit);
     if(costActor!=g_actors.end()) {
-        auto& actor=costActor->second;actor.thinkCost.Record(costBegin.QuadPart,costEnd.QuadPart);
+        auto& costState=costActor->second;costState.thinkCost.Record(costBegin.QuadPart,costEnd.QuadPart);
         const auto now=GetTickCount64();
-        if(g_runtime.logDecisions&&actor.lastPolicyAt&&now-actor.lastPolicyAt>=500&&now>=actor.policyGapLogAt) {
-            actor.policyGapLogAt=now+250;
+        if(g_runtime.logDecisions&&costState.lastPolicyAt&&now-costState.lastPolicyAt>=500&&now>=costState.policyGapLogAt) {
+            costState.policyGapLogAt=now+250;
             using battle_ai::native::detail::Read;using battle_ai::native::detail::ReadPointer;
             uint32_t id=0,state=0,effects=0,pendingEffects=0;
             uint8_t enabled=0,script=0;uint8_t* secondary=nullptr;uint8_t* attack=nullptr;uint8_t* movement=nullptr;
@@ -4381,17 +4422,17 @@ bool __fastcall ThinkImpl(uint8_t* unit, void*) {
             ReadPointer(unit,0x9CC,attack);Read(attack,4,ac);Read(attack,8,ap);
             ReadPointer(unit,0x9C8,movement);Read(movement,4,mc);Read(movement,8,mp);
             g_api->Log(g_mod,SDGO_LOG_INFO,"native policy gap unit=%u age=%llu controlled=%u ai326c=%u state=%u effects=%08X/%08X script=%u secondary=%p:%08X/%08X attack=%p:%08X/%08X movement=%p:%08X/%08X serial=%llu/%llu",
-                id,static_cast<unsigned long long>(now-actor.lastPolicyAt),actor.controlled?1u:0u,enabled,state,effects,pendingEffects,script,
-                secondary,sc,sp,attack,ac,ap,movement,mc,mp,static_cast<unsigned long long>(actor.thinkSerial),static_cast<unsigned long long>(actor.policySerial));
+                id,static_cast<unsigned long long>(now-costState.lastPolicyAt),costState.controlled?1u:0u,enabled,state,effects,pendingEffects,script,
+                secondary,sc,sp,attack,ac,ap,movement,mc,mp,static_cast<unsigned long long>(costState.thinkSerial),static_cast<unsigned long long>(costState.policySerial));
         }
-        if(g_runtime.logDecisions&&now>=actor.costLogAt&&g_api&&g_api->Log) {
+        if(g_runtime.logDecisions&&now>=costState.costLogAt&&g_api&&g_api->Log) {
             LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);
             const double scale=1000000.0/static_cast<double>(frequency.QuadPart);
             const auto average=[&](const Actor::Cost& value){return value.calls?value.total*scale/static_cast<double>(value.calls):0.0;};
             g_api->Log(g_mod,SDGO_LOG_INFO,"AI cost unit=%u think_us=%.1f peak_us=%.1f sense_us=%.1f sense_peak_us=%.1f nav_us=%.1f nav_peak_us=%.1f calls=%llu nodes=%u",
-                *reinterpret_cast<uint32_t*>(unit+4),average(actor.thinkCost),actor.thinkCost.peak*scale,
-                average(actor.senseCost),actor.senseCost.peak*scale,average(actor.navigationCost),actor.navigationCost.peak*scale,
-                static_cast<unsigned long long>(actor.thinkCost.calls),static_cast<uint32_t>(actor.mapSearch.Nodes()));
+                *reinterpret_cast<uint32_t*>(unit+4),average(costState.thinkCost),costState.thinkCost.peak*scale,
+                average(costState.senseCost),costState.senseCost.peak*scale,average(costState.navigationCost),costState.navigationCost.peak*scale,
+                static_cast<unsigned long long>(costState.thinkCost.calls),static_cast<uint32_t>(costState.mapSearch.Nodes()));
             const auto& terrain=g_terrainRays.stats;
             const auto& shapes=g_shapeBounds.stats;
             g_api->Log(g_mod,shapes.mismatches?SDGO_LOG_ERROR:SDGO_LOG_INFO,
@@ -4419,12 +4460,12 @@ bool __fastcall ThinkImpl(uint8_t* unit, void*) {
                 static_cast<unsigned long long>(terrain.mismatches),static_cast<unsigned long long>(terrain.layouts),static_cast<unsigned long long>(terrain.rejected));
             float nativeStep=0;uint8_t nativeMode=0;
             battle_ai::native::detail::Read(unit,0xB2C,nativeStep);battle_ai::native::detail::Read(unit,0xDC0,nativeMode);
-            const Vec3 here=Position(unit);const bool hasWaypoint=!actor.path.empty()&&actor.waypoint<actor.path.size();
-            const Vec3 waypoint=hasWaypoint?actor.path[actor.waypoint]:here;
+            const Vec3 here=Position(unit);const bool hasWaypoint=!costState.path.empty()&&costState.waypoint<costState.path.size();
+            const Vec3 waypoint=hasWaypoint?costState.path[costState.waypoint]:here;
             g_api->Log(g_mod,SDGO_LOG_INFO,"native route motor unit=%u mode=%u requested=%d stop_range=%.2f waypoint_distance=%.2f pos=%.1f,%.1f,%.1f waypoint=%.1f,%.1f,%.1f",
-                *reinterpret_cast<uint32_t*>(unit+4),nativeMode,actor.pathMoveType,nativeStep*10,battle_ai::Length(waypoint-here),
+                *reinterpret_cast<uint32_t*>(unit+4),nativeMode,costState.pathMoveType,nativeStep*10,battle_ai::Length(waypoint-here),
                 here.x,here.y,here.z,waypoint.x,waypoint.y,waypoint.z);
-            actor.thinkCost={};actor.senseCost={};actor.navigationCost={};actor.costLogAt=now+5000;
+            costState.thinkCost={};costState.senseCost={};costState.navigationCost={};costState.costLogAt=now+5000;
         }
     }
     g_current = prior;
@@ -4437,15 +4478,25 @@ bool __fastcall Think(uint8_t* unit,void*) {
 }
 void __fastcall Init(uint8_t* unit, void*, void* data) {
     g_init(unit, data);
-    if(GetCurrentThreadId()==g_gameThread) ResetLifecycle(unit);
-    else {std::lock_guard<std::mutex> lock(g_pendingMutex);g_pendingInit.push_back(unit);}
+    const auto event = g_unitProfiles.NoteNativeInit(unit);
+    if(GetCurrentThreadId()==g_gameThread) ResetLifecycle(event);
+    else {std::lock_guard<std::mutex> lock(g_pendingMutex);g_pendingInit.push_back(event);}
 }
 }
 
 // match_ai calls this optional endpoint only after native spawn/deck creation.
 // Missing/disabled battle_ai leaves match_ai's original standalone behavior.
+extern "C" __declspec(dllexport) int __cdecl SdgoBattleAiBeginBattleV1(uint32_t generation) {
+    if (!generation) return 0;
+    __try { BeginBattleProfiles(generation); return 1; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
 extern "C" __declspec(dllexport) void __cdecl SdgoBattleAiInitializeUnit(uint8_t* unit,int difficulty,uint32_t generation) {
     std::lock_guard<std::mutex> lock(g_loadoutMutex);
+    const int profile = difficulty & 0xFF;
+    if ((difficulty & ~0x1FF) == 0)
+        g_unitProfiles.Apply(unit, profile, generation);
     auto result=InitializeLoadout(unit,difficulty,generation);
     if(g_api&&result!=battle_ai::loadout::ApplyResult::Applied&&result!=battle_ai::loadout::ApplyResult::AlreadyApplied&&
        result!=battle_ai::loadout::ApplyResult::InvalidArgument)

@@ -1,0 +1,172 @@
+import math
+from pathlib import Path
+import tempfile
+import unittest
+
+from manager import configuration, registry, storage
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SERVER_KEYS = {
+    "AceChanceEasy", "AceChanceMedium", "AceChanceHard",
+    "AceDifficultyEasy", "AceDifficultyMedium", "AceDifficultyHard",
+    "AceHpPercentEasy", "AceHpPercentMedium", "AceHpPercentHard",
+    "AceAttackPercentEasy", "AceAttackPercentMedium", "AceAttackPercentHard",
+}
+EXPECTED_DEFAULTS = {
+    "AceChanceEasy": 5,
+    "AceChanceMedium": 5,
+    "AceChanceHard": 5,
+    "AceDifficultyEasy": "Medium",
+    "AceDifficultyMedium": "Hard",
+    "AceDifficultyHard": "Hard",
+    "AceHpPercentEasy": 100,
+    "AceHpPercentMedium": 100,
+    "AceHpPercentHard": 120,
+    "AceAttackPercentEasy": 100,
+    "AceAttackPercentMedium": 100,
+    "AceAttackPercentHard": 100,
+}
+
+
+class AceAiManagerContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.contracts = registry.load(ROOT / "mods")
+        cls.client = cls.contracts["ace_ai"]
+        cls.server = cls.contracts["ace_ai_server"]
+        cls.fields = {field["key"]: field for field in cls.server["settings"]}
+
+    def test_registry_loads_exact_public_client_and_server_contracts(self):
+        self.assertEqual(["client"], self.client["hosts"])
+        self.assertEqual(["battle"], self.server["hosts"])
+        self.assertEqual("public", self.client["distribution"])
+        self.assertEqual("public", self.server["distribution"])
+        self.assertEqual(SERVER_KEYS, set(self.fields))
+        self.assertEqual(12, len(self.server["settings"]))
+        for field in self.server["settings"]:
+            self.assertEqual("config.ini", field["file"])
+            self.assertEqual("settings", field["section"])
+            self.assertEqual("user", field["audience"])
+            self.assertEqual("restart_required", field["activation"])
+
+    def test_manager_defaults_match_the_packaged_native_policy_inputs(self):
+        config = storage.ini_values(
+            (ROOT / "mods/ace_ai_server/config.ini").read_bytes()
+        )
+        actual = {}
+        for key, field in self.fields.items():
+            raw = config.get("settings", key)
+            if field["type"] == "integer":
+                actual[key] = int(raw)
+            else:
+                actual[key] = raw
+            self.assertEqual(field["default"], actual[key], key)
+            self.assertEqual(str(field["default"]), registry.validate(field, field["default"]))
+        self.assertEqual(EXPECTED_DEFAULTS, actual)
+        for key in ("AceDifficultyEasy", "AceDifficultyMedium", "AceDifficultyHard"):
+            self.assertEqual(["Easy", "Medium", "Hard", "Same"], self.fields[key]["options"])
+
+    def test_integer_policy_fields_accept_boundaries_and_reject_non_finite_bool_and_range_errors(self):
+        for suffix in ("Easy", "Medium", "Hard"):
+            chance = self.fields["AceChance" + suffix]
+            self.assertEqual("0", registry.validate(chance, 0))
+            self.assertEqual("100", registry.validate(chance, 100))
+            for value in (-1, 101, True, False, math.nan, math.inf, -math.inf, 5.0, "5"):
+                with self.subTest(field=chance["key"], value=value):
+                    with self.assertRaises(ValueError):
+                        registry.validate(chance, value)
+            for prefix in ("AceHpPercent", "AceAttackPercent"):
+                field = self.fields[prefix + suffix]
+                self.assertEqual("1", registry.validate(field, 1))
+                self.assertEqual("1000", registry.validate(field, 1000))
+                for value in (0, 1001, True, math.nan, math.inf):
+                    with self.subTest(field=field["key"], value=value):
+                        with self.assertRaises(ValueError):
+                            registry.validate(field, value)
+
+    def test_difficulty_choices_are_per_tier_and_manager_uses_medium_for_normal(self):
+        for suffix in ("Easy", "Medium", "Hard"):
+            field = self.fields["AceDifficulty" + suffix]
+            for value in field["options"]:
+                self.assertEqual(value, registry.validate(field, value))
+            for value in ("Normal", "medium", "", True, math.nan):
+                with self.subTest(field=field["key"], value=value):
+                    with self.assertRaises(ValueError):
+                        registry.validate(field, value)
+
+    def test_catalog_contract_keeps_one_public_source_and_no_private_overlay_in_programme(self):
+        self.assertTrue((ROOT / "mods/ace_ai/base-pilots.json").is_file())
+        self.assertFalse((ROOT / "mods/ace_ai_server/base-pilots.json").exists())
+        self.assertIn("owner-pilots.json", self.client["configuration_files"])
+        self.assertIn("owner-pilots.json", self.server["configuration_files"])
+        self.assertFalse((ROOT / "mods/ace_ai/owner-pilots.json").exists())
+        self.assertFalse((ROOT / "mods/ace_ai_server/owner-pilots.json").exists())
+
+    def test_client_has_no_authoritative_roll_or_stat_settings(self):
+        self.assertEqual([], self.client["settings"])
+        self.assertEqual(["owner-pilots.json"], self.client["configuration_files"])
+        self.assertEqual(["config.ini", "owner-pilots.json"], self.server["configuration_files"])
+        self.assertTrue(SERVER_KEYS.isdisjoint(
+            {field["key"] for field in self.client.get("settings", [])}
+        ))
+
+    def test_configuration_contract_fingerprints_owner_overlay_but_not_public_program_catalog(self):
+        client_manifest = storage.ini_values(
+            (ROOT / "mods/ace_ai/mod.ini").read_bytes()
+        )
+        server_manifest = storage.ini_values(
+            (ROOT / "mods/ace_ai_server/mod.ini").read_bytes()
+        )
+        self.assertEqual(
+            ["mod.ini", "owner-pilots.json"],
+            configuration.files(client_manifest, self.client),
+        )
+        self.assertEqual(
+            ["config.ini", "mod.ini", "owner-pilots.json"],
+            configuration.files(server_manifest, self.server),
+        )
+        self.assertEqual("base-pilots.json", client_manifest.get("mod", "files"))
+        self.assertEqual("owner-pilots.json", client_manifest.get("mod", "config_files"))
+        self.assertIn("base-pilots.json", {name.strip() for name in server_manifest.get("mod", "files").split(",")})
+        self.assertEqual(
+            {"config.ini", "owner-pilots.json"},
+            {name.strip() for name in server_manifest.get("mod", "config_files").split(",")},
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            mod = Path(directory) / "client/sdgo/mods/ace_ai"
+            mod.mkdir(parents=True)
+            (mod / "mod.ini").write_bytes((ROOT / "mods/ace_ai/mod.ini").read_bytes())
+            (mod / "base-pilots.json").write_text("public-v1", encoding="utf-8")
+            names = configuration.files(client_manifest, self.client)
+            missing = configuration.fingerprint(mod, names)
+            (mod / "owner-pilots.json").write_text("owner-v1", encoding="utf-8")
+            owner_v1 = configuration.fingerprint(mod, names)
+            self.assertNotEqual(missing, owner_v1)
+            (mod / "owner-pilots.json").write_text("owner-v2", encoding="utf-8")
+            owner_v2 = configuration.fingerprint(mod, names)
+            self.assertNotEqual(owner_v1, owner_v2)
+            (mod / "base-pilots.json").write_text("public-v2", encoding="utf-8")
+            self.assertEqual(owner_v2, configuration.fingerprint(mod, names))
+
+            server_mod = Path(directory) / "server/sdgo/mods/ace_ai_server"
+            server_mod.mkdir(parents=True)
+            (server_mod / "mod.ini").write_bytes(
+                (ROOT / "mods/ace_ai_server/mod.ini").read_bytes()
+            )
+            (server_mod / "config.ini").write_bytes(
+                (ROOT / "mods/ace_ai_server/config.ini").read_bytes()
+            )
+            (server_mod / "base-pilots.json").write_text("public-v1", encoding="utf-8")
+            server_names = configuration.files(server_manifest, self.server)
+            server_missing = configuration.fingerprint(server_mod, server_names)
+            (server_mod / "owner-pilots.json").write_text("owner-v1", encoding="utf-8")
+            server_owner = configuration.fingerprint(server_mod, server_names)
+            self.assertNotEqual(server_missing, server_owner)
+            (server_mod / "base-pilots.json").write_text("public-v2", encoding="utf-8")
+            self.assertEqual(server_owner, configuration.fingerprint(server_mod, server_names))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -429,6 +429,30 @@ void __fastcall Append(uint8_t* unit, void*, uint32_t) {
 }
 void __fastcall Switch(uint8_t*, void*, int form, char) { ++switchCalls; switchedForm = form; }
 int __fastcall Playback(void*, void*, uint8_t*) { ++originalPlayback; return 17; }
+int missionReadyCalls = 0, missionReadySucceedsAfter = 1;
+bool missionReadySawRelease = false;
+int missionRespawnCalls = 0;
+void* missionRespawnUm = nullptr;
+uint32_t missionRespawnObject = 0;
+uint32_t __cdecl MissionObjectForPilot(void*, uint32_t pilot) {
+    return pilot == (kAiPilotBit | 77u) ? 1001u : 0u;
+}
+int __cdecl MissionSlotForObject(void*, uint32_t object) {
+    return object == 1001u ? 4 : -1;
+}
+int __cdecl MissionKeepDead(uint8_t*) { return 0; }
+void __cdecl MissionRespawnComplete(void* managerValue, uint32_t object) {
+    ++missionRespawnCalls;
+    missionRespawnUm = managerValue;
+    missionRespawnObject = object;
+}
+int __cdecl MissionReady(uint8_t* readyMode) {
+    ++missionReadyCalls;
+    missionReadySawRelease = readyMode == mode.data() &&
+        Get<uint32_t>(service.data(), kServiceReadyState) == 3 &&
+        localPlayer[kPlayerControlEnabled] != 0;
+    return missionReadyCalls >= missionReadySucceedsAfter ? 1 : 0;
+}
 void __fastcall Udp(uint8_t* wait, void*) {
     ++udpCalls;
     CHECK(Get<uint32_t>(wait, kWaitRoomSlots) == 7);
@@ -522,6 +546,16 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     g_originalUdpSetup = reinterpret_cast<UdpSetupFn>(&Udp); g_originalNatCheck = reinterpret_cast<NatCheckFn>(&Nat);
     g_gameNew = &Allocate; g_originalTrackingUpdate = reinterpret_cast<CameraUpdateFn>(&Camera);
     g_botTable.clear(); g_botMode = nullptr; g_cameraAim = {}; g_soloAiMode = nullptr;
+    g_missionLifecycle = nullptr;
+    g_missionRespawnPending.clear();
+    g_missionReadyMode = nullptr;
+    g_missionReadyComplete = false;
+    missionReadyCalls = 0;
+    missionReadySucceedsAfter = 1;
+    missionReadySawRelease = false;
+    missionRespawnCalls = 0;
+    missionRespawnUm = nullptr;
+    missionRespawnObject = 0;
     std::memset(g_startDecks, 0, sizeof(g_startDecks));
     created = playerCount = enabled = calculated = hudCalls = hudGauge = 0;
     switchCalls = udpCalls = natCalls = originalPlayback = originalLookups = nativeSlotCalls = 0;
@@ -632,6 +666,42 @@ void TestHumanHost() {
 
 int main() {
     using namespace fixture;
+    SCENARIO("mission lifecycle V2 retries ready after native release and completes exact respawns");
+    Reset(0, 5);
+    SdgoMissionClientLifecycleV1 missionV1{
+        sizeof(missionV1), 1, &MissionObjectForPilot,
+        &MissionSlotForObject, &MissionKeepDead};
+    CHECK(SdgoMatchAiRegisterMissionV1(&missionV1) == 1);
+    g_missionLifecycle = nullptr;
+    SdgoMissionClientLifecycleV2 missionV2{
+        sizeof(missionV2), 2, &MissionObjectForPilot,
+        &MissionSlotForObject, &MissionKeepDead,
+        &MissionRespawnComplete, &MissionReady};
+    auto truncatedMissionV2 = missionV2;
+    truncatedMissionV2.size = sizeof(SdgoMissionClientLifecycleV1);
+    CHECK(SdgoMatchAiRegisterMissionV1(
+              reinterpret_cast<const SdgoMissionClientLifecycleV1*>(
+                  &truncatedMissionV2)) == 0);
+    CHECK(SdgoMatchAiRegisterMissionV1(
+              reinterpret_cast<const SdgoMissionClientLifecycleV1*>(
+                  &missionV2)) == 1);
+    SetSlotColour(um, nullptr, 1000, 2);
+    CHECK(slotColourIndex == 4 && slotColourValue == 2);
+    CHECK(g_missionRespawnPending.size() == 1 &&
+          missionRespawnCalls == 0);
+    CHECK(PlaybackUnit(nullptr, nullptr, nullptr) == 17);
+    CHECK(g_missionRespawnPending.empty() && missionRespawnCalls == 1 &&
+          missionRespawnUm == um && missionRespawnObject == 1001u);
+    missionReadySucceedsAfter = 2;
+    nativeReadyState = 3;
+    GameReady(service.data(), nullptr);
+    CHECK(missionReadyCalls == 1 && missionReadySawRelease &&
+          !g_missionReadyComplete);
+    CHECK(SdgoMatchAiMissionTickV1(mode.data()) == 1);
+    CHECK(missionReadyCalls == 2 && g_missionReadyComplete);
+    CHECK(SdgoMatchAiMissionTickV1(mode.data()) == 1 &&
+          missionReadyCalls == 2);
+
     SCENARIO("same-target native transform notices preserve the locally owned AI controller");
     const int transformModes[]={1,3,6,9,7};
     for(int modeIndex=0;modeIndex<5;++modeIndex) {

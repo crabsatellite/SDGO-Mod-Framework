@@ -6,6 +6,10 @@ local defaults = { Enabled=1, DecisionMs=150, ReactionMs=300, StuckMs=1400,
 local C = {}
 for k,v in pairs(defaults) do C[k]=v end
 for k,v in pairs(config or SDGO_BattleAI_TestConfig or {}) do C[k]=v end
+local function Difficulty()
+  if SDGO_BattleAI_Difficulty then return SDGO_BattleAI_Difficulty() end
+  return C.Difficulty
+end
 local M = SDGO_BattleAI or { originals={}, wrappers={}, states={}, faults=0 }
 local specs = {}
 local function Add(family, count, short, ranged)
@@ -129,7 +133,7 @@ local function Control(npc,s,spec,now,dir,reason,random)
 end
 
 local function Before(npc,spec)
-  if C.Difficulty<2 or C.GenericMode==1 then return end
+  if Difficulty()<2 or C.GenericMode==1 then return end
   if not Eligible(npc) then return false end
   local now=SDGO_BattleAI_Now()
   local id=npc:GetID()
@@ -146,7 +150,7 @@ local function Before(npc,spec)
 end
 
 local function After(npc,spec)
-  if C.Difficulty<2 or C.GenericMode==1 or C.Enabled~=1 or M.faults>=3 or not Eligible(npc) then return end
+  if Difficulty()<2 or C.GenericMode==1 or C.Enabled~=1 or M.faults>=3 or not Eligible(npc) then return end
   if not Alive(npc) or npc:CheckHurt() then return end
   local now=SDGO_BattleAI_Now()
   local s=State(npc,now)

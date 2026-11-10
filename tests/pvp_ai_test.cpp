@@ -14,6 +14,8 @@ uint32_t nextId = kAiPilotBit | 100;
 uint32_t failBuild = 0;
 uint32_t failSetup = 0;
 int buildCalls = 0, setupCalls = 0, respawns = 0, refreshes = 0, stateRespawns = 0;
+uint32_t stateIdSeen = 0, setupPilotIdSeen = 0, setupSlotIdSeen = 0;
+uint32_t proposedDamageSeen = 0, attackTypeSeen = 0;
 int originals = 0;
 int resultHostCalls=0,resultHostTransfer=-1;
 std::vector<std::array<uint8_t, 0x1A>> leavePackets;
@@ -30,6 +32,13 @@ int nativeTeamCalls=0,nativeHumanCalls=0,nativeHumanError=0;
 bool nativeAssignDuringSetup=false;
 int nativeRandomSeen=-1;
 bool revive = true;
+bool aceUnitEligible = true;
+std::set<uint32_t> aceIneligibleUnits;
+std::vector<uint32_t> aceEligibilityChecks;
+uint32_t MachineForNpc(uint32_t npc) { return 10000u + npc; }
+int missionDamageCalls = 0;
+uint32_t missionDamageSeen = 0;
+uint32_t missionAttackTypeSeen = 0;
 bool clearIdentityAtEnd = false;
 bool originalReturnedBeforeObserver = false;
 std::vector<SdgoPvpAiObserverEventV1> observerEvents;
@@ -61,6 +70,7 @@ int __fastcall Build(uint8_t*, void*, uint8_t* pilot, uint8_t* unit, uint32_t np
     if (it == npcIds.end()) return 0;
     Put(pilot, 0, nextId++);
     Put(unit, 0, npc);
+    Put(unit, kUnitMachineId, MachineForNpc(npc));
     unit[kUnitPoints] = points[static_cast<size_t>(it - npcIds.begin())];
     unit[kUnitGrade] = 3;
     Put<uint16_t>(unit, kUnitLifeCost, 500);
@@ -68,8 +78,11 @@ int __fastcall Build(uint8_t*, void*, uint8_t* pilot, uint8_t* unit, uint32_t np
     Put<uint32_t>(unit, kUnitHp, 15000);
     return 1;
 }
-int __fastcall Setup(void*, void*, uint8_t*, uint8_t* pilot, uint8_t, uint8_t mode) {
+int __fastcall Setup(void*, void*, uint8_t* info, uint8_t* pilot, uint8_t, uint8_t mode) {
     ++setupCalls;
+    setupPilotIdSeen = Get<uint32_t>(pilot, 0);
+    const ptrdiff_t slot = (info - (room.data() + kSlotInfo)) / kSlotInfoStride;
+    setupSlotIdSeen = slot >= 0 && slot < kSlots ? SlotPilotId(room.data(), static_cast<int>(slot)) : 0;
     uint8_t* unit = pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride;
     if (Get<uint32_t>(unit, 0) == failSetup) return 0;
     if (mode == 3 || mode == 14) {
@@ -79,8 +92,29 @@ int __fastcall Setup(void*, void*, uint8_t*, uint8_t* pilot, uint8_t, uint8_t mo
     }
     return 1;
 }
+uint32_t __fastcall Damage(uint8_t*, void*, uint32_t, uint32_t,
+                           uint8_t*, uint8_t*, uint32_t, uint32_t,
+                           uint32_t proposedDamage, uint16_t, uint8_t,
+                           uint32_t, uint8_t, uint32_t attackType) {
+    proposedDamageSeen = proposedDamage;
+    attackTypeSeen = attackType;
+    return proposedDamage;
+}
+int __cdecl AceEligible(uint32_t unitId) {
+    aceEligibilityChecks.push_back(unitId);
+    return aceUnitEligible && !aceIneligibleUnits.count(unitId) ? 1 : 0;
+}
+void __cdecl MissionTick(uint8_t*, uint32_t) {}
+void __cdecl MissionEnd(uint8_t*) {}
+uint32_t __cdecl MissionDamage(uint8_t*, uint32_t, uint8_t*,
+                               uint32_t proposedDamage, uint32_t attackType) {
+    ++missionDamageCalls;
+    missionDamageSeen = proposedDamage;
+    missionAttackTypeSeen = attackType;
+    return proposedDamage + 125;
+}
 void __fastcall ResetPart(uint8_t*, void*) {}
-void __fastcall SetId(uint8_t*, void*, uint32_t) {}
+void __fastcall SetId(uint8_t*, void*, uint32_t id) { stateIdSeen = id; }
 void __fastcall SetRoom(uint8_t*, void*, uint8_t*) {}
 void __fastcall SetMode(uint8_t*, void*, uint8_t, uint8_t) {}
 int __fastcall Respawn(uint8_t*, void*, uint32_t, uint8_t* pilot, uint32_t, uint32_t) {
@@ -135,6 +169,12 @@ void Reset(int mode = 1) {
     room[kTeamColour1]=1;room[kTeamColour1+1]=2;
     g_settings = Settings{};
     g_settings.gradeCost[3] = 455;
+    g_aceSettings = battle_ai::ace::Settings{};
+    g_aceSettings.enabled = false;
+    g_itemController = {};
+    std::memset(g_itemRooms, 0, sizeof(g_itemRooms));
+    g_roomGeneration = 0;
+    nextId = kAiPilotBit | 100;
     g_settings.logRoom = 0;
     g_random = 1234567;
     nativeTeamCalls=nativeHumanCalls=nativeHumanError=0;
@@ -144,6 +184,8 @@ void Reset(int mode = 1) {
     g_mod = nullptr;
     g_battleAiServerModule = nullptr;
     g_applyServerLoadout = nullptr;
+    g_aceServerModule = nullptr;
+    g_aceUnitEligible = &AceEligible;
     g_battleAiServerPath.clear();
     g_loadoutBridgeFaultLogged = 0;
     g_buildAiPilot = reinterpret_cast<BuildAiPilotFn>(&Build);
@@ -156,6 +198,7 @@ void Reset(int mode = 1) {
     g_respawnRefresh = reinterpret_cast<RespawnRefreshFn>(&Refresh);
     g_pilotStateRespawn = reinterpret_cast<PilotStateRespawnFn>(&StateRespawn);
     g_broadcast = reinterpret_cast<BroadcastFn>(&Broadcast);
+    g_damage = reinterpret_cast<DamageFn>(&Damage);
     g_battleEnd = reinterpret_cast<BattleEndFn>(&End);
     g_resultHost = reinterpret_cast<ResultHostFn>(&NativeResultHost);
     resultHostCalls=0;resultHostTransfer=-1;
@@ -169,8 +212,16 @@ void Reset(int mode = 1) {
     InterlockedExchange(&g_observerSequence, 0);
     InterlockedExchange(&g_observerFaultLogged, 0);
     buildCalls = setupCalls = respawns = refreshes = stateRespawns = originals = 0;
+    stateIdSeen = setupPilotIdSeen = setupSlotIdSeen = 0;
+    proposedDamageSeen = attackTypeSeen = 0;
     failBuild = failSetup = 0;
     revive = true;
+    aceUnitEligible = true;
+    aceIneligibleUnits.clear();
+    aceEligibilityChecks.clear();
+    missionDamageCalls = 0;
+    missionDamageSeen = missionAttackTypeSeen = 0;
+    g_missionLifecycle = nullptr;
     clearIdentityAtEnd = false;
     originalReturnedBeforeObserver = false;
     observerEvents.clear();
@@ -207,6 +258,161 @@ int wmain(int argc,wchar_t** argv) {
     // The production ModLoad initializes the new item lifecycle lock. This
     // fixture calls the included implementation directly instead of ModLoad.
     InitializeCriticalSection(&g_itemsLock);
+
+    SCENARIO("mission lifecycle accepts V1 and V2 safely and V2 scales damage before the native call");
+    Reset(5);
+    SdgoMissionServerLifecycleV1 missionV1{
+        sizeof(missionV1), 1, &MissionTick, &MissionEnd};
+    CHECK(SdgoPvpAiRegisterMissionV1(&missionV1) == 1);
+    uint8_t weapon[0x40]{};
+    CHECK(AcceptedDamage(room.data(), nullptr, 1, 2, Pilot(2), weapon,
+                         0, 10, 1000, 0, 0, 0, 0, 0) == 1000);
+    CHECK(missionDamageCalls == 0 && proposedDamageSeen == 1000);
+    g_missionLifecycle = nullptr;
+    SdgoMissionServerLifecycleV2 missionV2{
+        sizeof(missionV2), 2, &MissionTick, &MissionEnd, &MissionDamage};
+    auto truncatedMissionV2 = missionV2;
+    truncatedMissionV2.size = sizeof(SdgoMissionServerLifecycleV1);
+    CHECK(SdgoPvpAiRegisterMissionV1(
+              reinterpret_cast<const SdgoMissionServerLifecycleV1*>(
+                  &truncatedMissionV2)) == 0);
+    CHECK(SdgoPvpAiRegisterMissionV1(
+              reinterpret_cast<const SdgoMissionServerLifecycleV1*>(
+                  &missionV2)) == 1);
+    CHECK(AcceptedDamage(room.data(), nullptr, 2, 3, Pilot(3), weapon,
+                         0, 10, 1000, 0, 0, 0, 0, 0) == 1125);
+    CHECK(missionDamageCalls == 1 && missionDamageSeen == 1000 &&
+          missionAttackTypeSeen == 0 && proposedDamageSeen == 1125);
+
+    SCENARIO("server-authored Ace marker and effective difficulty are fixed before native pilot registration");
+    struct AceDifficultyCase {
+        const char* title;
+        battle_ai::Difficulty base;
+        battle_ai::Difficulty effective;
+    };
+    for (const auto& value : {
+            AceDifficultyCase{"!ai easy", battle_ai::Difficulty::Easy, battle_ai::Difficulty::Medium},
+            AceDifficultyCase{"!ai medium", battle_ai::Difficulty::Medium, battle_ai::Difficulty::Hard},
+            AceDifficultyCase{"!ai hard", battle_ai::Difficulty::Hard, battle_ai::Difficulty::Hard}}) {
+        Reset();
+        Title(value.title);
+        CHECK(PrepareRoomItems(room.data(), value.base));
+        g_aceSettings.enabled = true;
+        g_aceSettings.byDifficulty[battle_ai::ace::Index(value.base)].chancePercent = 100;
+        CHECK(AddAiPilot(room.data(), 6, 100, 2, 1));
+        CHECK(aceEligibilityChecks ==
+              std::vector<uint32_t>{MachineForNpc(100)});
+        const uint32_t pilotId = SlotPilotId(room.data(), 6);
+        const auto decoded = battle_ai::ace::DecodePilotId(pilotId, value.base);
+        CHECK(decoded.ace && decoded.effective == value.effective);
+        CHECK(stateIdSeen == pilotId && setupPilotIdSeen == pilotId && setupSlotIdSeen == pilotId);
+        battle_ai::ace::Outcome stored{};
+        CHECK(CopyAceOutcome(room.data(), 6, pilotId, &stored));
+        CHECK(stored.ace && stored.base == value.base && stored.effective == value.effective);
+        CHECK(Get<uint32_t>(Pilot(6), 0x05) ==
+              (value.effective == battle_ai::Difficulty::Easy ? 30000u : 0u));
+    }
+
+    SCENARIO("zero chance and exhausted room tracking fail closed to an ordinary pilot");
+    Reset();
+    Title("!ai hard");
+    CHECK(PrepareRoomItems(room.data(), battle_ai::Difficulty::Hard));
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2].chancePercent = 0;
+    CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+    CHECK((SlotPilotId(room.data(), 6) & battle_ai::ace::kAcePilotBit) == 0);
+    ApplyAceStats(room.data(), 6);
+    CHECK(Get<uint32_t>(Unit(6), kUnitMaxHp) == 15000);
+    Reset();
+    Title("!ai hard");
+    for (size_t i = 0; i < std::size(g_itemRooms); ++i) {
+        g_itemRooms[i].active = true;
+        g_itemRooms[i].room = reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(0x10000 + i * 0x100));
+        g_itemRooms[i].roomIndex = static_cast<uint32_t>(i + 1);
+    }
+    CHECK(!PrepareRoomItems(room.data(), battle_ai::Difficulty::Hard));
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2].chancePercent = 100;
+    CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+    CHECK((SlotPilotId(room.data(), 6) & battle_ai::ace::kAcePilotBit) == 0);
+    Reset();
+    Title("!ai hard");
+    CHECK(PrepareRoomItems(room.data(), battle_ai::Difficulty::Hard));
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2].chancePercent = 100;
+    aceUnitEligible = false;
+    CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+    CHECK((SlotPilotId(room.data(), 6) & battle_ai::ace::kAcePilotBit) == 0);
+
+    SCENARIO("a missing pilot entry on any usable deck unit disables Ace without rejecting the bot");
+    Reset(7);
+    Title("!ai hard");
+    CHECK(PrepareRoomItems(room.data(), battle_ai::Difficulty::Hard));
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2].chancePercent = 100;
+    aceIneligibleUnits.insert(MachineForNpc(101));
+    bool deckCatalogComplete = true;
+    const auto checkedPoints =
+        PoolPoints(room.data(), npcIds, &deckCatalogComplete);
+    CHECK(!deckCatalogComplete);
+    CHECK(AddTeam(room.data(), 2, 1, npcIds, checkedPoints,
+                  deckCatalogComplete) == 1);
+    int deckBotSlot = -1;
+    for (int slot = 0; slot < kSlots; ++slot)
+        if (SlotPilotId(room.data(), slot) & kAiPilotBit) {
+            deckBotSlot = slot;
+            break;
+        }
+    CHECK(deckBotSlot >= 0);
+    CHECK((SlotPilotId(room.data(), deckBotSlot) &
+           battle_ai::ace::kAcePilotBit) == 0);
+
+    SCENARIO("Hard Ace scales every deck form once, keeps identity across respawn, and only scales ordinary attacks");
+    Reset(7);
+    Title("!ai hard");
+    CHECK(PrepareRoomItems(room.data(), battle_ai::Difficulty::Hard));
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2].chancePercent = 100;
+    g_aceSettings.byDifficulty[2].hpPercent = 120;
+    g_aceSettings.byDifficulty[2].attackPercent = 150;
+    CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+    const uint32_t hardAceId = SlotPilotId(room.data(), 6);
+    BuildDeck(room.data(), 6, 100, npcIds, points);
+    const int aceForms = Pilot(6)[kPilotTagUnits];
+    CHECK(aceForms >= 2);
+    // A malformed form must not consume the one-shot latch; once repaired,
+    // the complete deck is scaled together.
+    const uint32_t formOneMaximum = Get<uint32_t>(Unit(6, 1), kUnitMaxHp);
+    Put<uint32_t>(Unit(6, 1), kUnitMaxHp, 0);
+    ApplyAceStats(room.data(), 6);
+    CHECK(Get<uint32_t>(Unit(6), kUnitMaxHp) == 15000);
+    Put<uint32_t>(Unit(6, 1), kUnitMaxHp, formOneMaximum);
+    ApplyAceStats(room.data(), 6);
+    for (int form = 0; form < aceForms; ++form) {
+        CHECK(Get<uint32_t>(Unit(6, form), kUnitMaxHp) == 18000);
+        CHECK(Get<uint32_t>(Unit(6, form), kUnitHp) == 18000);
+    }
+    ApplyAceStats(room.data(), 6);
+    for (int form = 0; form < aceForms; ++form)
+        CHECK(Get<uint32_t>(Unit(6, form), kUnitMaxHp) == 18000);
+    std::memset(weapon, 0, sizeof(weapon));
+    CHECK(AcceptedDamage(room.data(), nullptr, 7, 6, Pilot(6), weapon, 0,
+                         10, 1000, 0, 0, 0, 0, 0) == 1500);
+    CHECK(proposedDamageSeen == 1500 && attackTypeSeen == 0);
+    CHECK(AcceptedDamage(room.data(), nullptr, 8, 6, Pilot(6), weapon, 0,
+                         10, 1000, 0, 0, 0, 0, 1) == 1000);
+    CHECK(proposedDamageSeen == 1000 && attackTypeSeen == 1);
+    Put<uint32_t>(Unit(6), kUnitHp, 0);
+    RespawnAiPilots(room.data(), 100);
+    CHECK(SlotPilotId(room.data(), 6) == hardAceId);
+    CHECK(Get<uint32_t>(Unit(6), kUnitMaxHp) == 18000);
+    CHECK(Get<uint32_t>(Unit(6), kUnitHp) == 9000);
+    battle_ai::ace::Outcome respawned{};
+    CHECK(CopyAceOutcome(room.data(), 6, hardAceId, &respawned));
+    CHECK(respawned.ace && respawned.hpPercent == 120 && respawned.attackPercent == 150);
+    ApplyAceStats(room.data(), 6);
+    CHECK(Get<uint32_t>(Unit(6), kUnitMaxHp) == 18000);
+
     SCENARIO("optional post-build server bridge is absent-safe and covers initial and deck builds");
     namespace fs=std::filesystem;
     const fs::path bridgeRoot=fs::temp_directory_path()/

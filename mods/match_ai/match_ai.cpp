@@ -43,11 +43,35 @@
 #include "sdgo/mission_ai_lifecycle.h"
 
 static SdgoMissionClientLifecycleV1* g_missionLifecycle = nullptr;
+
+static bool MissionClientLifecycleSupported(
+    const SdgoMissionClientLifecycleV1* hooks)
+{
+    if (!hooks || !hooks->object_for_pilot || !hooks->slot_for_object ||
+        !hooks->keep_dead) return false;
+    if (hooks->version == 1) return hooks->size == sizeof(*hooks);
+    if (hooks->version != 2 ||
+        hooks->size < sizeof(SdgoMissionClientLifecycleV2)) return false;
+    const auto* hooksV2 =
+        reinterpret_cast<const SdgoMissionClientLifecycleV2*>(hooks);
+    return hooksV2->respawn_complete != nullptr && hooksV2->ready != nullptr;
+}
+
+static const SdgoMissionClientLifecycleV2* MissionClientLifecycleV2()
+{
+    auto* hooks = reinterpret_cast<SdgoMissionClientLifecycleV1*>(
+        InterlockedCompareExchangePointer(
+            reinterpret_cast<void* volatile*>(&g_missionLifecycle),
+            nullptr, nullptr));
+    if (!hooks || hooks->version < 2 ||
+        hooks->size < sizeof(SdgoMissionClientLifecycleV2)) return nullptr;
+    return reinterpret_cast<const SdgoMissionClientLifecycleV2*>(hooks);
+}
+
 extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterMissionV1(
     const SdgoMissionClientLifecycleV1* hooks)
 {
-    if (!hooks || hooks->size != sizeof(*hooks) || hooks->version != 1 ||
-        !hooks->object_for_pilot || !hooks->slot_for_object || !hooks->keep_dead) return 0;
+    if (!MissionClientLifecycleSupported(hooks)) return 0;
     auto previous = InterlockedCompareExchangePointer(
         reinterpret_cast<void* volatile*>(&g_missionLifecycle),
         const_cast<SdgoMissionClientLifecycleV1*>(hooks), nullptr);
@@ -65,6 +89,7 @@ extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterMissionV1(
 
 #include "sdgo/sdgo_api.h"
 #include "../battle_ai/difficulty.h"
+#include "../battle_ai/ace_policy.h"
 #include "../battle_ai/native_map_transport.h"
 #include "../battle_ai/native_map_gate.h"
 #include "sdgo/room_titles_current.h"
@@ -288,8 +313,19 @@ namespace
     UnitMessageFn g_originalUnitNetworkMessage=nullptr,g_unitCombatEvent=nullptr;
     struct TransformConfirmation {bool active=false;uint32_t pilot=0,object=0,target=0;};
     thread_local TransformConfirmation g_transformConfirmation{};
+    struct MissionRespawnPending { void* unitManager = nullptr; uint32_t objectId = 0; };
+    thread_local std::vector<MissionRespawnPending> g_missionRespawnPending;
+    uint8_t* g_missionReadyMode = nullptr;
+    bool g_missionReadyComplete = false;
     HMODULE g_battleAiModule = nullptr;
     BattleAiInitializeUnitFn g_battleAiInitializeUnit = nullptr;
+    using BattleAiBeginBattleFn = int(__cdecl*)(uint32_t);
+    BattleAiBeginBattleFn g_battleAiBeginBattle = nullptr;
+    HMODULE g_aceAiModule = nullptr;
+    using AcePilotNameFn = int(__cdecl*)(uint32_t, wchar_t*, uint32_t);
+    using AceAnnounceTeamFn = int(__cdecl*)(uint8_t*, uint32_t);
+    AcePilotNameFn g_acePilotName = nullptr;
+    AceAnnounceTeamFn g_aceAnnounceTeam = nullptr;
     ForceMoveSenderFn g_forceMoveSender = nullptr;
     battle_ai::native::SendForceMovePacketFn g_sendForceMovePacket = nullptr;
     NativeStateFn g_movementState = nullptr;
@@ -349,6 +385,11 @@ namespace
         bool pendingInitialize = false;
         bool missionLifeObserved = false;
         bool missionAlive = false;
+        bool ace = false;
+        uint8_t team = 0;
+        uint8_t colour = 0;
+        battle_ai::Difficulty effectiveDifficulty = battle_ai::Difficulty::Medium;
+        std::wstring acePilotName;
         ForcedPadState forcedPad{};
     };
     std::vector<Bot> g_botTable;
@@ -357,9 +398,11 @@ namespace
     volatile LONG g_missionForcedPadTicks = 0;
     int g_roomDifficulty = 1;
     uint32_t g_nextUnitGeneration = 0;
+    uint32_t g_nextBattleGeneration = 0;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
     int g_viewStateLogs = 0;   // diagnostics: dead view clicks logged this game
     bool g_logDiagnostics = false;
+    bool g_aceAnnouncementDone[3] = {};
 
 
     struct ModeClass
@@ -428,20 +471,80 @@ namespace
         return g_nextUnitGeneration;
     }
 
-    BattleAiInitializeUnitFn OptionalBattleAiInitializer()
+    void ResolveBattleAiBridge()
     {
         HMODULE module = GetModuleHandleW(L"battle_ai.dll");
-        if (!module) {
-            g_battleAiModule = nullptr;
-            g_battleAiInitializeUnit = nullptr;
-            return nullptr;
-        }
-        if (module != g_battleAiModule || !g_battleAiInitializeUnit) {
+        if (module != g_battleAiModule) {
             g_battleAiModule = module;
+            g_battleAiInitializeUnit = nullptr;
+            g_battleAiBeginBattle = nullptr;
+        }
+        if (module && !g_battleAiInitializeUnit)
             g_battleAiInitializeUnit = reinterpret_cast<BattleAiInitializeUnitFn>(
                 GetProcAddress(module, "SdgoBattleAiInitializeUnit"));
-        }
+        if (module && !g_battleAiBeginBattle)
+            g_battleAiBeginBattle = reinterpret_cast<BattleAiBeginBattleFn>(
+                GetProcAddress(module, "SdgoBattleAiBeginBattleV1"));
+    }
+
+    BattleAiInitializeUnitFn OptionalBattleAiInitializer()
+    {
+        ResolveBattleAiBridge();
         return g_battleAiInitializeUnit;
+    }
+
+    void BeginBattleAiProfiles()
+    {
+        ResolveBattleAiBridge();
+        if (!g_battleAiBeginBattle) return;
+        if (++g_nextBattleGeneration == 0) ++g_nextBattleGeneration;
+        if (g_battleAiBeginBattle(g_nextBattleGeneration) != 1)
+            g_api->Log(g_mod, SDGO_LOG_WARN, "battle AI profile registry did not accept battle generation %lu",
+                       static_cast<unsigned long>(g_nextBattleGeneration));
+    }
+
+    void ResolveAceProvider()
+    {
+        HMODULE module = GetModuleHandleW(L"ace_ai.dll");
+        if (module != g_aceAiModule) {
+            g_aceAiModule = module;
+            g_acePilotName = nullptr;
+            g_aceAnnounceTeam = nullptr;
+        }
+        if (module && !g_acePilotName)
+            g_acePilotName = reinterpret_cast<AcePilotNameFn>(
+                GetProcAddress(module, "SdgoAceAiPilotNameV1"));
+        if (module && !g_aceAnnounceTeam)
+            g_aceAnnounceTeam = reinterpret_cast<AceAnnounceTeamFn>(
+                GetProcAddress(module, "SdgoAceAiAnnounceTeamV1"));
+    }
+
+    int GuardedAcePilotName(uint32_t unitId, wchar_t* value, uint32_t capacity)
+    {
+        __try { return g_acePilotName ? g_acePilotName(unitId, value, capacity) : 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { g_acePilotName = nullptr; return 0; }
+    }
+
+    std::wstring AcePilotName(uint32_t unitId)
+    {
+        ResolveAceProvider();
+        wchar_t value[65]{};
+        if (GuardedAcePilotName(unitId, value,
+                                static_cast<uint32_t>(sizeof(value) / sizeof(value[0]))) != 1)
+            return {};
+        return value;
+    }
+
+    void ApplyAcePilotName(void* um, const Bot& bot)
+    {
+        if (!um || !bot.ace || bot.acePilotName.empty() || bot.slot < 0) return;
+        __try {
+            uint8_t* slot = g_game.playerSlot(um, bot.slot);
+            if (slot) g_game.assign(slot + kSlotName, bot.acePilotName.c_str(), bot.acePilotName.size());
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: restoring Ace pilot name failed (%08lX)",
+                       static_cast<unsigned long>(bot.pilotId), GetExceptionCode());
+        }
     }
 
     void InitializeBattleAiUnit(Bot& bot, bool initialMatchSpawn = false)
@@ -451,7 +554,7 @@ namespace
             return;
         // The low byte is the public room difficulty.  0x100 marks only the first
         // completed spawn in this match; respawns and deck changes must retain SP.
-        int difficultyAndFlags = g_roomDifficulty | (initialMatchSpawn ? 0x100 : 0);
+        int difficultyAndFlags = static_cast<int>(bot.effectiveDifficulty) | (initialMatchSpawn ? 0x100 : 0);
         __try {
             initialize(bot.unit, difficultyAndFlags, bot.generation);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -803,7 +906,21 @@ namespace
         uint32_t objectId = *reinterpret_cast<uint32_t*>(unit + kUnitObjectId);
         g_game.setPlayerInfo(c.um, slot, 0, objectId, *reinterpret_cast<uint32_t*>(record + kRecordConnection), record);
         const uint8_t* npc = *reinterpret_cast<uint8_t**>(unit + kUnitNpcData);
-        if (npc) {
+        const auto aceOutcome = battle_ai::ace::DecodePilotId(
+            serverId, static_cast<battle_ai::Difficulty>(g_roomDifficulty));
+        std::wstring acePilotName;
+        if (aceOutcome.ace && npc) {
+            const uint32_t unitId = *reinterpret_cast<const uint32_t*>(npc + kNpcUnitDataId);
+            acePilotName = AcePilotName(unitId);
+            if (acePilotName.empty())
+                g_api->Log(g_mod, SDGO_LOG_ERROR,
+                           "AI player %08lX: server selected Ace but unit %lu has no valid pilot identity",
+                           static_cast<unsigned long>(serverId), static_cast<unsigned long>(unitId));
+        }
+        if (!acePilotName.empty()) {
+            g_game.assign(g_game.playerSlot(c.um, slot) + kSlotName,
+                          acePilotName.c_str(), acePilotName.size());
+        } else if (npc) {
             auto name = reinterpret_cast<const wchar_t*>(npc + 5);
             g_game.assign(g_game.playerSlot(c.um, slot) + kSlotName, name, wcslen(name));
         }
@@ -811,6 +928,11 @@ namespace
         g_game.addAiUnit(c.um, unit);
         *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
         Bot bot{serverId, objectId, slot, unit};
+        bot.ace = aceOutcome.ace && !acePilotName.empty();
+        bot.team = static_cast<uint8_t>(team);
+        bot.colour = static_cast<uint8_t>(colour);
+        bot.effectiveDifficulty = aceOutcome.effective;
+        bot.acePilotName = acePilotName;
         uint8_t* room = *reinterpret_cast<uint8_t**>(c.mode + kModeRoom);
         uint16_t roomMode = *reinterpret_cast<uint16_t*>(room + kModeRoomMode);
         if (roomMode == 6 || roomMode == 7) {
@@ -880,6 +1002,7 @@ namespace
     {
         g_botTable.clear();
         g_aiEnabled = false;
+        std::fill(std::begin(g_aceAnnouncementDone), std::end(g_aceAnnouncementDone), false);
         g_startStatus = {};
         g_scoreboardStatus = {};
         g_rosterPanel = nullptr;
@@ -899,6 +1022,7 @@ namespace
         int count = RecordCount(room, kRoomAiBegin, kRoomAiEnd);
         if (count == 0)
             return;
+        BeginBattleAiProfiles();
         if (RecordCount(room, kRoomHumansBegin, kRoomHumansEnd) == 1)
             g_soloAiMode = mode;
         if (!g_game.isNetwork()) {
@@ -1044,6 +1168,8 @@ namespace
     // Map volumes are polled by each PvP mode's continuous Update instead.
 
     bool GuardedUpdateForcedPads();
+    void AnnounceAceTeams(uint8_t* mode);
+    void DispatchMissionReady(uint8_t* mode, bool reset);
     volatile LONG g_forcedPadTicks=0;
     template<size_t I>
     int __fastcall ModeUpdate(uint8_t* mode,void*)
@@ -1053,11 +1179,29 @@ namespace
         if(mode==g_botMode&&g_aiEnabled) {
             InterlockedIncrement(&g_forcedPadTicks);
             GuardedUpdateForcedPads();
+            AnnounceAceTeams(mode);
         }
         return result;
     }
     using ModeUpdateDetour=int(__fastcall*)(uint8_t*,void*);
     const ModeUpdateDetour g_updateDetours[]={&ModeUpdate<0>,&ModeUpdate<1>,&ModeUpdate<2>,&ModeUpdate<3>,&ModeUpdate<4>};
+
+    void AnnounceAceTeams(uint8_t* mode)
+    {
+        if (!mode || g_botTable.empty()) return;
+        bool present[3] = {};
+        for (const Bot& bot : g_botTable)
+            if (bot.ace && (bot.colour == 1 || bot.colour == 2)) present[bot.colour] = true;
+        ResolveAceProvider();
+        if (!g_aceAnnounceTeam) return;
+        for (uint32_t colour = 1; colour <= 2; ++colour) {
+            if (!present[colour] || g_aceAnnouncementDone[colour]) continue;
+            int result = 0;
+            __try { result = g_aceAnnounceTeam(mode, colour); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { g_aceAnnounceTeam = nullptr; }
+            if (result == 1) g_aceAnnouncementDone[colour] = true;
+        }
+    }
 
     void EnableBots(uint8_t* service)
     {
@@ -1066,8 +1210,12 @@ namespace
             return;
         if (*reinterpret_cast<const uint32_t*>(service + kServiceReadyState) != 3)
             return;
-        for (const Bot& bot : g_botTable)
+        void* um = g_game.unitManager ? *g_game.unitManager : nullptr;
+        for (const Bot& bot : g_botTable) {
+            ApplyAcePilotName(um, bot);
             g_game.enableAi(bot.unit);
+        }
+        AnnounceAceTeams(mode);
         g_aiEnabled = true;
         ++g_startStatus.release_count;
         g_startStatus.release_ready_state = *reinterpret_cast<uint32_t*>(service + kServiceReadyState);
@@ -1111,8 +1259,12 @@ namespace
     void __fastcall GameReady(uint8_t* service, void* /*edx*/)
     {
         g_originalGameReady(service);
-        if (service && !GuardedEnable(service))
-            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while switching on the AI players");
+        if (service) {
+            DispatchMissionReady(
+                *reinterpret_cast<uint8_t**>(service + kServiceMode), true);
+            if (!GuardedEnable(service))
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while switching on the AI players");
+        }
     }
 
     // ---- battle start: no UDP link to AI pilots ------------------------------------------
@@ -1231,6 +1383,44 @@ namespace
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return nullptr;
         }
+    }
+
+    bool MissionControlReleased(uint8_t* mode)
+    {
+        if (!mode || !g_gameApp || !g_game.unitManager) return false;
+        __try {
+            uint8_t* app = g_gameApp();
+            uint8_t* service =
+                app ? *reinterpret_cast<uint8_t**>(app + kAppGameMain) : nullptr;
+            if (!service ||
+                *reinterpret_cast<uint8_t**>(service + kServiceMode) != mode ||
+                *reinterpret_cast<uint32_t*>(service + kServiceReadyState) != 3)
+                return false;
+            auto* manager = static_cast<uint8_t*>(*g_game.unitManager);
+            if (!manager) return false;
+            if (g_game.isObserver && g_game.isObserver(manager)) return true;
+            auto* player = *reinterpret_cast<uint8_t**>(manager + kManagerPlayer);
+            return player && player[kPlayerControlEnabled] != 0;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    void DispatchMissionReady(uint8_t* mode, bool reset)
+    {
+        if (reset || mode != g_missionReadyMode) {
+            g_missionReadyMode = mode;
+            g_missionReadyComplete = false;
+            if (reset) g_missionRespawnPending.clear();
+        }
+        if (!mode || g_missionReadyComplete || !MissionControlReleased(mode))
+            return;
+        const auto* mission = MissionClientLifecycleV2();
+        if (!mission) return;
+        int result = 0;
+        __try { result = mission->ready(mode); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { result = 0; }
+        if (result == 1) g_missionReadyComplete = true;
     }
 
     // The current game mode when it is one of the PvP modes, else NULL.
@@ -2570,6 +2760,7 @@ namespace
             if (bot.pendingInitialize) {
                 bot.pendingInitialize = false;
                 bot.generation = NextUnitGeneration();
+                ApplyAcePilotName(g_game.unitManager ? *g_game.unitManager : nullptr, bot);
                 InitializeBattleAiUnit(bot);
             }
         }
@@ -2841,15 +3032,29 @@ namespace
     {
         int result = g_originalPlaybackUnit(self, packet);
         GuardedSwitchDecks();
+        if (!g_missionRespawnPending.empty()) {
+            const MissionRespawnPending pending = g_missionRespawnPending.front();
+            g_missionRespawnPending.erase(g_missionRespawnPending.begin());
+            if (const auto* mission = MissionClientLifecycleV2()) {
+                __try {
+                    mission->respawn_complete(
+                        pending.unitManager, pending.objectId);
+                } __except (EXCEPTION_EXECUTE_HANDLER) {
+                }
+            }
+        }
         return result;
     }
 
     void __fastcall SetSlotColour(void* um, void* /*edx*/, int index, int colour)
     {
         if (index >= 1000) {
+            const uint32_t objectId = static_cast<uint32_t>(index) + 1;
             const int missionSlot = g_missionLifecycle ?
-                g_missionLifecycle->slot_for_object(um, static_cast<uint32_t>(index) + 1) : -1;
+                g_missionLifecycle->slot_for_object(um, objectId) : -1;
             if (missionSlot >= 0) {
+                if (MissionClientLifecycleV2())
+                    g_missionRespawnPending.push_back({um, objectId});
                 g_originalSetSlotColour(um, missionSlot, colour);
                 return;
             }
@@ -3094,6 +3299,7 @@ SdgoMatchAiMissionTickV1(uint8_t* mode)
         return 0;
     __try {
         NotifyTick(mode,static_cast<uint32_t>(InterlockedCompareExchange(&g_receivedBattleStartCount,0,0)));
+        DispatchMissionReady(mode, false);
         InterlockedIncrement(
             &g_missionForcedPadTicks);
         UpdateMissionForcedPads(mode);

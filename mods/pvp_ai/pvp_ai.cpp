@@ -38,6 +38,7 @@
 
 #include "sdgo/sdgo_api.h"
 #include "../battle_ai/difficulty.h"
+#include "../battle_ai/ace_policy.h"
 #include "battle_items.h"
 #include "sdgo/room_titles_lookup.h"
 #include "sdgo/ai_scoring.h"
@@ -49,11 +50,33 @@
 
 static SdgoMissionServerLifecycleV1* g_missionLifecycle = nullptr;
 
+static bool MissionServerLifecycleSupported(
+    const SdgoMissionServerLifecycleV1* hooks)
+{
+    if (!hooks || !hooks->tick || !hooks->end) return false;
+    if (hooks->version == 1) return hooks->size == sizeof(*hooks);
+    if (hooks->version != 2 ||
+        hooks->size < sizeof(SdgoMissionServerLifecycleV2)) return false;
+    const auto* hooksV2 =
+        reinterpret_cast<const SdgoMissionServerLifecycleV2*>(hooks);
+    return hooksV2->accepted_damage != nullptr;
+}
+
+static const SdgoMissionServerLifecycleV2* MissionServerLifecycleV2()
+{
+    auto* hooks = reinterpret_cast<SdgoMissionServerLifecycleV1*>(
+        InterlockedCompareExchangePointer(
+            reinterpret_cast<void* volatile*>(&g_missionLifecycle),
+            nullptr, nullptr));
+    if (!hooks || hooks->version < 2 ||
+        hooks->size < sizeof(SdgoMissionServerLifecycleV2)) return nullptr;
+    return reinterpret_cast<const SdgoMissionServerLifecycleV2*>(hooks);
+}
+
 extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiRegisterMissionV1(
     const SdgoMissionServerLifecycleV1* hooks)
 {
-    if (!hooks || hooks->size != sizeof(*hooks) || hooks->version != 1 ||
-        !hooks->tick || !hooks->end) return 0;
+    if (!MissionServerLifecycleSupported(hooks)) return 0;
     auto previous = InterlockedCompareExchangePointer(
         reinterpret_cast<void* volatile*>(&g_missionLifecycle),
         const_cast<SdgoMissionServerLifecycleV1*>(hooks), nullptr);
@@ -73,6 +96,7 @@ namespace
     constexpr int kSlots = 12;
     constexpr int kLegacySlotSplit = 6;         // placement preference, never a team limit
     constexpr int kSupportedPlayers = 8;
+    constexpr int kDeckUnits = 4;
     constexpr size_t kSlotInfo = 0x533;         // slot info records, stride 0x48E
     constexpr size_t kSlotInfoStride = 0x48E;
     constexpr size_t kSlotInfoPilotId = 0x429;  // = room + 0x95C + slot * 0x48E
@@ -97,6 +121,9 @@ namespace
     constexpr size_t kUnitLifeCost = 0x08;
     constexpr size_t kUnitMaxHp = 0x04;
     constexpr size_t kUnitHp = 0x34;
+    // Native BuildAiPilot stores the NPC row id at +0 and the catalog's
+    // machine/unit id at +0x64. Ace pilot catalogs are keyed by machine id.
+    constexpr size_t kUnitMachineId = 0x64;
 
     constexpr size_t kRoomScoreTeam1 = 0x2EEE4;
     constexpr size_t kRoomScoreTeam2 = 0x2EEE8;
@@ -166,10 +193,13 @@ namespace
     void* g_waitRoomProc = nullptr;
     BuildAiPilotFn g_buildAiPilot = nullptr;
     using ApplyServerLoadoutFn = int(__cdecl*)(uint8_t*, uint8_t*, uint8_t*, uint32_t);
+    using AceUnitEligibleFn = int(__cdecl*)(uint32_t);
     thread_local HMODULE g_battleAiServerModule = nullptr;
     thread_local ApplyServerLoadoutFn g_applyServerLoadout = nullptr;
     thread_local std::wstring g_battleAiServerPath;
     volatile LONG g_loadoutBridgeFaultLogged = 0;
+    thread_local HMODULE g_aceServerModule = nullptr;
+    thread_local AceUnitEligibleFn g_aceUnitEligible = nullptr;
     PilotResetFn g_pilotReset = nullptr;
     PilotStateIdFn g_pilotStateId = nullptr;
     PilotStateRoomFn g_pilotStateRoom = nullptr;
@@ -198,6 +228,7 @@ namespace
     } g_settings;
 
     std::atomic<unsigned> g_random{0};
+    battle_ai::ace::Settings g_aceSettings{};
     PVOID volatile g_observerCallback = nullptr;
     PVOID volatile g_observerUser = nullptr;
     volatile LONG g_observerRegistration = 0;
@@ -215,6 +246,29 @@ namespace
             next ^= next << 5;
             if (g_random.compare_exchange_weak(previous, next, std::memory_order_relaxed))
                 return next;
+        }
+    }
+
+    void ResolveAceServerProvider()
+    {
+        HMODULE module = GetModuleHandleW(L"ace_ai_server.dll");
+        if (module != g_aceServerModule) {
+            g_aceServerModule = module;
+            g_aceUnitEligible = nullptr;
+        }
+        if (module && !g_aceUnitEligible)
+            g_aceUnitEligible = reinterpret_cast<AceUnitEligibleFn>(
+                GetProcAddress(module, "SdgoAceAiUnitEligibleV1"));
+    }
+
+    bool AceUnitEligible(uint32_t unitId)
+    {
+        ResolveAceServerProvider();
+        if (!g_aceUnitEligible) return false;
+        __try { return g_aceUnitEligible(unitId) == 1; }
+        __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_aceUnitEligible = nullptr;
+            return false;
         }
     }
 
@@ -378,6 +432,7 @@ namespace
                 plan.level = token[2] - '0';
             } else if ((length==4 && _strnicmp(token,"easy",4)==0) ||
                        (length==6 && _strnicmp(token,"medium",6)==0) ||
+                       (length==6 && _strnicmp(token,"normal",6)==0) ||
                        (length==4 && _strnicmp(token,"hard",4)==0)) {
                 if(difficultySet)plan.valid=false;
                 difficultySet=true;
@@ -705,6 +760,9 @@ namespace
         uint32_t generation;
         battle_ai::Difficulty difficulty;
         bool botActive[kSlots];
+        bool statsScaled[kSlots];
+        uint32_t acePilotIds[kSlots];
+        battle_ai::ace::Outcome aceOutcomes[kSlots];
         items::BotKey bots[kSlots];
     };
 
@@ -824,7 +882,9 @@ namespace
         out->pilotPresent = SlotTeam(room, slot) == key.team &&
                             *reinterpret_cast<uint32_t*>(pilot) == key.pilotId;
         out->mapMatches = NativeMapMatches(nullptr, key);
-        out->hardDifficulty = roomState->difficulty == battle_ai::Difficulty::Hard;
+        out->hardDifficulty = slot >= 0 &&
+            roomState->acePilotIds[slot] == key.pilotId &&
+            roomState->aceOutcomes[slot].effective == battle_ai::Difficulty::Hard;
         out->alive = *reinterpret_cast<uint32_t*>(SlotUnit(room, slot) + kUnitHp) != 0;
         uint8_t* item = g_itemLookup(g_itemTable, selectedItemId);
         out->modeAllowed = room[kRoomBattleActive] != 0 &&
@@ -913,13 +973,16 @@ namespace
         return true;
     }
 
-    bool RegisterItemPilot(uint8_t* room, int slot, uint32_t pilotId, uint8_t team)
+    bool RegisterItemPilot(uint8_t* room, int slot, uint32_t pilotId, uint8_t team,
+                           const battle_ai::ace::Outcome& outcome)
     {
         uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
         EnterCriticalSection(&g_itemsLock);
         RoomItems* state = FindRoomItems(room, roomIndex);
         bool registered = false;
         if (state && slot >= 0 && slot < kSlots) {
+            state->acePilotIds[slot] = pilotId;
+            state->aceOutcomes[slot] = outcome;
             items::BotKey key{reinterpret_cast<uintptr_t>(room), roomIndex,
                               state->generation, pilotId, team};
             registered = g_itemController.BeginMatch(key, g_itemOps);
@@ -932,6 +995,95 @@ namespace
         return registered;
     }
 
+    bool CanTrackAceOutcome(uint8_t* room)
+    {
+        if (!room) return false;
+        const uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
+        EnterCriticalSection(&g_itemsLock);
+        const bool tracked = FindRoomItems(room, roomIndex) != nullptr;
+        LeaveCriticalSection(&g_itemsLock);
+        return tracked;
+    }
+
+    bool CopyAceOutcome(uint8_t* room, int slot, uint32_t pilotId,
+                        battle_ai::ace::Outcome* outcome)
+    {
+        if (!room || !outcome || slot < 0 || slot >= kSlots) return false;
+        const uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
+        EnterCriticalSection(&g_itemsLock);
+        RoomItems* state = FindRoomItems(room, roomIndex);
+        const bool found = state && state->acePilotIds[slot] == pilotId;
+        if (found) *outcome = state->aceOutcomes[slot];
+        LeaveCriticalSection(&g_itemsLock);
+        return found;
+    }
+
+    bool PlaysDeck(uint8_t mode);
+    uint32_t PilotUnitId(uint8_t* room, int slot);
+
+    uint32_t PilotMachineId(uint8_t* room, int slot)
+    {
+        if (!room || slot < 0 || slot >= kSlots) return 0;
+        uint8_t* pilot = room + kPilots + slot * kPilotStride;
+        uint8_t* unit = pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride;
+        return *reinterpret_cast<uint32_t*>(unit + kUnitMachineId);
+    }
+
+    void ApplyAceStats(uint8_t* room, int slot)
+    {
+        if (!room || slot < 0 || slot >= kSlots) return;
+        const uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
+        const uint32_t pilotId = SlotPilotId(room, slot);
+        battle_ai::ace::Outcome outcome{};
+        bool applied = false;
+
+        EnterCriticalSection(&g_itemsLock);
+        RoomItems* state = FindRoomItems(room, roomIndex);
+        if (state && !state->statsScaled[slot] &&
+            state->acePilotIds[slot] == pilotId) {
+            outcome = state->aceOutcomes[slot];
+            uint8_t* pilot = room + kPilots + slot * kPilotStride;
+            int units = PlaysDeck(room[kRoomMode])
+                ? (std::max)(1, static_cast<int>(pilot[kPilotTagUnits]))
+                : 1;
+            if (units <= kDeckUnits) {
+                bool valid = true;
+                uint32_t maximum[kDeckUnits]{};
+                uint32_t current[kDeckUnits]{};
+                for (int form = 0; form < units; ++form) {
+                    uint8_t* unit = pilot + kPilotUnits + form * kUnitStride;
+                    maximum[form] = *reinterpret_cast<uint32_t*>(unit + kUnitMaxHp);
+                    current[form] = *reinterpret_cast<uint32_t*>(unit + kUnitHp);
+                    if (outcome.ace && outcome.hpPercent != 100 && maximum[form] == 0)
+                        valid = false;
+                }
+                if (valid) {
+                    if (outcome.ace && outcome.hpPercent != 100) {
+                        for (int form = 0; form < units; ++form) {
+                            uint8_t* unit = pilot + kPilotUnits + form * kUnitStride;
+                            *reinterpret_cast<uint32_t*>(unit + kUnitMaxHp) =
+                                battle_ai::ace::Scale(maximum[form], outcome.hpPercent);
+                            *reinterpret_cast<uint32_t*>(unit + kUnitHp) =
+                                battle_ai::ace::Scale(current[form], outcome.hpPercent);
+                        }
+                    }
+                    // Commit the one-shot latch only after every form was validated
+                    // and all requested writes completed under the same room generation lock.
+                    state->statsScaled[slot] = true;
+                    applied = true;
+                }
+            }
+        }
+        LeaveCriticalSection(&g_itemsLock);
+
+        if (!applied || !outcome.ace) return;
+        g_api->Log(g_mod, SDGO_LOG_INFO,
+                   "slot %d: Ace pilot %08lX effective difficulty %d, HP %d%%, ordinary attack %d%%",
+                   slot, static_cast<unsigned long>(pilotId),
+                   static_cast<int>(outcome.effective), outcome.hpPercent,
+                   outcome.attackPercent);
+    }
+
     void EndRoomItems(uint8_t* room)
     {
         uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
@@ -942,7 +1094,8 @@ namespace
     }
 
     // Same steps as the AI battle mode (0x004B79D0) for an AI slot, with the given team.
-    bool AddAiPilot(uint8_t* room, int slot, uint32_t npcData, uint8_t team, uint8_t colour)
+    bool AddAiPilot(uint8_t* room, int slot, uint32_t npcData, uint8_t team,
+                    uint8_t colour, bool aceCatalogEligible = true)
     {
         uint8_t* pilot = room + kPilots + slot * kPilotStride;
         uint8_t* info = room + kSlotInfo + slot * kSlotInfoStride;
@@ -954,7 +1107,26 @@ namespace
             memset(pilot, 0, kPilotStride);
             return false;
         }
-        uint32_t id = *reinterpret_cast<uint32_t*>(pilot);
+        const uint32_t nativeId = *reinterpret_cast<uint32_t*>(pilot);
+        const auto baseDifficulty = ParseTitle(ViewRoom(room).title).difficulty;
+        battle_ai::ace::Outcome aceOutcome{};
+        aceOutcome.base = baseDifficulty;
+        aceOutcome.effective = baseDifficulty;
+        if (aceCatalogEligible && CanTrackAceOutcome(room) &&
+            AceUnitEligible(PilotMachineId(room, slot)))
+            aceOutcome = battle_ai::ace::Select(
+                g_aceSettings, baseDifficulty, NextRandom());
+        uint32_t id = nativeId;
+        if (!battle_ai::ace::EncodePilotId(nativeId, aceOutcome, &id)) {
+            g_api->Log(g_mod, SDGO_LOG_WARN,
+                       "slot %d: native AI pilot identity %08lX overlaps Ace metadata; Ace disabled for this pilot",
+                       slot, static_cast<unsigned long>(nativeId));
+            aceOutcome = battle_ai::ace::Outcome{};
+            aceOutcome.base = baseDifficulty;
+            aceOutcome.effective = baseDifficulty;
+            id = nativeId;
+        }
+        *reinterpret_cast<uint32_t*>(pilot) = id;
         SlotPilotId(room, slot) = id;
         info[kSlotInfoState] = 0x1E;
 
@@ -965,8 +1137,9 @@ namespace
         // Native AI identity normally starts full, while the player setup
         // starts at zero. Medium/Hard earn SP through the same native damage
         // rewards; respawn deliberately does not reset this match resource.
-        auto resourceProfile=ParseTitle(ViewRoom(room).title).difficulty;
-        *reinterpret_cast<uint32_t*>(pilot + 0x05) = resourceProfile==battle_ai::Difficulty::Easy?30000:0;
+        const auto resourceProfile = aceOutcome.effective;
+        *reinterpret_cast<uint32_t*>(pilot + 0x05) =
+            resourceProfile == battle_ai::Difficulty::Easy ? 30000 : 0;
         info[kSlotInfoTeamA] = team;
         info[kSlotInfoColour] = colour;
         *reinterpret_cast<uint16_t*>(pilot + kPilotPower) = 1000;
@@ -993,9 +1166,11 @@ namespace
             return false;
         }
         ApplyPlayerLifeCost(room, pilot, unit);
+        const bool itemRegistered = RegisterItemPilot(
+            room, slot, id, team, aceOutcome);
         if (room[kRoomMode] == 6 || room[kRoomMode] == 7)
             *reinterpret_cast<uint8_t**>(pilot + kPilotUserRecord) = g_aiUserRecord;
-        if (!RegisterItemPilot(room, slot, id, team))
+        if (!itemRegistered)
             g_api->Log(g_mod, SDGO_LOG_WARN,
                        "slot %d: AI pilot %08lX was not registered in the native pilot-room map; Hard items are disabled",
                        slot, static_cast<unsigned long>(id));
@@ -1244,28 +1419,45 @@ namespace
     {
         return mode == 6 || mode == 7;
     }
-    constexpr int kDeckUnits = 4;
 
     // Builds the unit of AI NPC `npc` in a scratch pilot and copies it to `unitOut` (when set);
     // returns its points, 0 when the NPC has no unit.
-    uint8_t BuildNpcUnit(uint8_t* room, uint32_t npc, uint8_t* unitOut)
+    uint8_t BuildNpcUnit(uint8_t* room, uint32_t npc, uint8_t* unitOut,
+                         uint32_t* unitIdOut = nullptr)
     {
         std::vector<uint8_t> scratch(kPilotStride);
         uint8_t* unit = scratch.data() + kPilotUnits;
-        if (!BuildAiPilotWithLoadout(room, scratch.data(), unit, npc))
+        if (!BuildAiPilotWithLoadout(room, scratch.data(), unit, npc)) {
+            if (unitIdOut) *unitIdOut = 0;
             return 0;
+        }
         if (unitOut)
             memcpy(unitOut, unit, kUnitStride);
+        if (unitIdOut)
+            *unitIdOut = *reinterpret_cast<uint32_t*>(unit + kUnitMachineId);
         return unit[kUnitPoints];
     }
 
     // The points of each pool NPC's unit (0: none), built once per battle start.
-    std::vector<uint8_t> PoolPoints(uint8_t* room, const std::vector<uint32_t>& pool)
+    // For deck modes the same pass also proves that every usable candidate has
+    // a server-locked pilot entry. One missing candidate disables Ace metadata
+    // for the room rather than letting a later deck form lose its pilot name.
+    std::vector<uint8_t> PoolPoints(uint8_t* room,
+                                    const std::vector<uint32_t>& pool,
+                                    bool* aceCatalogComplete = nullptr)
     {
         std::vector<uint8_t> points;
         points.reserve(pool.size());
-        for (uint32_t npc : pool)
-            points.push_back(BuildNpcUnit(room, npc, nullptr));
+        bool complete = true;
+        for (uint32_t npc : pool) {
+            uint32_t unitId = 0;
+            const uint8_t point =
+                BuildNpcUnit(room, npc, nullptr, &unitId);
+            points.push_back(point);
+            if (point != 0 && (!unitId || !AceUnitEligible(unitId)))
+                complete = false;
+        }
+        if (aceCatalogComplete) *aceCatalogComplete = complete;
         return points;
     }
 
@@ -1329,8 +1521,10 @@ namespace
         g_api->Log(g_mod, SDGO_LOG_INFO, "slot %d: deck %s = %d points, %d units", slot, deck, points, units);
     }
 
-    int AddTeam(uint8_t* room, uint8_t team, int wanted, const std::vector<uint32_t>& pool,
-                const std::vector<uint8_t>& poolPoints)
+    int AddTeam(uint8_t* room, uint8_t team, int wanted,
+                const std::vector<uint32_t>& pool,
+                const std::vector<uint8_t>& poolPoints,
+                bool deckAceCatalogComplete = true)
     {
         std::vector<uint32_t> deckCandidates;
         const std::vector<uint32_t>* choices = &pool;
@@ -1358,9 +1552,12 @@ namespace
                     break;
                 pick = (*choices)[NextRandom() % choices->size()];
             }
-            if (AddAiPilot(room, slot, pick, team, colour)) {
+            if (AddAiPilot(room, slot, pick, team, colour,
+                           !PlaysDeck(room[kRoomMode]) ||
+                               deckAceCatalogComplete)) {
                 if (PlaysDeck(room[kRoomMode]))
                     BuildDeck(room, slot, pick, pool, poolPoints);
+                ApplyAceStats(room, slot);
                 ++added;
             }
         }
@@ -1481,10 +1678,17 @@ namespace
                        static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(room + kRoomIndex)));
 
         std::vector<uint8_t> poolPoints;
+        bool deckAceCatalogComplete = true;
         if (PlaysDeck(room[kRoomMode]))
-            poolPoints = PoolPoints(room, pool);
-        int addedAllies = allies > 0 ? AddTeam(room, allyTeam, allies, pool, poolPoints) : 0;
-        int addedEnemies = enemies > 0 ? AddTeam(room, enemyTeam, enemies, pool, poolPoints) : 0;
+            poolPoints = PoolPoints(room, pool, &deckAceCatalogComplete);
+        int addedAllies = allies > 0
+            ? AddTeam(room, allyTeam, allies, pool, poolPoints,
+                      deckAceCatalogComplete)
+            : 0;
+        int addedEnemies = enemies > 0
+            ? AddTeam(room, enemyTeam, enemies, pool, poolPoints,
+                      deckAceCatalogComplete)
+            : 0;
         const char* difficulty =
             plan.difficulty == battle_ai::Difficulty::Hard ? "Hard"
             : plan.difficulty == battle_ai::Difficulty::Easy ? "Easy"
@@ -1776,9 +1980,9 @@ namespace
         uint32_t roomIndex = *reinterpret_cast<uint32_t*>(room + kRoomIndex);
         RoomItems* state = FindRoomItems(room, roomIndex);
         bool queued = false;
-        if (state && state->difficulty == battle_ai::Difficulty::Hard &&
-            targetSlot >= 0 && targetSlot < kSlots &&
-            state->botActive[targetSlot]) {
+        if (state && targetSlot >= 0 && targetSlot < kSlots &&
+            state->botActive[targetSlot] &&
+            state->aceOutcomes[targetSlot].effective == battle_ai::Difficulty::Hard) {
             const items::BotKey& key = state->bots[targetSlot];
             LONG sequence = InterlockedIncrement(&g_damageReceipt);
             if (sequence == 0)
@@ -1819,6 +2023,26 @@ namespace
                 hpBefore = *reinterpret_cast<uint32_t*>(targetUnit + kUnitHp);
             }
         }
+        if (room && (room[kRoomMode] == 5 || room[kRoomMode] == 8 ||
+                     room[kRoomMode] == 10)) {
+            if (const auto* mission = MissionServerLifecycleV2()) {
+                __try {
+                    proposedDamage = mission->accepted_damage(
+                        room, attackerSlot, attackerPilot, proposedDamage,
+                        attackType);
+                } __except (EXCEPTION_EXECUTE_HANDLER) {
+                }
+            }
+        }
+        if (room && attackerPilot && attackType == 0) {
+            const uint32_t attackerId = *reinterpret_cast<uint32_t*>(attackerPilot);
+            const int aceSlot = FindPilotSlot(room, attackerId);
+            battle_ai::ace::Outcome outcome{};
+            int percent = 100;
+            if (CopyAceOutcome(room, aceSlot, attackerId, &outcome) && outcome.ace)
+                percent = outcome.attackPercent;
+            proposedDamage = battle_ai::ace::Scale(proposedDamage, percent);
+        }
         uint32_t result =
             g_damage(room, now, attackerSlot, attackerPilot, weapon, targetState,
                      targetPilotId, proposedDamage, stun, calculationFlag,
@@ -1845,12 +2069,12 @@ namespace
         int count = 0;
         EnterCriticalSection(&g_itemsLock);
         for (const RoomItems& state : g_itemRooms) {
-            if (!state.active ||
-                state.difficulty != battle_ai::Difficulty::Hard)
+            if (!state.active)
                 continue;
             bool hasBot = false;
-            for (bool active : state.botActive)
-                hasBot = hasBot || active;
+            for (int slot = 0; slot < kSlots; ++slot)
+                hasBot = hasBot || (state.botActive[slot] &&
+                    state.aceOutcomes[slot].effective == battle_ai::Difficulty::Hard);
             if (hasBot)
                 targets[count++] =
                     {state.room, state.roomIndex, state.generation};
@@ -2161,6 +2385,7 @@ SDGO_MOD_ENTRY
     g_itemOps.equip = &NativeEquip;
     g_itemOps.use = &NativeUse;
     LoadSettings();
+    g_aceSettings = battle_ai::ace::LoadSettings(api, mod);
     LARGE_INTEGER counter = {};
     QueryPerformanceCounter(&counter);
     g_random = static_cast<unsigned>(counter.LowPart ^ GetTickCount() ^ GetCurrentProcessId()) | 1u;

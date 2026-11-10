@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "ace_ai",
+  "title": "王牌驾驶员",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "presentation": "configurable",
+  "description": "显示由服务端为 PvP AI 与任务友方僚机选定的王牌驾驶员身份；敌方任务 NPC 不参与。公开基础驾驶员表随框架发布，服主自定义机体的驾驶员覆盖表由普通内容更新提供。",
+  "mechanism": "服务端决定王牌结果，客户端不独立抽取概率、难度或属性。实际游戏显示名从进入战斗起由机体名替换为驾驶员名，并在死亡、复活和换机后继续恢复。PvP 与任务提示只显示固定文字，不附带姓名、机体、数量或难度。",
+  "configuration_files": [
+    "owner-pilots.json"
+  ],
+  "dependencies": {
+    "required": [
+      {
+        "id": "match_ai",
+        "minimum": "0.1.17"
+      },
+      {
+        "id": "battle_ai",
+        "minimum": "0.4.15"
+      }
+    ]
+  },
+  "provides": {
+    "ace.ai.client": 1
+  },
+  "settings": []
+}

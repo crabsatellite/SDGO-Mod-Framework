@@ -16,16 +16,27 @@ std::array<uint8_t, 16> sentinel{}, first{}, second{};
 std::array<uint8_t, 0x40> missionRules{};
 uint8_t* listPointer = nullptr;
 uint32_t npc1 = 100, nextId = 0x80000010u;
+uint32_t extraFormNpcId = 0, extraFormUnitId = 0;
+uint8_t builtForm = 0;
+uint32_t builtMaximum = 15000, builtCurrent = 0;
+std::vector<uint32_t> aceEligibleIds = {10001, 10002};
+std::vector<uint32_t> aceEligibilityInputs;
+int aceEligibilityCalls = 0;
 int added = 0, released = 0, started = 0;
 int respawns = 0, refreshes = 0, stateRespawns = 0;
 uint32_t lifeLimit = 3;
 bool revive = true, throws = false;
+uint32_t respawnMaximum = 0, respawnCurrent = 9000;
 int __fastcall Respawn(uint8_t*, void*, uint32_t now, uint8_t* pilot, uint32_t, uint32_t) {
     ++respawns;
     if (throws) RaiseException(0xE0000001, 0, 0, nullptr);
     if (now < ai_test::Get<uint32_t>(pilot, 0x34)) return 0;
     if (!InfiniteMissionPilot(pilot) && ai_test::Get<uint32_t>(pilot, 0x1A) >= lifeLimit) return 0;
-    if (revive) Put(pilot + kPilotUnits, 0x34, uint32_t{9000});
+    if (revive) {
+        auto* unit = pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride;
+        if (respawnMaximum) Put(unit, kUnitMaxHp, respawnMaximum);
+        Put(unit, kUnitHp, respawnCurrent);
+    }
     return 1;
 }
 void __fastcall Refresh(uint8_t*, void*, int, uint8_t*, int, int) { ++refreshes; }
@@ -35,7 +46,22 @@ void __fastcall Id(uint8_t*, void*, uint32_t) {}
 void __fastcall Room(uint8_t*, void*, uint8_t*) {}
 void __fastcall Mode(uint8_t*, void*, uint8_t, uint8_t) {}
 int __fastcall Build(uint8_t*, void*, uint8_t* pilot, uint8_t* unit, uint32_t npc) {
-    Put(pilot, 0, nextId++); Put(unit, 0, npc); return 1;
+    Put(pilot, 0, nextId++);
+    Put(unit, 0, npc);                         // native NPC id
+    Put(unit, kUnitDataId, uint32_t{10001});   // machine/unit data id
+    Put(unit, kUnitMaxHp, builtMaximum); Put(unit, kUnitHp, builtCurrent);
+    pilot[kPilotForm] = builtForm;
+    if (extraFormNpcId) {
+        auto extra = pilot + kPilotUnits + kUnitStride;
+        Put(extra, 0, extraFormNpcId);
+        Put(extra, kUnitDataId, extraFormUnitId);
+        Put(extra, kUnitMaxHp, builtMaximum); Put(extra, kUnitHp, builtCurrent);
+    }
+    return 1;
+}
+int __cdecl AceEligible(uint32_t unitId) {
+    ++aceEligibilityCalls; aceEligibilityInputs.push_back(unitId);
+    return std::find(aceEligibleIds.begin(), aceEligibleIds.end(), unitId) != aceEligibleIds.end() ? 1 : 0;
 }
 int __fastcall Setup(void*, void*, uint8_t*, uint8_t*, uint8_t, uint8_t) { ++added; return 1; }
 int __fastcall Map(void*, void*, const uint32_t*, int* index) { *index = 1; return 1; }
@@ -45,6 +71,12 @@ void __fastcall Start(void*, void*, uint8_t*, uint32_t, int, uint32_t, uint32_t)
 void Reset() {
     std::fill(room.begin(), room.end(), uint8_t{}); std::fill(lobby.begin(), lobby.end(), uint8_t{});
     g_settings = Settings{}; g_settings.levels[2] = {100, 101}; g_random = 123;
+    nextId = 0x80000010u;
+    g_aceSettings = battle_ai::ace::Settings{}; g_aceSettings.enabled = false;
+    g_reloadAceSettingsAtBattleEntry = false;
+    g_aceServerModule = nullptr; g_aceUnitEligible = &AceEligible;
+    aceEligibleIds = {10001, 10002}; aceEligibilityInputs.clear(); aceEligibilityCalls = 0;
+    extraFormNpcId = extraFormUnitId = 0; builtForm = 0; builtMaximum = 15000; builtCurrent = 0;
     g_api = &ai_test::api; ai_test::api.SettingInt = &Setting; ai_test::api.SettingString = &StringSetting;
     g_buildAiPilot = reinterpret_cast<BuildAiPilotFn>(&Build); g_setupAiPilot = reinterpret_cast<SetupAiPilotFn>(&Setup);
     g_pilotReset = reinterpret_cast<PilotResetFn>(&Part); g_pilotStateId = reinterpret_cast<PilotStateIdFn>(&Id);
@@ -62,6 +94,7 @@ void Reset() {
     g_respawnRefresh = reinterpret_cast<RespawnRefreshFn>(&Refresh);
     g_pilotStateRespawn = reinterpret_cast<PilotStateRespawnFn>(&StateRespawn);
     respawns = refreshes = stateRespawns = 0; lifeLimit = 3; revive = true; throws = false;
+    respawnMaximum = 0; respawnCurrent = 9000;
 }
 }
 
@@ -213,6 +246,120 @@ int main() {
     g_lives[room.data()].infinite=true;
     CHECK(HumanMissionState(room.data())==0 && CheckMissionDefeatGate(room.data())==0x31);
     CHECK(ai_test::Get<uint32_t>(room.data()+kPilots+kPilotStride+kPilotUnits,0x34)==9000);
+
+    SCENARIO("mission Ace selection is friendly-only, directory-gated and stable across duplicate start");
+    Reset(); const char* one = "!ai1 hard"; lobby[kLobbyTitleLength] = 9;
+    std::memcpy(lobby.data() + kLobbyTitle, one, 9);
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2] = {100, battle_ai::Difficulty::Hard, 120, 150};
+    builtCurrent = 10000;
+    StartNotify(nullptr, nullptr, room.data(), 0, 0, 0, 0);
+    auto acePilot = room.data() + kPilots + kPilotStride;
+    const uint32_t aceId = SlotPilotId(room.data(), 1);
+    CHECK((aceId & (battle_ai::ace::kAiPilotBit | battle_ai::ace::kAcePilotBit)) ==
+          (battle_ai::ace::kAiPilotBit | battle_ai::ace::kAcePilotBit));
+    CHECK(g_lives[room.data()].ace[1].outcome.ace);
+    CHECK(ai_test::Get<uint32_t>(acePilot + kPilotUnits, kUnitMaxHp) == 18000);
+    CHECK(ai_test::Get<uint32_t>(acePilot + kPilotUnits, kUnitHp) == 12000);
+    CHECK(MissionAcceptedDamage(room.data(), 1, acePilot, 200, 0) == 300);
+    CHECK(MissionAcceptedDamage(room.data(), 1, acePilot, 200, 1) == 200);
+    CHECK(MissionAcceptedDamage(room.data(), 0, room.data() + kPilots, 200, 0) == 200);
+    auto copiedPilot = std::vector<uint8_t>(acePilot, acePilot + kPilotStride);
+    CHECK(MissionAcceptedDamage(room.data(), 1, copiedPilot.data(), 200, 0) == 200);
+    acePilot[0x04] = 2;
+    CHECK(MissionAcceptedDamage(room.data(), 1, acePilot, 200, 0) == 200);
+    acePilot[0x04] = kHumanTeam;
+    const unsigned randomAfterFirst = g_random;
+    StartNotify(nullptr, nullptr, room.data(), 0, 0, 0, 0);
+    CHECK(SlotPilotId(room.data(), 1) == aceId);
+    CHECK(g_random == randomAfterFirst);
+    CHECK(added == 1);
+
+    SCENARIO("zero chance and any missing nonempty form fail closed to ordinary identity");
+    Reset(); lobby[kLobbyTitleLength] = 9; std::memcpy(lobby.data() + kLobbyTitle, one, 9);
+    g_aceSettings.enabled = true; g_aceSettings.byDifficulty[2].chancePercent = 0;
+    AddWingmen(room.data());
+    CHECK((SlotPilotId(room.data(), 1) & battle_ai::ace::kAcePilotBit) == 0);
+    Reset(); lobby[kLobbyTitleLength] = 9; std::memcpy(lobby.data() + kLobbyTitle, one, 9);
+    g_aceSettings.enabled = true; g_aceSettings.byDifficulty[2].chancePercent = 100;
+    extraFormNpcId = 101; extraFormUnitId = 999; AddWingmen(room.data());
+    CHECK((SlotPilotId(room.data(), 1) & battle_ai::ace::kAcePilotBit) == 0);
+    CHECK(aceEligibilityCalls == 2);
+    CHECK(aceEligibilityInputs == (std::vector<uint32_t>{10001, 999}));
+    Reset(); lobby[kLobbyTitleLength] = 9; std::memcpy(lobby.data() + kLobbyTitle, one, 9);
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2] = {100, battle_ai::Difficulty::Hard, 120, 100};
+    extraFormNpcId = 101; extraFormUnitId = 10002; builtForm = 1; builtCurrent = 10000;
+    AddWingmen(room.data());
+    auto selectedPilot = room.data() + kPilots + kPilotStride;
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits, kUnitMaxHp) == 15000);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits, kUnitHp) == 10000);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits + kUnitStride, kUnitMaxHp) == 18000);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits + kUnitStride, kUnitHp) == 12000);
+    selectedPilot[kPilotForm] = 0;
+    Put(selectedPilot + kPilotUnits, kUnitHp, uint32_t{0});
+    respawnMaximum = 15000; respawnCurrent = 9000;
+    MissionRespawnTick(room.data(), 100);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits, kUnitMaxHp) == 18000);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits, kUnitHp) == 10800);
+
+    SCENARIO("deck form0 to form1 to form0 applies Ace HP once per form without compounding");
+    Reset(); lobby[kLobbyTitleLength] = 9; std::memcpy(lobby.data() + kLobbyTitle, one, 9);
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2] = {100, battle_ai::Difficulty::Hard, 120, 100};
+    extraFormNpcId = 101; extraFormUnitId = 10002; builtForm = 0; builtCurrent = 10000;
+    AddWingmen(room.data()); selectedPilot = room.data() + kPilots + kPilotStride;
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits, kUnitMaxHp) == 18000);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits + kUnitStride, kUnitMaxHp) == 15000);
+    selectedPilot[kPilotForm] = 1;
+    Put(selectedPilot + kPilotUnits + kUnitStride, kUnitHp, uint32_t{0});
+    respawnMaximum = 15000; respawnCurrent = 9000;
+    MissionRespawnTick(room.data(), 100);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits + kUnitStride, kUnitMaxHp) == 18000);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits + kUnitStride, kUnitHp) == 10800);
+    selectedPilot[kPilotForm] = 0;
+    Put(selectedPilot + kPilotUnits, kUnitHp, uint32_t{0});
+    respawnMaximum = 18000; respawnCurrent = 17000;
+    MissionRespawnTick(room.data(), 101);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits, kUnitMaxHp) == 18000);
+    CHECK(ai_test::Get<uint32_t>(selectedPilot + kPilotUnits, kUnitHp) == 17000);
+    Reset(); lobby[kLobbyTitleLength] = 9; std::memcpy(lobby.data() + kLobbyTitle, one, 9);
+    g_aceSettings.enabled = true; g_aceSettings.byDifficulty[2].chancePercent = 100;
+    g_aceUnitEligible = nullptr; AddWingmen(room.data());
+    CHECK(SlotPilotId(room.data(), 1) == 0x80000010u);
+
+    SCENARIO("exact native respawn keeps Ace identity and scales only an original HP seed");
+    Reset(); lobby[kLobbyTitleLength] = 9; std::memcpy(lobby.data() + kLobbyTitle, one, 9);
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2] = {100, battle_ai::Difficulty::Hard, 120, 150};
+    builtCurrent = 10000;
+    AddWingmen(room.data()); acePilot = room.data() + kPilots + kPilotStride;
+    const uint32_t stableAce = SlotPilotId(room.data(), 1);
+    Put(acePilot + kPilotUnits, kUnitHp, uint32_t{0});
+    respawnMaximum = 15000; respawnCurrent = 9000;
+    MissionRespawnTick(room.data(), 100);
+    CHECK(SlotPilotId(room.data(), 1) == stableAce);
+    CHECK(ai_test::Get<uint32_t>(acePilot + kPilotUnits, kUnitMaxHp) == 18000);
+    CHECK(ai_test::Get<uint32_t>(acePilot + kPilotUnits, kUnitHp) == 10800);
+    Put(acePilot + kPilotUnits, kUnitHp, uint32_t{0});
+    respawnMaximum = 18000; respawnCurrent = 17000;
+    MissionRespawnTick(room.data(), 101);
+    CHECK(ai_test::Get<uint32_t>(acePilot + kPilotUnits, kUnitMaxHp) == 18000);
+    CHECK(ai_test::Get<uint32_t>(acePilot + kPilotUnits, kUnitHp) == 17000);
+    Put(acePilot + kPilotUnits, kUnitHp, uint32_t{0});
+    respawnMaximum = 16000; respawnCurrent = 9000;
+    MissionRespawnTick(room.data(), 102);
+    CHECK(ai_test::Get<uint32_t>(acePilot + kPilotUnits, kUnitMaxHp) == 16000);
+    CHECK(ai_test::Get<uint32_t>(acePilot + kPilotUnits, kUnitHp) == 9000);
+
+    SCENARIO("mission end permits a fresh battle roll and slot generation without touching humans");
+    const uint32_t priorGeneration = g_lives[room.data()].generation;
+    MissionEnded(room.data());
+    CHECK(SlotPilotId(room.data(), 0) == 7 && SlotPilotId(room.data(), 1) == 0);
+    AddWingmen(room.data());
+    CHECK(g_lives[room.data()].generation != 0 &&
+          g_lives[room.data()].generation != priorGeneration);
+
     DeleteCriticalSection(reinterpret_cast<CRITICAL_SECTION*>(lobbyProc.data() + kLobbyMapLock));
     DeleteCriticalSection(reinterpret_cast<CRITICAL_SECTION*>(npcList.data() + 0x18));
     return ai_test::Finish();

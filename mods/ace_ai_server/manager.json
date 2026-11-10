@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "ace_ai_server",
+  "title": "王牌驾驶员 · 服务端",
+  "category": "gameplay",
+  "hosts": [
+    "battle"
+  ],
+  "presentation": "configurable",
+  "description": "按 Easy、Normal（配置名 Medium）、Hard 的基础难度分别设置王牌概率、实际 AI 难度、生命和普通攻击。作用于 PvP AI 与任务友方僚机，不作用于敌方任务 NPC。",
+  "mechanism": "服务端为每名符合条件的 AI 在每次开局只决定一次王牌结果，并把同一结果写入原生战斗身份；客户端不能独立重抽概率或修改属性。0% 关闭对应基础难度。默认 Easy 升至 Normal，Normal 升至 Hard，Hard 保持 Hard 并使用 120% 生命；普通攻击外的伤害沿用原规则。修改后需要重启 BattleServer。",
+  "configuration_files": [
+    "config.ini",
+    "owner-pilots.json"
+  ],
+  "dependencies": {
+    "required": [
+      {
+        "id": "pvp_ai",
+        "minimum": "0.3.4"
+      }
+    ]
+  },
+  "provides": {
+    "ace.ai.server": 1
+  },
+  "settings": [
+    {
+      "id": "ace_chance_easy",
+      "key": "AceChanceEasy",
+      "label": "Easy：王牌概率（百分比，0%=关闭）",
+      "type": "integer",
+      "default": 5,
+      "minimum": 0,
+      "maximum": 100,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_difficulty_easy",
+      "key": "AceDifficultyEasy",
+      "label": "Easy：王牌实际 AI 难度",
+      "description": "Same 表示保持基础难度；Normal 与 Medium 同义，Manager 使用 Medium。",
+      "type": "choice",
+      "default": "Medium",
+      "options": [
+        "Easy",
+        "Medium",
+        "Hard",
+        "Same"
+      ],
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_hp_easy",
+      "key": "AceHpPercentEasy",
+      "label": "Easy：王牌生命（百分比，100%=1倍）",
+      "type": "integer",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 1000,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_attack_easy",
+      "key": "AceAttackPercentEasy",
+      "label": "Easy：王牌普通攻击（百分比，100%=1倍）",
+      "description": "只调整普通武器伤害；必杀沿用原规则，不获得王牌专属伤害倍率。",
+      "type": "integer",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 1000,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_chance_medium",
+      "key": "AceChanceMedium",
+      "label": "Normal（Medium）：王牌概率（百分比，0%=关闭）",
+      "type": "integer",
+      "default": 5,
+      "minimum": 0,
+      "maximum": 100,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_difficulty_medium",
+      "key": "AceDifficultyMedium",
+      "label": "Normal（Medium）：王牌实际 AI 难度",
+      "description": "Same 表示保持基础难度；Normal 与 Medium 同义，Manager 使用 Medium。",
+      "type": "choice",
+      "default": "Hard",
+      "options": [
+        "Easy",
+        "Medium",
+        "Hard",
+        "Same"
+      ],
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_hp_medium",
+      "key": "AceHpPercentMedium",
+      "label": "Normal（Medium）：王牌生命（百分比，100%=1倍）",
+      "type": "integer",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 1000,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_attack_medium",
+      "key": "AceAttackPercentMedium",
+      "label": "Normal（Medium）：王牌普通攻击（百分比，100%=1倍）",
+      "description": "只调整普通武器伤害；必杀沿用原规则，不获得王牌专属伤害倍率。",
+      "type": "integer",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 1000,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_chance_hard",
+      "key": "AceChanceHard",
+      "label": "Hard：王牌概率（百分比，0%=关闭）",
+      "type": "integer",
+      "default": 5,
+      "minimum": 0,
+      "maximum": 100,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_difficulty_hard",
+      "key": "AceDifficultyHard",
+      "label": "Hard：王牌实际 AI 难度",
+      "description": "Same 表示保持基础难度；Normal 与 Medium 同义，Manager 使用 Medium。",
+      "type": "choice",
+      "default": "Hard",
+      "options": [
+        "Easy",
+        "Medium",
+        "Hard",
+        "Same"
+      ],
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_hp_hard",
+      "key": "AceHpPercentHard",
+      "label": "Hard：王牌生命（百分比，100%=1倍）",
+      "type": "integer",
+      "default": 120,
+      "minimum": 1,
+      "maximum": 1000,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "ace_attack_hard",
+      "key": "AceAttackPercentHard",
+      "label": "Hard：王牌普通攻击（百分比，100%=1倍）",
+      "description": "只调整普通武器伤害；必杀沿用原规则，不获得王牌专属伤害倍率。",
+      "type": "integer",
+      "default": 100,
+      "minimum": 1,
+      "maximum": 1000,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ]
+}
