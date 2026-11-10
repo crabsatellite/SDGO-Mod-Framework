@@ -150,6 +150,7 @@ IGNORED_DIRECTORIES = {
 IGNORED_SUFFIXES = {".bak", ".dmp", ".log", ".tmp"}
 IMMUTABLE_ROOT_SUFFIXES = {".dll", ".exe", ".zdx", ".zpk"}
 RUNTIME_OUTPUTS = frozenset({"sdgo/mods/capsule_catalog/runtime-receipt.ini"})
+NATIVE_BATTLE_AI_POLICY_ERROR = "battle_ai: Lua reload rejected; previous policy retained:"
 ALNUM = string.ascii_letters + string.digits
 
 
@@ -4734,6 +4735,11 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
     manager_child_exited = False
     handles = []
     started = utc_now()
+    native_log = Path(metadata["client"]["root"]) / "sdgo/logs/sdgo.log"
+    try:
+        native_log_start = native_log.stat().st_size
+    except OSError:
+        native_log_start = 0
     try:
         receipt_dir.mkdir(exist_ok=True)
         if "fps_cap" not in metadata["plan"]:
@@ -4795,6 +4801,7 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 "status": "running",
                 "timed_out": False,
                 "error": None,
+                "native_log_start": native_log_start,
             }
             if through_manager:
                 metadata['execution']['entry_initial_thread_id']=0
@@ -5130,6 +5137,22 @@ def junit_report(report: dict) -> str:
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
 
+def native_battle_ai_policy_errors(metadata: dict) -> list[str]:
+    execution = metadata.get("execution") or {}
+    if execution.get("status") not in {"completed", "game_exited", "timeout", "cleanup_error"}:
+        return []
+    path = Path(metadata["client"]["root"]) / "sdgo/logs/sdgo.log"
+    try:
+        payload = path.read_bytes()
+    except OSError:
+        return []
+    offset = execution.get("native_log_start", 0)
+    if type(offset) is not int or offset < 0 or offset > len(payload):
+        offset = 0
+    lines = payload[offset:].decode("utf-8", errors="replace").splitlines()
+    return [line for line in lines if NATIVE_BATTLE_AI_POLICY_ERROR in line][-16:]
+
+
 def build_report(run_dir: Path) -> dict:
     run_dir = run_dir.resolve()
     metadata = validate_metadata(run_dir)
@@ -5210,6 +5233,16 @@ def build_report(run_dir: Path) -> dict:
         Path(metadata["client"]["game"]),
         required_cases,
     )
+    policy_errors = native_battle_ai_policy_errors(metadata)
+    if policy_errors:
+        native["battle_ai_policy_reload"] = {
+            "count": len(policy_errors),
+            "messages": policy_errors,
+        }
+        native["errors"].append(
+            f"battle_ai rejected {len(policy_errors)} native Lua policy reload(s)"
+        )
+        native["status"] = "fail"
     if 'play_unit_uid' in metadata['plan']:
         native['requested_play_unit_uid'] = metadata['plan']['play_unit_uid']
     if 'mission_mode' in metadata['plan']:

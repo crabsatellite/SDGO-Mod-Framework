@@ -1937,6 +1937,40 @@ state=pending_first_login
             [case.get("name") for case in suite.findall("testcase")],
         )
 
+    def test_native_battle_ai_policy_reload_error_fails_receipt(self):
+        run_dir = self.prepare("battle-ai-policy-reload-error")
+        self.set_execution(run_dir)
+        self.write_events(run_dir, game_test.FLOW_CASES, include_end=True)
+        log = run_dir / "client/sdgo/logs/sdgo.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(
+            "[error] battle_ai: Lua reload rejected; previous policy retained: too many upvalues\n",
+            encoding="utf-8",
+        )
+
+        report = game_test.build_report(run_dir)
+        native = report["layers"]["native"]
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(native["status"], "fail")
+        self.assertEqual(native["battle_ai_policy_reload"]["count"], 1)
+        self.assertIn("rejected 1 native Lua policy reload", " ".join(native["errors"]))
+
+    def test_native_battle_ai_policy_reload_ignores_prelaunch_log_bytes(self):
+        run_dir = self.prepare("battle-ai-prelaunch-log")
+        self.set_execution(run_dir)
+        self.write_events(run_dir, game_test.FLOW_CASES, include_end=True)
+        log = run_dir / "client/sdgo/logs/sdgo.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        stale = "[error] battle_ai: Lua reload rejected; previous policy retained: stale\n"
+        log.write_text(stale + "[info] battle_ai: policies loaded\n", encoding="utf-8")
+        metadata = self.metadata(run_dir)
+        metadata["execution"]["native_log_start"] = len(stale.encode("utf-8"))
+        game_test.atomic_write(run_dir / "run.json", json.dumps(metadata))
+
+        report = game_test.build_report(run_dir)
+        self.assertEqual(report["status"], "pass")
+        self.assertNotIn("battle_ai_policy_reload", report["layers"]["native"])
+
     def test_wrong_pid_image_malformed_and_premature_pass_fail(self):
         scenarios = ("pid", "image", "malformed", "premature")
         for scenario in scenarios:
