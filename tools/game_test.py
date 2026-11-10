@@ -4737,9 +4737,15 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
     started = utc_now()
     native_log = Path(metadata["client"]["root"]) / "sdgo/logs/sdgo.log"
     try:
-        native_log_start = native_log.stat().st_size
+        native_log_stat = native_log.stat()
+        native_log_start = native_log_stat.st_size
+        native_log_identity = {
+            "device": native_log_stat.st_dev,
+            "inode": native_log_stat.st_ino,
+        }
     except OSError:
         native_log_start = 0
+        native_log_identity = None
     try:
         receipt_dir.mkdir(exist_ok=True)
         if "fps_cap" not in metadata["plan"]:
@@ -4802,6 +4808,7 @@ def run_prepared(run_dir: Path, timeout: float = 600.0, launch_timeout: float = 
                 "timed_out": False,
                 "error": None,
                 "native_log_start": native_log_start,
+                "native_log_identity": native_log_identity,
             }
             if through_manager:
                 metadata['execution']['entry_initial_thread_id']=0
@@ -5143,11 +5150,19 @@ def native_battle_ai_policy_errors(metadata: dict) -> list[str]:
         return []
     path = Path(metadata["client"]["root"]) / "sdgo/logs/sdgo.log"
     try:
-        payload = path.read_bytes()
+        with path.open("rb") as stream:
+            current_stat = os.fstat(stream.fileno())
+            payload = stream.read()
     except OSError:
         return []
+    current_identity = {"device": current_stat.st_dev, "inode": current_stat.st_ino}
     offset = execution.get("native_log_start", 0)
-    if type(offset) is not int or offset < 0 or offset > len(payload):
+    if (
+        execution.get("native_log_identity") != current_identity
+        or type(offset) is not int
+        or offset < 0
+        or offset > len(payload)
+    ):
         offset = 0
     lines = payload[offset:].decode("utf-8", errors="replace").splitlines()
     return [line for line in lines if NATIVE_BATTLE_AI_POLICY_ERROR in line][-16:]

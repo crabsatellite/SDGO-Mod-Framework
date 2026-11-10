@@ -1964,12 +1964,46 @@ state=pending_first_login
         stale = "[error] battle_ai: Lua reload rejected; previous policy retained: stale\n"
         log.write_text(stale + "[info] battle_ai: policies loaded\n", encoding="utf-8")
         metadata = self.metadata(run_dir)
+        log_stat = log.stat()
         metadata["execution"]["native_log_start"] = len(stale.encode("utf-8"))
+        metadata["execution"]["native_log_identity"] = {
+            "device": log_stat.st_dev,
+            "inode": log_stat.st_ino,
+        }
         game_test.atomic_write(run_dir / "run.json", json.dumps(metadata))
 
         report = game_test.build_report(run_dir)
         self.assertEqual(report["status"], "pass")
         self.assertNotIn("battle_ai_policy_reload", report["layers"]["native"])
+
+    def test_native_battle_ai_policy_reload_reads_rotated_log_from_start(self):
+        run_dir = self.prepare("battle-ai-rotated-log")
+        self.set_execution(run_dir)
+        self.write_events(run_dir, game_test.FLOW_CASES, include_end=True)
+        log = run_dir / "client/sdgo/logs/sdgo.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        stale = "[info] previous session log bytes that must be skipped\n"
+        log.write_text(stale, encoding="utf-8")
+        old_stat = log.stat()
+        metadata = self.metadata(run_dir)
+        metadata["execution"]["native_log_start"] = len(stale.encode("utf-8"))
+        metadata["execution"]["native_log_identity"] = {
+            "device": old_stat.st_dev,
+            "inode": old_stat.st_ino,
+        }
+        game_test.atomic_write(run_dir / "run.json", json.dumps(metadata))
+
+        log.unlink()
+        rejection = (
+            "[error] battle_ai: Lua reload rejected; previous policy retained: rotated\n"
+        )
+        log.write_text(rejection + ("[info] new session padding\n" * 4), encoding="utf-8")
+        self.assertGreater(log.stat().st_size, len(stale.encode("utf-8")))
+
+        report = game_test.build_report(run_dir)
+        native = report["layers"]["native"]
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(native["battle_ai_policy_reload"]["messages"], [rejection.strip()])
 
     def test_wrong_pid_image_malformed_and_premature_pass_fail(self):
         scenarios = ("pid", "image", "malformed", "premature")
