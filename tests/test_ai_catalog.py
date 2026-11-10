@@ -564,9 +564,17 @@ class AiCatalogTests(unittest.TestCase):
             for name in ("tools", "manager", "backend", "docs", "mods/ime_fix", "third_party/minhook"):
                 (root / name).mkdir(parents=True)
             for name in ("tools/package.ps1", "tools/mod_catalog.py", "tools/distribution_guard.py",
-                         "manager/distribution.py", "README.md", "README.zh-CN.md",
+                         "manager/__init__.py", "manager/configuration.py", "manager/dependencies.py",
+                         "manager/distribution.py", "manager/storage.py", "README.md", "README.zh-CN.md",
                          "mods/ime_fix/mod.ini", "docs/ime-fix.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
                 shutil.copyfile(repo / name, root / name)
+            for readme in ("README.md", "README.zh-CN.md"):
+                rows = [
+                    line for line in (repo / readme).read_text(encoding="utf-8").splitlines()
+                    if "<!-- catalog: `ime_fix` -->" in line
+                ]
+                self.assertEqual(len(rows), 1)
+                (root / readme).write_text(rows[0] + "\n", encoding="utf-8")
             for name in ("install_client.ps1", "install_server.ps1", "install_common.ps1"):
                 (root / "tools" / name).write_text("fixture")
             manifest = installer.ini((repo / "mods/ime_fix/mod.ini").read_bytes())
@@ -588,7 +596,10 @@ class AiCatalogTests(unittest.TestCase):
                     path = stage / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text("fixture")
             stage = root / "build/stage/Release/client/sdgo/mods"
             (stage / "ime_fix").mkdir(parents=True)
-            shutil.copyfile(repo / "mods/ime_fix/mod.ini", stage / "ime_fix/mod.ini")
+            from manager.configuration import render
+            (stage / "ime_fix/mod.ini").write_bytes(render(
+                (repo / "mods/ime_fix/mod.ini").read_bytes(),
+                json.loads((repo / "mods/ime_fix/manager.json").read_text(encoding="utf-8"))))
             for name in payloads:
                 destination = stage / "ime_fix" / name
                 destination.parent.mkdir(parents=True, exist_ok=True)

@@ -1,3 +1,4 @@
+import configparser
 import math
 from pathlib import Path
 import tempfile
@@ -95,13 +96,40 @@ class AceAiManagerContractTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         registry.validate(field, value)
 
-    def test_catalog_contract_keeps_one_public_source_and_no_private_overlay_in_programme(self):
-        self.assertTrue((ROOT / "mods/ace_ai/base-pilots.json").is_file())
-        self.assertFalse((ROOT / "mods/ace_ai_server/base-pilots.json").exists())
+    def test_catalog_contract_keeps_matching_public_inputs_and_no_private_overlay_in_programme(self):
+        client_catalog = ROOT / "mods/ace_ai/base-pilots.json"
+        server_catalog = ROOT / "mods/ace_ai_server/base-pilots.json"
+        self.assertTrue(client_catalog.is_file())
+        self.assertTrue(server_catalog.is_file())
+        self.assertEqual(client_catalog.read_bytes(), server_catalog.read_bytes())
         self.assertIn("owner-pilots.json", self.client["configuration_files"])
         self.assertIn("owner-pilots.json", self.server["configuration_files"])
         self.assertFalse((ROOT / "mods/ace_ai/owner-pilots.json").exists())
         self.assertFalse((ROOT / "mods/ace_ai_server/owner-pilots.json").exists())
+
+    def test_client_owns_the_reviewed_battle_chat_symbol_fragment(self):
+        fragment = configparser.ConfigParser(interpolation=None)
+        fragment.read(ROOT / "mods/ace_ai/symbols.fragment.ini", encoding="utf-8")
+        self.assertEqual(
+            {
+                "host",
+                "dialogue.battle_chat.ctor",
+                "dialogue.battle_chat.dtor",
+                "dialogue.battle_chat.append",
+            },
+            set(fragment.sections()),
+        )
+        self.assertEqual("GOnline.exe", fragment.get("host", "image"))
+        self.assertEqual("0x54BE1568", fragment.get("host", "timestamp"))
+        self.assertEqual("0x00C97000", fragment.get("host", "size_of_image"))
+        for section in (
+            "dialogue.battle_chat.ctor",
+            "dialogue.battle_chat.dtor",
+            "dialogue.battle_chat.append",
+        ):
+            self.assertEqual("code", fragment.get(section, "kind"))
+            self.assertRegex(fragment.get(section, "rva"), r"^0x[0-9A-F]{8}$")
+            self.assertGreaterEqual(len(fragment.get(section, "expect").split()), 20)
 
     def test_client_has_no_authoritative_roll_or_stat_settings(self):
         self.assertEqual([], self.client["settings"])
@@ -126,7 +154,10 @@ class AceAiManagerContractTests(unittest.TestCase):
             ["config.ini", "mod.ini", "owner-pilots.json"],
             configuration.files(server_manifest, self.server),
         )
-        self.assertEqual("base-pilots.json", client_manifest.get("mod", "files"))
+        self.assertEqual(
+            {"base-pilots.json", "symbols.fragment.ini"},
+            {name.strip() for name in client_manifest.get("mod", "files").split(",")},
+        )
         self.assertEqual("owner-pilots.json", client_manifest.get("mod", "config_files"))
         self.assertIn("base-pilots.json", {name.strip() for name in server_manifest.get("mod", "files").split(",")})
         self.assertEqual(

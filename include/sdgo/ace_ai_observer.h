@@ -16,6 +16,8 @@
 #define SDGO_ACE_AI_MISSION_CLIENT_EXPORT "SdgoMissionAiGetAceSnapshotV1"
 #define SDGO_ACE_AI_PVP_SERVER_EXPORT "SdgoPvpAiGetAceSnapshotV1"
 #define SDGO_ACE_AI_MISSION_SERVER_EXPORT "SdgoCoopAiGetAceSnapshotV1"
+#define SDGO_ACE_AI_PVP_SERVER_OBSERVER_EXPORT "SdgoPvpAiRegisterAceObserverV1"
+#define SDGO_ACE_AI_MISSION_SERVER_OBSERVER_EXPORT "SdgoCoopAiRegisterAceObserverV1"
 #define SDGO_ACE_AI_PVP_ANNOUNCEMENT_EXPORT "SdgoAceAiGetAnnouncementSnapshotV1"
 #define SDGO_ACE_AI_MISSION_ANNOUNCEMENT_EXPORT "SdgoMissionAiGetAnnouncementSnapshotV1"
 #define SDGO_ACE_AI_MATCH_PLAYBACK_CONTEXT_EXPORT "SdgoMatchAiGetMissionPlaybackContextV1"
@@ -81,6 +83,10 @@ struct SdgoAceAiMissionClientSnapshotV1 {
     SdgoAceAiClientUnitV1 units[12];
 };
 
+// For the PvP getter, input colour 1 or 2 selects that team's latest
+// successfully appended native feed receipt. Any other input colour selects
+// the latest successful receipt across both teams. The mission getter ignores
+// the input colour because its battle has a single authored announcement.
 struct SdgoAceAiAnnouncementSnapshotV1 {
     uint32_t size;
     uint32_t version;
@@ -113,6 +119,7 @@ struct SdgoAceAiServerUnitV1 {
     uint32_t generation;
     uint32_t current_hp;
     uint32_t max_hp;
+    uint32_t original_max_hp;
     uint32_t hp_percent;
     uint32_t attack_percent;
     int32_t slot;
@@ -154,6 +161,21 @@ struct SdgoAceAiServerSnapshotV1 {
     SdgoAceAiDamageDecisionV1 damage;
 };
 
+// Providers invoke this synchronously on the BattleServer thread after copying
+// a completed setup, damage, or respawn/tick snapshot. The pointer is valid
+// only for the call. Consumers must copy the fixed bytes and return without
+// blocking, dereferencing room state, or calling back into the provider.
+typedef void(__cdecl* SdgoAceAiServerObserverCallbackV1)(
+    const SdgoAceAiServerSnapshotV1* snapshot,
+    void* user);
+
+struct SdgoAceAiServerObserverSinkV1 {
+    uint32_t size;
+    uint32_t version;
+    SdgoAceAiServerObserverCallbackV1 callback;
+    void* user;
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(void*) == 4, "the Ace observer ABI is Win32-only");
@@ -163,12 +185,15 @@ static_assert(sizeof(SdgoAceAiPvpClientSnapshotV1) == 3712, "unexpected Ace PvP 
 static_assert(sizeof(SdgoAceAiMissionClientSnapshotV1) == 3748, "unexpected Ace mission client layout");
 static_assert(sizeof(SdgoAceAiAnnouncementSnapshotV1) == 96, "unexpected Ace announcement layout");
 static_assert(sizeof(SdgoAceAiMissionPlaybackContextV1) == 24, "unexpected Ace mission playback context layout");
-static_assert(sizeof(SdgoAceAiServerUnitV1) == 52, "unexpected Ace server unit layout");
+static_assert(sizeof(SdgoAceAiServerUnitV1) == 56, "unexpected Ace server unit layout");
 static_assert(sizeof(SdgoAceAiDamageDecisionV1) == 44, "unexpected Ace damage layout");
-static_assert(sizeof(SdgoAceAiServerSnapshotV1) == 692, "unexpected Ace server layout");
+static_assert(sizeof(SdgoAceAiServerSnapshotV1) == 740, "unexpected Ace server layout");
+static_assert(sizeof(SdgoAceAiServerObserverSinkV1) == 16, "unexpected Ace server observer sink layout");
 
 typedef int(__cdecl* SdgoAceAiGetPvpClientSnapshotV1Fn)(SdgoAceAiPvpClientSnapshotV1*);
 typedef int(__cdecl* SdgoAceAiGetMissionClientSnapshotV1Fn)(SdgoAceAiMissionClientSnapshotV1*);
 typedef int(__cdecl* SdgoAceAiGetAnnouncementSnapshotV1Fn)(SdgoAceAiAnnouncementSnapshotV1*);
 typedef int(__cdecl* SdgoAceAiGetMissionPlaybackContextV1Fn)(SdgoAceAiMissionPlaybackContextV1*);
 typedef int(__cdecl* SdgoAceAiGetServerSnapshotV1Fn)(SdgoAceAiServerSnapshotV1*);
+typedef int(__cdecl* SdgoAceAiRegisterServerObserverV1Fn)(
+    const SdgoAceAiServerObserverSinkV1*);

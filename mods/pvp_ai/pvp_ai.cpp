@@ -764,6 +764,7 @@ namespace
         bool statsScaled[kSlots];
         uint32_t acePilotIds[kSlots];
         battle_ai::ace::Outcome aceOutcomes[kSlots];
+        uint32_t aceOriginalMaxHp[kSlots][kDeckUnits];
         items::BotKey bots[kSlots];
         SdgoAceAiDamageDecisionV1 aceDamage{};
     };
@@ -775,6 +776,9 @@ namespace
     uint32_t g_roomGeneration = 0;
     volatile LONG g_damageReceipt = 0;
     volatile LONG g_aceDamageSequence = 0;
+    PVOID volatile g_aceObserverCallback = nullptr;
+    PVOID volatile g_aceObserverUser = nullptr;
+    volatile LONG g_aceObserverRegistration = 0;
 
     using CompleteMissionAceDamageFn = int(__cdecl*)(
         uint8_t*, uint32_t, uint8_t*, uint32_t, uint32_t, uint32_t,
@@ -1121,6 +1125,7 @@ namespace
                 *reinterpret_cast<uint32_t*>(unit + kUnitHp);
             copied.max_hp =
                 *reinterpret_cast<uint32_t*>(unit + kUnitMaxHp);
+            copied.original_max_hp = tracked.aceOriginalMaxHp[slot][form];
             copied.hp_percent = static_cast<uint32_t>(outcome.hpPercent);
             copied.attack_percent =
                 static_cast<uint32_t>(outcome.attackPercent);
@@ -1148,6 +1153,30 @@ namespace
         return true;
     }
 
+    void EmitAceSnapshot(uint8_t* room)
+    {
+        // A normal server has no sink. In that path do not inspect the room,
+        // construct a snapshot, allocate, or acquire an observation lock.
+        if (InterlockedCompareExchange(&g_aceObserverRegistration, 0, 0) != 2)
+            return;
+        const auto callback = reinterpret_cast<SdgoAceAiServerObserverCallbackV1>(
+            InterlockedCompareExchangePointer(&g_aceObserverCallback, nullptr, nullptr));
+        if (!callback || !room) return;
+        SdgoAceAiServerSnapshotV1 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        snapshot.room_cookie = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room));
+        __try {
+            if (CopyPvpAceSnapshot(&snapshot))
+                callback(&snapshot, InterlockedCompareExchangePointer(
+                    &g_aceObserverUser, nullptr, nullptr));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            // An optional development sink cannot interrupt gameplay or retry
+            // a native damage call that has already returned.
+            InterlockedExchangePointer(&g_aceObserverCallback, nullptr);
+        }
+    }
+
     void RecordPvpAceDamage(
         uint8_t* room, int slot, uint32_t attackerPilotId,
         uint32_t nativePilotId, const battle_ai::ace::Outcome& outcome,
@@ -1158,6 +1187,7 @@ namespace
         const uint32_t roomIndex =
             *reinterpret_cast<uint32_t*>(room + kRoomIndex);
         const uint32_t slotPilotId = SlotPilotId(room, slot);
+        bool published = false;
         EnterCriticalSection(&g_itemsLock);
         RoomItems* const state = FindRoomItems(room, roomIndex);
         if (state && state->acePilotIds[slot] == attackerPilotId &&
@@ -1182,8 +1212,10 @@ namespace
             receipt.ace = outcome.ace ? 1 : 0;
             receipt.policy_matched = 1;
             state->aceDamage = receipt;
+            published = true;
         }
         LeaveCriticalSection(&g_itemsLock);
+        if (published) EmitAceSnapshot(room);
     }
 
     void ApplyAceStats(uint8_t* room, int slot)
@@ -1215,6 +1247,8 @@ namespace
                         valid = false;
                 }
                 if (valid) {
+                    for (int form = 0; form < units; ++form)
+                        state->aceOriginalMaxHp[slot][form] = maximum[form];
                     if (outcome.ace && outcome.hpPercent != 100) {
                         for (int form = 0; form < units; ++form) {
                             uint8_t* unit = pilot + kPilotUnits + form * kUnitStride;
@@ -1945,6 +1979,7 @@ namespace
                 return static_cast<int>(error);
             } else {
                 GuardedObserverEmit(SDGO_PVP_AI_EVENT_SETUP_COMPLETE, room);
+                EmitAceSnapshot(room);
             }
         }
         if(result!=0)restoreHumanTeams();
@@ -2120,6 +2155,7 @@ namespace
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while respawning AI pilots");
         if (room)
             GuardedObserverMarkActive(room);
+        EmitAceSnapshot(room);
         return result;
     }
 
@@ -2475,6 +2511,21 @@ extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiRegisterObserverV1(
     InterlockedExchangePointer(
         &g_observerCallback, reinterpret_cast<PVOID>(sink->callback));
     InterlockedExchange(&g_observerRegistration, 2);
+    return 1;
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiRegisterAceObserverV1(
+    const SdgoAceAiServerObserverSinkV1* sink)
+{
+    if (!sink || sink->size < sizeof(*sink) ||
+        sink->version != SDGO_ACE_AI_OBSERVER_VERSION || !sink->callback)
+        return 0;
+    if (InterlockedCompareExchange(&g_aceObserverRegistration, 1, 0) != 0)
+        return 0;
+    InterlockedExchangePointer(&g_aceObserverUser, sink->user);
+    InterlockedExchangePointer(&g_aceObserverCallback,
+                              reinterpret_cast<PVOID>(sink->callback));
+    InterlockedExchange(&g_aceObserverRegistration, 2);
     return 1;
 }
 

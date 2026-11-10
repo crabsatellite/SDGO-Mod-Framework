@@ -25,8 +25,22 @@ int aceEligibilityCalls = 0;
 int added = 0, released = 0, started = 0;
 int respawns = 0, refreshes = 0, stateRespawns = 0;
 uint32_t proposedDamageSeen = 0, attackTypeSeen = 0;
+int nativeDamageCalls = 0;
 uint32_t lifeLimit = 3;
 bool revive = true, throws = false;
+std::vector<SdgoAceAiServerSnapshotV1> aceObserverEvents;
+int aceObserverUserCookie = 42;
+void __cdecl ObserveAce(const SdgoAceAiServerSnapshotV1* snapshot, void* user) {
+    CHECK(user == &aceObserverUserCookie);
+    const bool unlocked = TryAcquireSRWLockExclusive(&g_livesLock) != 0;
+    CHECK(unlocked);
+    if (unlocked) ReleaseSRWLockExclusive(&g_livesLock);
+    CHECK(snapshot && snapshot->size == sizeof(*snapshot));
+    aceObserverEvents.push_back(*snapshot);
+}
+void __cdecl ThrowAceObserver(const SdgoAceAiServerSnapshotV1*, void*) {
+    RaiseException(0xE0000042, 0, 0, nullptr);
+}
 uint32_t respawnMaximum = 0, respawnCurrent = 9000;
 int __fastcall Respawn(uint8_t*, void*, uint32_t now, uint8_t* pilot, uint32_t, uint32_t) {
     ++respawns;
@@ -73,6 +87,7 @@ uint32_t __fastcall Damage(
     uint8_t*, void*, uint32_t, uint32_t, uint8_t*, uint8_t*, uint32_t,
     uint32_t, uint32_t proposedDamage, uint16_t, uint8_t, uint32_t,
     uint8_t, uint32_t attackType) {
+    ++nativeDamageCalls;
     proposedDamageSeen = proposedDamage;
     attackTypeSeen = attackType;
     return proposedDamage + 7;
@@ -101,12 +116,17 @@ void Reset() {
     g_lives.clear(); g_infinitePilot = nullptr;
     g_pendingAceDamage = {};
     InterlockedExchange(&g_aceDamageSequence, 0);
+    InterlockedExchangePointer(&g_aceObserverCallback, nullptr);
+    InterlockedExchangePointer(&g_aceObserverUser, nullptr);
+    InterlockedExchange(&g_aceObserverRegistration, 0);
+    aceObserverEvents.clear();
     g_respawnPilot = reinterpret_cast<RespawnPilotFn>(&Respawn);
     g_respawnRefresh = reinterpret_cast<RespawnRefreshFn>(&Refresh);
     g_pilotStateRespawn = reinterpret_cast<PilotStateRespawnFn>(&StateRespawn);
     g_damage = reinterpret_cast<DamageFn>(&Damage);
     respawns = refreshes = stateRespawns = 0; lifeLimit = 3; revive = true; throws = false;
     proposedDamageSeen = attackTypeSeen = 0;
+    nativeDamageCalls = 0;
     respawnMaximum = 0; respawnCurrent = 9000;
 }
 }
@@ -496,6 +516,59 @@ int main() {
           missionSnapshot.generation == g_lives[room.data()].generation &&
           missionSnapshot.generation != priorGeneration);
 
+    SCENARIO("mission Ace sink receives setup, native damage completion and respawn outside locks");
+    Reset(); builtCurrent = 15000;
+    EmitAceSnapshot(reinterpret_cast<uint8_t*>(1));
+    SdgoAceAiServerObserverSinkV1 aceSink{
+        sizeof(aceSink), SDGO_ACE_AI_OBSERVER_VERSION, &ObserveAce, &aceObserverUserCookie};
+    CHECK(SdgoCoopAiRegisterAceObserverV1(nullptr) == 0);
+    auto invalidAceSink = aceSink; invalidAceSink.size = 0;
+    CHECK(SdgoCoopAiRegisterAceObserverV1(&invalidAceSink) == 0);
+    invalidAceSink = aceSink; invalidAceSink.version = 0;
+    CHECK(SdgoCoopAiRegisterAceObserverV1(&invalidAceSink) == 0);
+    invalidAceSink = aceSink; invalidAceSink.callback = nullptr;
+    CHECK(SdgoCoopAiRegisterAceObserverV1(&invalidAceSink) == 0);
+    CHECK(SdgoCoopAiRegisterAceObserverV1(&aceSink) == 1);
+    CHECK(SdgoCoopAiRegisterAceObserverV1(&aceSink) == 0);
+    lobby[kLobbyTitleLength] = 9; std::memcpy(lobby.data() + kLobbyTitle, one, 9);
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2] = {100, battle_ai::Difficulty::Hard, 120, 150};
+    StartNotify(nullptr, nullptr, room.data(), 0, 0, 0, 0);
+    CHECK(started == 1 && aceObserverEvents.size() == 1);
+    CHECK(aceObserverEvents.back().unit_count == 1 &&
+          aceObserverEvents.back().units[0].max_hp == 18000 &&
+          aceObserverEvents.back().units[0].original_max_hp == 15000);
+    uint8_t* observedPilot = room.data() + kPilots + kPilotStride;
+    uint8_t observedWeapon[8]{};
+    CHECK(AcceptedDamage(room.data(), nullptr, 200, 1, observedPilot, observedWeapon,
+                         0, 7, 200, 0, 0, 0, 0, 0) == 307);
+    CHECK(aceObserverEvents.size() == 2 &&
+          aceObserverEvents.back().damage.proposed_damage == 200 &&
+          aceObserverEvents.back().damage.adjusted_damage == 300 &&
+          aceObserverEvents.back().damage.native_result == 307 && proposedDamageSeen == 300);
+    CHECK(AcceptedDamage(room.data(), nullptr, 201, 1, observedPilot, observedWeapon,
+                         0, 7, 200, 0, 0, 0, 0, 1) == 207);
+    CHECK(aceObserverEvents.size() == 3 &&
+          aceObserverEvents.back().damage.attack_type == 1 &&
+          aceObserverEvents.back().damage.adjusted_damage == 200);
+    Put(observedPilot + kPilotUnits, kUnitHp, uint32_t{0});
+    const size_t beforeRespawn = aceObserverEvents.size();
+    MissionRespawnTick(room.data(), 300);
+    CHECK(aceObserverEvents.size() == beforeRespawn + 1 &&
+          aceObserverEvents.back().units[0].max_hp == 18000);
+
+    SCENARIO("a faulty mission observer cannot change native damage completion");
+    Reset(); builtCurrent = 15000; AddWingmen(room.data());
+    aceSink.callback = &ThrowAceObserver;
+    CHECK(SdgoCoopAiRegisterAceObserverV1(&aceSink) == 1);
+    observedPilot = room.data() + kPilots + kPilotStride;
+    CHECK(AcceptedDamage(room.data(), nullptr, 400, 1, observedPilot, observedWeapon,
+                         0, 7, 200, 0, 0, 0, 0, 0) == 207);
+    CHECK(InterlockedCompareExchangePointer(&g_aceObserverCallback, nullptr, nullptr) == nullptr);
+    CHECK(nativeDamageCalls == 1);
+    CHECK(AcceptedDamage(room.data(), nullptr, 401, 1, observedPilot, observedWeapon,
+                         0, 7, 201, 0, 0, 0, 0, 0) == 208);
+    CHECK(nativeDamageCalls == 2);
     DeleteCriticalSection(reinterpret_cast<CRITICAL_SECTION*>(lobbyProc.data() + kLobbyMapLock));
     DeleteCriticalSection(reinterpret_cast<CRITICAL_SECTION*>(npcList.data() + 0x18));
     return ai_test::Finish();

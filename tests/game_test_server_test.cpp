@@ -75,9 +75,16 @@ namespace
         g_damageQueueRead = 0;
         g_damageQueueWrite = 0;
         g_damageQueueCount = 0;
+        memset(g_aceQueue, 0, sizeof(g_aceQueue));
+        g_aceQueueRead = 0;
+        g_aceQueueWrite = 0;
+        g_aceQueueCount = 0;
+        memset(g_lastAce, 0, sizeof(g_lastAce));
+        memset(g_haveLastAce, 0, sizeof(g_haveLastAce));
         LeaveCriticalSection(&g_queueLock);
         InterlockedExchange(&g_dropped, 0);
         InterlockedExchange(&g_damageDropped, 0);
+        InterlockedExchange(&g_aceDropped, 0);
         InterlockedExchange(&g_damageSequence, 0);
     }
 
@@ -90,6 +97,8 @@ namespace
         CHECK(offsetof(SdgoPvpAiObserverEventV1, sequence) == 16);
         CHECK(offsetof(SdgoPvpAiObserverEventV1, title) == 60);
         CHECK(offsetof(SdgoPvpAiObserverEventV1, slots) == 84);
+        CHECK(sizeof(SdgoAceAiServerObserverSinkV1) == 16);
+        CHECK(sizeof(SdgoAceAiServerSnapshotV1) == 740);
 
         CHECK(IsUuid("01234567-89ab-cdef-0123-456789abcdef"));
         CHECK(!IsUuid("01234567-89AB-cdef-0123-456789abcdef"));
@@ -491,6 +500,218 @@ namespace
             static_cast<uint8_t*>(base) + offset) = value;
     }
 
+
+    void TestAceSnapshotReceipts()
+    {
+        ResetQueue();
+        ResetConfig("T7x", 9229, 3);
+        strcpy_s(
+            g_config.runId,
+            "01234567-89ab-cdef-0123-456789abcdef");
+        strcpy_s(g_config.suite, "pvp-ai");
+
+        SdgoAceAiServerSnapshotV1 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        snapshot.room_cookie = 0x10203040u;
+        snapshot.mode = 3;
+        snapshot.generation = 17;
+        snapshot.unit_count = 1;
+        snapshot.units[0].pilot_id = 0xC0000123u;
+        snapshot.units[0].native_pilot_id = 0x80000123u;
+        snapshot.units[0].npc_id = 3604001;
+        snapshot.units[0].machine_id = 12345;
+        snapshot.units[0].generation = 17;
+        snapshot.units[0].current_hp = 15000;
+        snapshot.units[0].max_hp = 18000;
+        snapshot.units[0].original_max_hp = 15000;
+        snapshot.units[0].hp_percent = 120;
+        snapshot.units[0].attack_percent = 150;
+        snapshot.units[0].slot = 6;
+        snapshot.units[0].form = 0;
+        snapshot.units[0].base_difficulty = 2;
+        snapshot.units[0].effective_difficulty = 2;
+        snapshot.units[0].ace = 1;
+        snapshot.units[0].team = 2;
+        snapshot.units[0].colour = 2;
+        snapshot.units[0].active = 1;
+        snapshot.damage.sequence = 9;
+        snapshot.damage.room_cookie = snapshot.room_cookie;
+        snapshot.damage.generation = snapshot.generation;
+        snapshot.damage.attacker_pilot_id = snapshot.units[0].pilot_id;
+        snapshot.damage.native_pilot_id = snapshot.units[0].native_pilot_id;
+        snapshot.damage.proposed_damage = 1000;
+        snapshot.damage.adjusted_damage = 1500;
+        snapshot.damage.native_result = 1500;
+        snapshot.damage.attack_percent = 150;
+        snapshot.damage.source = SDGO_ACE_AI_SERVER_PVP;
+        snapshot.damage.ace = 1;
+        snapshot.damage.policy_matched = 1;
+
+        SetLastError(0x11223344u);
+        ObserveAceServerSnapshot(&snapshot, reinterpret_cast<void*>(1));
+        CHECK(GetLastError() == 0x11223344u);
+        CHECK(g_aceQueueCount == 1 && g_aceDropped == 0);
+        ObserveAceServerSnapshot(&snapshot, reinterpret_cast<void*>(1));
+        CHECK(g_aceQueueCount == 1);
+        ++snapshot.units[0].current_hp;
+        ObserveAceServerSnapshot(&snapshot, reinterpret_cast<void*>(1));
+        CHECK(g_aceQueueCount == 2);
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION + 1;
+        ObserveAceServerSnapshot(&snapshot, reinterpret_cast<void*>(1));
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        ObserveAceServerSnapshot(&snapshot, reinterpret_cast<void*>(3));
+        CHECK(g_aceQueueCount == 2);
+        SetLastError(0x55667788u);
+        ObserveAceServerSnapshot(
+            reinterpret_cast<const SdgoAceAiServerSnapshotV1*>(1),
+            reinterpret_cast<void*>(1));
+        CHECK(GetLastError() == 0x55667788u && g_aceDropped == 1);
+
+        AceEvent output[kAceDrainBatch]{};
+        CHECK(DrainAce(output) == 2);
+        CHECK(output[0].scope == 1 &&
+              output[0].snapshot.units[0].original_max_hp == 15000);
+        const std::string json = AceJson(output[0]);
+        CHECK(json.find("\"event\":\"observation\"") != std::string::npos);
+        CHECK(json.find("\"pid\":") != std::string::npos);
+        CHECK(json.find("\"message\":\"ace-v1 {\\\"kind\\\":\\\"server\\\"") !=
+              std::string::npos);
+        CHECK(json.find("\\\"original_max_hp\\\":15000") != std::string::npos);
+        CHECK(json.find("\\\"adjusted_damage\\\":1500") != std::string::npos);
+
+        ResetQueue();
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        for (unsigned i = 0; i < kAceQueueCapacity; ++i) {
+            snapshot.damage.sequence = i + 1;
+            ObserveAceServerSnapshot(&snapshot, reinterpret_cast<void*>(1));
+        }
+        CHECK(g_aceQueueCount == kAceQueueCapacity && g_aceDropped == 0);
+        snapshot.damage.sequence = kAceQueueCapacity + 1;
+        ObserveAceServerSnapshot(&snapshot, reinterpret_cast<void*>(1));
+        CHECK(g_aceQueueCount == kAceQueueCapacity && g_aceDropped == 1);
+    }
+
+    bool EmitAceJson()
+    {
+        ResetConfig("T7x", 9229, 3);
+        strcpy_s(
+            g_config.runId,
+            "01234567-89ab-cdef-0123-456789abcdef");
+        strcpy_s(g_config.suite, "pvp-ai");
+
+        SdgoAceAiClientUnitV1 clientUnit{};
+        clientUnit.pilot_id = 0xC0000123u;
+        clientUnit.native_pilot_id = 0x80000123u;
+        clientUnit.object_id = 44;
+        clientUnit.npc_id = 3604001;
+        clientUnit.machine_id = 12345;
+        clientUnit.generation = 17;
+        clientUnit.current_hp = 15000;
+        clientUnit.max_hp = 18000;
+        clientUnit.slot = 6;
+        clientUnit.form = 1;
+        clientUnit.base_difficulty = 2;
+        clientUnit.effective_difficulty = 3;
+        clientUnit.ace = 1;
+        clientUnit.team = 2;
+        clientUnit.colour = 2;
+        clientUnit.active = 1;
+        clientUnit.name_matches = 1;
+        clientUnit.slot_name_valid = 1;
+        wcscpy_s(clientUnit.expected_name, L"红队 \"Ace\"\\\n");
+        wcscpy_s(clientUnit.slot_name, L"蓝队\t机体");
+
+        SdgoAceAiPvpClientSnapshotV1 pvp{};
+        pvp.size = sizeof(pvp);
+        pvp.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        pvp.battle_sequence = 8;
+        pvp.unit_count = 1;
+        pvp.units[0] = clientUnit;
+
+        SdgoAceAiMissionClientSnapshotV1 mission{};
+        mission.size = sizeof(mission);
+        mission.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        mission.battle_generation = 19;
+        mission.unit_count = 1;
+        mission.playback_sequence = 4;
+        mission.playback_object_id = 44;
+        mission.playback_generation = 19;
+        mission.playback_pilot_id = clientUnit.pilot_id;
+        mission.playback_machine_id = clientUnit.machine_id;
+        mission.playback_slot = clientUnit.slot;
+        mission.playback_colour = clientUnit.colour;
+        mission.playback_native_result = 1;
+        mission.playback_name_refreshed = 1;
+        mission.units[0] = clientUnit;
+
+        SdgoAceAiAnnouncementSnapshotV1 announcement{};
+        announcement.size = sizeof(announcement);
+        announcement.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        announcement.sequence = 5;
+        announcement.source = SDGO_ACE_AI_ANNOUNCEMENT_PVP;
+        announcement.colour = 2;
+        announcement.feed_count_before = 10;
+        announcement.feed_count_after = 11;
+        announcement.successful_count = 2;
+        wcscpy_s(announcement.text, L"蓝队出现了王牌驾驶员！\n");
+
+        AceEvent server{};
+        server.scope = 1;
+        server.snapshot.size = sizeof(server.snapshot);
+        server.snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        server.snapshot.room_cookie = 0x10203040u;
+        server.snapshot.mode = 3;
+        server.snapshot.generation = 17;
+        server.snapshot.unit_count = 1;
+        auto& serverUnit = server.snapshot.units[0];
+        serverUnit.pilot_id = clientUnit.pilot_id;
+        serverUnit.native_pilot_id = clientUnit.native_pilot_id;
+        serverUnit.npc_id = clientUnit.npc_id;
+        serverUnit.machine_id = clientUnit.machine_id;
+        serverUnit.generation = clientUnit.generation;
+        serverUnit.current_hp = clientUnit.current_hp;
+        serverUnit.max_hp = clientUnit.max_hp;
+        serverUnit.original_max_hp = 15000;
+        serverUnit.hp_percent = 120;
+        serverUnit.attack_percent = 150;
+        serverUnit.slot = clientUnit.slot;
+        serverUnit.form = clientUnit.form;
+        serverUnit.base_difficulty = clientUnit.base_difficulty;
+        serverUnit.effective_difficulty = clientUnit.effective_difficulty;
+        serverUnit.ace = clientUnit.ace;
+        serverUnit.team = clientUnit.team;
+        serverUnit.colour = clientUnit.colour;
+        serverUnit.active = clientUnit.active;
+        auto& damage = server.snapshot.damage;
+        damage.sequence = 9;
+        damage.room_cookie = server.snapshot.room_cookie;
+        damage.generation = server.snapshot.generation;
+        damage.attacker_pilot_id = serverUnit.pilot_id;
+        damage.native_pilot_id = serverUnit.native_pilot_id;
+        damage.attack_type = 1;
+        damage.proposed_damage = 1000;
+        damage.adjusted_damage = 1500;
+        damage.native_result = 1500;
+        damage.attack_percent = 150;
+        damage.source = SDGO_ACE_AI_SERVER_PVP;
+        damage.ace = 1;
+        damage.policy_matched = 1;
+
+        const std::string pvpJson = sdgo_game_test_ace::PvpClient(pvp);
+        const std::string missionJson = sdgo_game_test_ace::MissionClient(mission);
+        const std::string announcementJson =
+            sdgo_game_test_ace::Announcement("pvp", announcement);
+        const std::string playbackJson = sdgo_game_test_ace::Playback(mission);
+        const std::string serverJson = AceJson(server);
+        std::puts(pvpJson.c_str());
+        std::puts(missionJson.c_str());
+        std::puts(announcementJson.c_str());
+        std::puts(playbackJson.c_str());
+        std::fputs(serverJson.c_str(), stdout);
+        return std::ferror(stdout) == 0;
+    }
+
     void TestNativeDamageIdentityReceipts()
     {
         ResetConfig("T7x", 9229, 3);
@@ -607,6 +828,8 @@ int main(int argc, char** argv)
         strcmp(argv[1], "--emit-ready-json") == 0) {
         return EmitObserverReadyJson(argv[2]) ? 0 : 2;
     }
+    if (argc == 2 && strcmp(argv[1], "--emit-ace-json") == 0)
+        return EmitAceJson() ? 0 : 2;
     std::puts(
         "OFFLINE ONLY: no BattleServer/client/authentication/room/gameplay is exercised.");
     InitializeCriticalSection(&g_queueLock);
@@ -621,6 +844,7 @@ int main(int argc, char** argv)
     TestLifecycleFailures();
     TestLifecycleDuplicatesAndTerminalOutcomes();
     TestQueueCapacityAndOrder();
+    TestAceSnapshotReceipts();
     TestNativeDamageIdentityReceipts();
 
     DeleteCriticalSection(&g_queueLock);

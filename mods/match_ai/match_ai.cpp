@@ -3034,6 +3034,16 @@ namespace
         }
     }
 
+    void GuardedMissionRespawnComplete(
+        const SdgoMissionClientLifecycleV2* mission, void* unitManager,
+        uint32_t objectId)
+    {
+        __try {
+            mission->respawn_complete(unitManager, objectId);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+
     int __fastcall PlaybackUnit(void* self, void* /*edx*/, uint8_t* packet)
     {
         int result = g_originalPlaybackUnit(self, packet);
@@ -3051,11 +3061,8 @@ namespace
                 g_missionPlaybackContext.native_result =
                     static_cast<uint32_t>(result);
                 g_missionPlaybackContext.active = 1;
-                __try {
-                    mission->respawn_complete(
-                        pending.unitManager, pending.objectId);
-                } __except (EXCEPTION_EXECUTE_HANDLER) {
-                }
+                GuardedMissionRespawnComplete(
+                    mission, pending.unitManager, pending.objectId);
                 g_missionPlaybackContext.active = 0;
             }
         }

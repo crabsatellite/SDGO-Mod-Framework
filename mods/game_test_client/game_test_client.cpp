@@ -30,6 +30,8 @@
 #include "operator_session_actions.h"
 #include "sdgo/net_route_observer.h"
 #include "sdgo/ai_dialogue_observer.h"
+#include "sdgo/ace_ai_observer.h"
+#include "../game_test_shared/ace_ai_receipts.h"
 
 namespace {
 void CaptureOptionalDialogueFrame(uint32_t number);
@@ -223,6 +225,10 @@ SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
 SdgoPvpAiClientGetLuaStatusV1Fn getLuaStatus;
 SdgoPvpAiClientGetStartStatusV1Fn getStartStatus;
 SdgoPvpAiClientGetScoreboardStatusV1Fn getScoreboardStatus;
+SdgoAceAiGetPvpClientSnapshotV1Fn getAcePvpSnapshot=nullptr;
+SdgoAceAiGetMissionClientSnapshotV1Fn getAceMissionSnapshot=nullptr;
+SdgoAceAiGetAnnouncementSnapshotV1Fn getAcePvpAnnouncement=nullptr;
+SdgoAceAiGetAnnouncementSnapshotV1Fn getAceMissionAnnouncement=nullptr;
 ScoreboardActions scoreboardInput;
 BattleAiBehaviorProbe battleAiBehavior;
 NativeDeathProbe nativeDeathProbe;
@@ -6029,6 +6035,56 @@ LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
+void ObserveAceReceipts() {
+    static SdgoAceAiPvpClientSnapshotV1 lastPvp{};
+    static SdgoAceAiMissionClientSnapshotV1 lastMission{};
+    static bool havePvp=false,haveMission=false;
+    static uint32_t pvpAnnouncementSequence[2]{},missionAnnouncementSequence=0;
+    static uint32_t playbackSequence=0;
+
+    if(getAcePvpSnapshot) {
+        SdgoAceAiPvpClientSnapshotV1 snapshot{};
+        snapshot.size=sizeof(snapshot);snapshot.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        if(getAcePvpSnapshot(&snapshot) && (!havePvp || memcmp(&snapshot,&lastPvp,sizeof(snapshot)))) {
+            const std::string message=sdgo_game_test_ace::PvpClient(snapshot);
+            sdgo_test::Observe(message.c_str());lastPvp=snapshot;havePvp=true;
+        }
+    }
+    if(getAceMissionSnapshot) {
+        SdgoAceAiMissionClientSnapshotV1 snapshot{};
+        snapshot.size=sizeof(snapshot);snapshot.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        if(getAceMissionSnapshot(&snapshot)) {
+            if(!haveMission || memcmp(&snapshot,&lastMission,sizeof(snapshot))) {
+                const std::string message=sdgo_game_test_ace::MissionClient(snapshot);
+                sdgo_test::Observe(message.c_str());lastMission=snapshot;haveMission=true;
+            }
+            if(snapshot.playback_sequence && snapshot.playback_sequence!=playbackSequence) {
+                const std::string message=sdgo_game_test_ace::Playback(snapshot);
+                sdgo_test::Observe(message.c_str());playbackSequence=snapshot.playback_sequence;
+            }
+        }
+    }
+    if(getAcePvpAnnouncement)for(uint32_t colour=1;colour<=2;++colour) {
+        SdgoAceAiAnnouncementSnapshotV1 snapshot{};
+        snapshot.size=sizeof(snapshot);snapshot.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        snapshot.colour=colour;
+        if(getAcePvpAnnouncement(&snapshot) && snapshot.sequence &&
+           snapshot.sequence!=pvpAnnouncementSequence[colour-1]) {
+            const std::string message=sdgo_game_test_ace::Announcement("pvp",snapshot);
+            sdgo_test::Observe(message.c_str());pvpAnnouncementSequence[colour-1]=snapshot.sequence;
+        }
+    }
+    if(getAceMissionAnnouncement) {
+        SdgoAceAiAnnouncementSnapshotV1 snapshot{};
+        snapshot.size=sizeof(snapshot);snapshot.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        if(getAceMissionAnnouncement(&snapshot) && snapshot.sequence &&
+           snapshot.sequence!=missionAnnouncementSequence) {
+            const std::string message=sdgo_game_test_ace::Announcement("mission",snapshot);
+            sdgo_test::Observe(message.c_str());missionAnnouncementSequence=snapshot.sequence;
+        }
+    }
+}
+
 void __fastcall Update(uint8_t* app, void*) {
     if (verifyQuietRuntime && !quietGraphics.RefreshDeviceHooks()) {
         sdgo_test::Fail("quiet graphics could not preserve the real device's native dispatch chain");
@@ -6059,6 +6115,7 @@ void __fastcall Update(uint8_t* app, void*) {
             }
         }
     }
+    ObserveAceReceipts();
     if (reviewCamera.Enabled()) {
         SdgoPvpAiClientSnapshotV1 pvp{}; const bool havePvp=Snapshot(pvp);
         SdgoMissionAiClientSnapshotV1 missionSnapshot{}; missionSnapshot.size=sizeof(missionSnapshot);
@@ -6183,7 +6240,13 @@ SDGO_MOD_ENTRY {
     modalLoadingVtable=api->Symbol(mod,"flow.native_modal_loading_vtable");
     if (!modalLoadingVtable)sdgo_test::Fail("native modal-loading page identity is unavailable");
     if (!roomListVtable)sdgo_test::Fail("native Game Room page identity is unavailable");
-    getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
+    const HMODULE matchAi=GetModuleHandleW(L"match_ai.dll");
+    const HMODULE aceAi=GetModuleHandleW(L"ace_ai.dll");
+    getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(matchAi, SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
+    getAcePvpSnapshot=reinterpret_cast<SdgoAceAiGetPvpClientSnapshotV1Fn>(
+        GetProcAddress(matchAi,SDGO_ACE_AI_MATCH_CLIENT_EXPORT));
+    getAcePvpAnnouncement=aceAi ? reinterpret_cast<SdgoAceAiGetAnnouncementSnapshotV1Fn>(
+        GetProcAddress(aceAi,SDGO_ACE_AI_PVP_ANNOUNCEMENT_EXPORT)) : nullptr;
     api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
     if(!nativePopupProbe.Install(api,mod))return 0;
     if((earlyNavigationBeforeInventory || ocAllocateStat>=0 ||
@@ -6196,7 +6259,12 @@ SDGO_MOD_ENTRY {
     getLuaStatus = reinterpret_cast<SdgoPvpAiClientGetLuaStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_LUA_STATUS_EXPORT));
     if (!getLuaStatus) sdgo_test::Fail("production whole-battle Lua counter export is unavailable");
     if(missionMode) {
-        getMissionSnapshot=reinterpret_cast<SdgoMissionAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"mission_ai.dll"),SDGO_MISSION_AI_CLIENT_SNAPSHOT_EXPORT));
+        const HMODULE missionAi=GetModuleHandleW(L"mission_ai.dll");
+        getMissionSnapshot=reinterpret_cast<SdgoMissionAiClientGetSnapshotV1Fn>(GetProcAddress(missionAi,SDGO_MISSION_AI_CLIENT_SNAPSHOT_EXPORT));
+        getAceMissionSnapshot=reinterpret_cast<SdgoAceAiGetMissionClientSnapshotV1Fn>(
+            GetProcAddress(missionAi,SDGO_ACE_AI_MISSION_CLIENT_EXPORT));
+        getAceMissionAnnouncement=reinterpret_cast<SdgoAceAiGetAnnouncementSnapshotV1Fn>(
+            GetProcAddress(missionAi,SDGO_ACE_AI_MISSION_ANNOUNCEMENT_EXPORT));
         if(!getMissionSnapshot)sdgo_test::Fail("production native mission observation export is unavailable");
         if(missionBehaviorProfile) {
             getMissionBehaviorStatus=

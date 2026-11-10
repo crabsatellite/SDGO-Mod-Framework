@@ -140,6 +140,9 @@ namespace
     bool g_reloadAceSettingsAtBattleEntry = true;
     uint32_t g_nextBattleGeneration = 0;
     volatile LONG g_aceDamageSequence = 0;
+    PVOID volatile g_aceObserverCallback = nullptr;
+    PVOID volatile g_aceObserverUser = nullptr;
+    volatile LONG g_aceObserverRegistration = 0;
     struct MissionDamagePending {
         bool valid = false;
         uint8_t* room = nullptr;
@@ -221,6 +224,7 @@ namespace
                 *reinterpret_cast<uint32_t*>(unit + kUnitHp);
             copied.max_hp =
                 *reinterpret_cast<uint32_t*>(unit + kUnitMaxHp);
+            copied.original_max_hp = ace.originalMaxHp[form];
             copied.hp_percent = static_cast<uint32_t>(
                 ace.outcome.hpPercent);
             copied.attack_percent = static_cast<uint32_t>(
@@ -246,6 +250,26 @@ namespace
         if (!unchanged) return false;
         *output = snapshot;
         return true;
+    }
+
+    void EmitAceSnapshot(uint8_t* room)
+    {
+        if (InterlockedCompareExchange(&g_aceObserverRegistration, 0, 0) != 2)
+            return;
+        const auto callback = reinterpret_cast<SdgoAceAiServerObserverCallbackV1>(
+            InterlockedCompareExchangePointer(&g_aceObserverCallback, nullptr, nullptr));
+        if (!callback || !room) return;
+        SdgoAceAiServerSnapshotV1 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        snapshot.room_cookie = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room));
+        __try {
+            if (CopyMissionAceSnapshot(&snapshot))
+                callback(&snapshot, InterlockedCompareExchangePointer(
+                    &g_aceObserverUser, nullptr, nullptr));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            InterlockedExchangePointer(&g_aceObserverCallback, nullptr);
+        }
     }
 
     bool CompleteMissionAceDamage(
@@ -297,6 +321,7 @@ namespace
             published = true;
         }
         ReleaseSRWLockExclusive(&g_livesLock);
+        if (published) EmitAceSnapshot(room);
         return published;
     }
 
@@ -348,8 +373,7 @@ namespace
 
     void ApplyInitialAceLife(uint8_t* pilot, MissionAceSlot& state)
     {
-        if (!pilot || !state.outcome.ace || state.outcome.hpPercent == 100 ||
-            pilot[kPilotForm] >= kMaxUnitForms) return;
+        if (!pilot || pilot[kPilotForm] >= kMaxUnitForms) return;
         for (int form = 0; form < kMaxUnitForms; ++form) {
             uint8_t* unit = pilot + kPilotUnits + form * kUnitStride;
             if (!*reinterpret_cast<uint32_t*>(unit)) continue;
@@ -357,6 +381,7 @@ namespace
             state.scaledMaxHp[form] = battle_ai::ace::Scale(
                 state.originalMaxHp[form], state.outcome.hpPercent);
         }
+        if (!state.outcome.ace || state.outcome.hpPercent == 100) return;
         const int form = pilot[kPilotForm];
         uint8_t* unit = pilot + kPilotUnits + form * kUnitStride;
         auto& maximum = *reinterpret_cast<uint32_t*>(unit + kUnitMaxHp);
@@ -484,6 +509,7 @@ namespace
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX in mission AI respawn", GetExceptionCode());
         }
+        EmitAceSnapshot(room);
     }
 
     void __cdecl MissionEnded(uint8_t* room)
@@ -946,6 +972,7 @@ namespace
             }
         }
         g_startNotify(proc, room, key, index, a, b);
+        EmitAceSnapshot(room);
     }
 
     template <typename Fn>
@@ -980,6 +1007,21 @@ SdgoCoopAiCompleteAceDamageV1(
         g_pendingAceDamage = {};
         return 0;
     }
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoCoopAiRegisterAceObserverV1(
+    const SdgoAceAiServerObserverSinkV1* sink)
+{
+    if (!sink || sink->size < sizeof(*sink) ||
+        sink->version != SDGO_ACE_AI_OBSERVER_VERSION || !sink->callback)
+        return 0;
+    if (InterlockedCompareExchange(&g_aceObserverRegistration, 1, 0) != 0)
+        return 0;
+    InterlockedExchangePointer(&g_aceObserverUser, sink->user);
+    InterlockedExchangePointer(&g_aceObserverCallback,
+                              reinterpret_cast<PVOID>(sink->callback));
+    InterlockedExchange(&g_aceObserverRegistration, 2);
+    return 1;
 }
 
 static void* g_missionGateOriginal = nullptr;

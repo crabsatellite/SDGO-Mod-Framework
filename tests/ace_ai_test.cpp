@@ -55,7 +55,9 @@ void Reset() {
     raiseStage = 0;
     appendSuccess = false;
     appendedText.clear();
-    g_announcement = {};
+    g_announcementLatest = {};
+    g_announcements[0] = {};
+    g_announcements[1] = {};
     InterlockedExchange(&g_announcementSequence, 0);
     InterlockedExchange(&g_announcementCount, 0);
     g_active = true;
@@ -96,11 +98,27 @@ int main() {
     announcement.version = SDGO_ACE_AI_OBSERVER_VERSION + 1;
     CHECK(SdgoAceAiGetAnnouncementSnapshotV1(&announcement) == 0);
 
-    SCENARIO("displayed colour selects the fixed blue notice");
+    SCENARIO("both displayed colours retain their exact successful native feed receipts");
     Reset(); appendSuccess = true;
+    CHECK(SdgoAceAiAnnounceTeamV1(mode.data(), 1) == 1);
     CHECK(SdgoAceAiAnnounceTeamV1(mode.data(), 2) == 1);
     CHECK(appendedText == L"蓝队出现了王牌驾驶员！");
-    CHECK(SdgoAceAiAnnounceTeamV1(mode.data(), 0) == 0 && appendCalls == 1);
+    announcement = {sizeof(announcement), SDGO_ACE_AI_OBSERVER_VERSION};
+    announcement.colour = 1;
+    CHECK(SdgoAceAiGetAnnouncementSnapshotV1(&announcement) == 1);
+    CHECK(announcement.sequence == 1 && announcement.colour == 1 &&
+          announcement.successful_count == 1 &&
+          !wcscmp(announcement.text, L"红队出现了王牌驾驶员！"));
+    announcement = {sizeof(announcement), SDGO_ACE_AI_OBSERVER_VERSION};
+    announcement.colour = 2;
+    CHECK(SdgoAceAiGetAnnouncementSnapshotV1(&announcement) == 1);
+    CHECK(announcement.sequence == 2 && announcement.colour == 2 &&
+          announcement.successful_count == 2 &&
+          !wcscmp(announcement.text, L"蓝队出现了王牌驾驶员！"));
+    announcement = {sizeof(announcement), SDGO_ACE_AI_OBSERVER_VERSION};
+    CHECK(SdgoAceAiGetAnnouncementSnapshotV1(&announcement) == 1);
+    CHECK(announcement.sequence == 2 && announcement.colour == 2);
+    CHECK(SdgoAceAiAnnounceTeamV1(mode.data(), 0) == 0 && appendCalls == 2);
 
     SCENARIO("constructor and append faults never leak a constructed native line");
     for (int stage = 1; stage <= 3; ++stage) {

@@ -355,19 +355,11 @@ sdgo_strict(shop_catalog_apply)
 sdgo_stage(shop_catalog_apply "server/sdgo/mods/shop_catalog")
 add_dependencies(shop_catalog shop_catalog_apply)
 sdgo_add_mod(ace_ai DESCRIPTION "configurable Ace AI pilot identities and policy (client)"
-             SOURCES mods/ace_ai/ace_ai.cpp FILES base-pilots.json)
+             SOURCES mods/ace_ai/ace_ai.cpp
+             FILES base-pilots.json symbols.fragment.ini)
 sdgo_add_mod(ace_ai_server SERVER DESCRIPTION "configurable Ace AI pilot policy (battle server)"
-             SOURCES mods/ace_ai_server/ace_ai_server.cpp FILES config.ini)
-# The public pilot roster has one source of truth, staged into both process-specific
-# Mod directories. The optional owner overlay remains runtime/private configuration.
-add_custom_target(ace_ai_server_catalog_data
-    COMMAND "${CMAKE_COMMAND}" -E make_directory
-        "${SDGO_STAGE}/server/sdgo/mods/ace_ai_server"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/mods/ace_ai/base-pilots.json"
-        "${SDGO_STAGE}/server/sdgo/mods/ace_ai_server/base-pilots.json"
-    VERBATIM)
-add_dependencies(ace_ai_server_data ace_ai_server_catalog_data)
+             SOURCES mods/ace_ai_server/ace_ai_server.cpp
+             FILES config.ini base-pilots.json)
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
@@ -1085,6 +1077,13 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_test_server_ready_json_test.py"
                 "$<TARGET_FILE:game_test_server_test>")
     set_tests_properties(game_test_server_ready_json_offline
+                         PROPERTIES TIMEOUT 30)
+    add_test(
+        NAME game_test_server_ace_json_offline
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_test_server_ace_json_test.py"
+                "$<TARGET_FILE:game_test_server_test>")
+    set_tests_properties(game_test_server_ace_json_offline
                          PROPERTIES TIMEOUT 30)
     add_executable(game_test_native_death_probe_test
                    tests/game_test_native_death_probe_test.cpp)

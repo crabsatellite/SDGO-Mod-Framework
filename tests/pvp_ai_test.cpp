@@ -16,6 +16,7 @@ uint32_t failSetup = 0;
 int buildCalls = 0, setupCalls = 0, respawns = 0, refreshes = 0, stateRespawns = 0;
 uint32_t stateIdSeen = 0, setupPilotIdSeen = 0, setupSlotIdSeen = 0;
 uint32_t proposedDamageSeen = 0, attackTypeSeen = 0;
+int nativeDamageCalls = 0;
 int originals = 0;
 int resultHostCalls=0,resultHostTransfer=-1;
 std::vector<std::array<uint8_t, 0x1A>> leavePackets;
@@ -42,6 +43,17 @@ uint32_t missionAttackTypeSeen = 0;
 bool clearIdentityAtEnd = false;
 bool originalReturnedBeforeObserver = false;
 std::vector<SdgoPvpAiObserverEventV1> observerEvents;
+std::vector<SdgoAceAiServerSnapshotV1> aceObserverEvents;
+int aceObserverUserCookie = 42;
+void __cdecl ObserveAce(const SdgoAceAiServerSnapshotV1* snapshot, void* user) {
+    CHECK(user == &aceObserverUserCookie);
+    CHECK(g_itemsLock.RecursionCount == 0);
+    CHECK(snapshot && snapshot->size == sizeof(*snapshot));
+    aceObserverEvents.push_back(*snapshot);
+}
+void __cdecl ThrowAceObserver(const SdgoAceAiServerSnapshotV1*, void*) {
+    RaiseException(0xE0000042, 0, 0, nullptr);
+}
 std::vector<uint32_t> npcIds = {100, 101, 102, 103, 104};
 std::vector<uint8_t> points = {4, 3, 2, 5, 0};
 std::wstring modDirectory;
@@ -96,6 +108,7 @@ uint32_t __fastcall Damage(uint8_t*, void*, uint32_t, uint32_t,
                            uint8_t*, uint8_t*, uint32_t, uint32_t,
                            uint32_t proposedDamage, uint16_t, uint8_t,
                            uint32_t, uint8_t, uint32_t attackType) {
+    ++nativeDamageCalls;
     proposedDamageSeen = proposedDamage;
     attackTypeSeen = attackType;
     return proposedDamage;
@@ -175,6 +188,10 @@ void Reset(int mode = 1) {
     std::memset(g_itemRooms, 0, sizeof(g_itemRooms));
     g_roomGeneration = 0;
     InterlockedExchange(&g_aceDamageSequence, 0);
+    InterlockedExchangePointer(&g_aceObserverCallback, nullptr);
+    InterlockedExchangePointer(&g_aceObserverUser, nullptr);
+    InterlockedExchange(&g_aceObserverRegistration, 0);
+    aceObserverEvents.clear();
     g_coopAceDamageModule = nullptr;
     g_completeMissionAceDamage = nullptr;
     nextId = kAiPilotBit | 100;
@@ -217,6 +234,7 @@ void Reset(int mode = 1) {
     buildCalls = setupCalls = respawns = refreshes = stateRespawns = originals = 0;
     stateIdSeen = setupPilotIdSeen = setupSlotIdSeen = 0;
     proposedDamageSeen = attackTypeSeen = 0;
+    nativeDamageCalls = 0;
     failBuild = failSetup = 0;
     revive = true;
     aceUnitEligible = true;
@@ -1101,6 +1119,57 @@ int wmain(int argc,wchar_t** argv) {
     for (auto& thread : threads) thread.join();
     CHECK(std::set<unsigned>(draws.begin(), draws.end()).size() == draws.size());
     CHECK(std::find(draws.begin(), draws.end(), 0u) == draws.end());
+    SCENARIO("Ace snapshot sink copies post-native results outside the provider lock");
+    Reset(7); Human(0, 1); Title("!ai hard");
+    EmitAceSnapshot(reinterpret_cast<uint8_t*>(1)); // no sink must not inspect a room
+    SdgoAceAiServerObserverSinkV1 aceSink{
+        sizeof(aceSink), SDGO_ACE_AI_OBSERVER_VERSION, &ObserveAce, &aceObserverUserCookie};
+    CHECK(SdgoPvpAiRegisterAceObserverV1(nullptr) == 0);
+    auto invalidAceSink = aceSink;
+    invalidAceSink.version = 0;
+    CHECK(SdgoPvpAiRegisterAceObserverV1(&invalidAceSink) == 0);
+    invalidAceSink = aceSink; invalidAceSink.callback = nullptr;
+    CHECK(SdgoPvpAiRegisterAceObserverV1(&invalidAceSink) == 0);
+    CHECK(SdgoPvpAiRegisterAceObserverV1(&aceSink) == 1);
+    CHECK(SdgoPvpAiRegisterAceObserverV1(&aceSink) == 0);
+    g_aceSettings.enabled = true;
+    g_aceSettings.byDifficulty[2] = {100, battle_ai::Difficulty::Hard, 120, 150};
+    CHECK(PrepareRoomItems(room.data(), battle_ai::Difficulty::Hard));
+    CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+    ApplyAceStats(room.data(), 6);
+    EmitAceSnapshot(room.data());
+    CHECK(aceObserverEvents.size() == 1);
+    CHECK(aceObserverEvents.back().unit_count == 1 &&
+          aceObserverEvents.back().units[0].max_hp == 18000 &&
+          aceObserverEvents.back().units[0].original_max_hp == 15000);
+    uint8_t aceWeapon[8]{};
+    CHECK(AcceptedDamage(room.data(), nullptr, 100, 6, Pilot(6), aceWeapon,
+                         0, 10, 200, 0, 0, 0, 0, 0) == 300);
+    CHECK(aceObserverEvents.size() == 2);
+    CHECK(aceObserverEvents.back().damage.proposed_damage == 200 &&
+          aceObserverEvents.back().damage.adjusted_damage == 300 &&
+          aceObserverEvents.back().damage.native_result == proposedDamageSeen &&
+          proposedDamageSeen == 300);
+    CHECK(AcceptedDamage(room.data(), nullptr, 101, 6, Pilot(6), aceWeapon,
+                         0, 10, 200, 0, 0, 0, 0, 1) == 200);
+    CHECK(aceObserverEvents.size() == 3 &&
+          aceObserverEvents.back().damage.attack_type == 1 &&
+          aceObserverEvents.back().damage.adjusted_damage == 200);
+    CHECK(Get<uint32_t>(Unit(6), kUnitMaxHp) == 18000);
+
+    SCENARIO("a faulty optional Ace sink cannot repeat or prevent a native damage call");
+    Reset(); Human(0, 1);
+    CHECK(PrepareRoomItems(room.data(), battle_ai::Difficulty::Medium));
+    CHECK(AddAiPilot(room.data(), 6, 100, 2, 2));
+    aceSink.callback = &ThrowAceObserver;
+    CHECK(SdgoPvpAiRegisterAceObserverV1(&aceSink) == 1);
+    CHECK(AcceptedDamage(room.data(), nullptr, 102, 6, Pilot(6), aceWeapon,
+                         0, 10, 200, 0, 0, 0, 0, 0) == 200);
+    CHECK(InterlockedCompareExchangePointer(&g_aceObserverCallback, nullptr, nullptr) == nullptr);
+    CHECK(nativeDamageCalls == 1);
+    CHECK(AcceptedDamage(room.data(), nullptr, 103, 6, Pilot(6), aceWeapon,
+                         0, 10, 201, 0, 0, 0, 0, 0) == 201);
+    CHECK(nativeDamageCalls == 2);
     DeleteCriticalSection(&g_itemsLock);
     return ai_test::Finish();
 }

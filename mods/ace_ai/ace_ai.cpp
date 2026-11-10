@@ -20,7 +20,8 @@ StepFn g_lineCtor = nullptr;
 StepFn g_lineDtor = nullptr;
 StringCtorFn g_stringCtor = nullptr;
 AppendLineFn g_appendLine = nullptr;
-SdgoAceAiAnnouncementSnapshotV1 g_announcement{};
+SdgoAceAiAnnouncementSnapshotV1 g_announcementLatest{};
+SdgoAceAiAnnouncementSnapshotV1 g_announcements[2]{};
 SRWLOCK g_announcementLock = SRWLOCK_INIT;
 volatile LONG g_announcementSequence = 0;
 volatile LONG g_announcementCount = 0;
@@ -40,7 +41,8 @@ void PublishAnnouncement(uint32_t colour, uint32_t before, uint32_t after,
         InterlockedIncrement(&g_announcementCount));
     wcsncpy_s(receipt.text, text, _TRUNCATE);
     AcquireSRWLockExclusive(&g_announcementLock);
-    g_announcement = receipt;
+    g_announcementLatest = receipt;
+    g_announcements[colour - 1] = receipt;
     ReleaseSRWLockExclusive(&g_announcementLock);
 }
 
@@ -109,8 +111,12 @@ extern "C" __declspec(dllexport) int __cdecl
 SdgoAceAiGetAnnouncementSnapshotV1(SdgoAceAiAnnouncementSnapshotV1* output) {
     if (!output || output->size < sizeof(*output) ||
         output->version != SDGO_ACE_AI_OBSERVER_VERSION) return 0;
+    const uint32_t requestedColour = output->colour;
     AcquireSRWLockShared(&g_announcementLock);
-    const SdgoAceAiAnnouncementSnapshotV1 snapshot = g_announcement;
+    const SdgoAceAiAnnouncementSnapshotV1 snapshot =
+        requestedColour >= 1 && requestedColour <= 2
+            ? g_announcements[requestedColour - 1]
+            : g_announcementLatest;
     ReleaseSRWLockShared(&g_announcementLock);
     if (!snapshot.sequence) return 0;
     *output = snapshot;
