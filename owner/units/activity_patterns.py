@@ -105,10 +105,16 @@ def build_pattern(pattern_id, root, root_category, *, units, categories, prices,
     replacement = min(rare)[2]
     reference_entries = round(Fraction(balance['rare_configuration_frequency']['numerator'],
                                       balance['rare_configuration_frequency']['denominator']) * 10000)
-    target_entries = settings.get('featured_entries',reference_entries)
-    if not 1 <= target_entries <= 5000:
+    requested_target_entries = settings.get('featured_entries',reference_entries)
+    if not 1 <= requested_target_entries <= 5000:
         raise ValueError('参考目标频率超出原生奖池模板支持范围，请手动设定')
-    rewards.pop(replacement)
+    aggregate_s_entries=settings.get('s_grade_entries')
+    root_is_s=root['rank']==4
+    # A non-S target is an additional ordinary reward. Keep the reference S
+    # reward so a host-wide aggregate-S preference still has an S subgroup to
+    # rebalance. The unset path and S-target replacement retain legacy output.
+    if aggregate_s_entries is None or root_is_s:
+        rewards.pop(replacement)
     # Avoid two copies of the root if a host already added it to a reference.
     rewards = {key: row for key, row in rewards.items() if key[0] != root_category}
     fixed_rare = set()
@@ -121,29 +127,32 @@ def build_pattern(pattern_id, root, root_category, *, units, categories, prices,
     if premium or not flexible:
         flexible = set(rewards)
         fixed_rare = set()
-    aggregate_s_entries=settings.get('s_grade_entries')
-    root_is_s=root['rank']==4
+    fixed_entries = sum(_weight(rewards[category]) for category in fixed_rare)
+    budget = 10000 - requested_target_entries - fixed_entries
+    weight_sum = sum((_weight(rewards[category]) for category in flexible),Fraction())
+    if budget <= 0 or weight_sum <= 0:
+        raise ValueError('参考奖池没有足够的普通奖励空间，请手动配置')
+    for category in flexible:
+        weight = _weight(rewards[category]) * budget / weight_sum
+        rewards[category]['weight'] = {'numerator': weight.numerator, 'denominator': weight.denominator}
+    rewards[(root_category, 1)] = {'category_id': root_category, 'amount': 1, 'weight': requested_target_entries,
+                              'name': '目标机体', 'role': 'featured', 'source': 'owner-preset-default'}
     if aggregate_s_entries is not None:
-        if not root_is_s:
-            raise ValueError('S 级合计频率只适用于 S 级目标机体模板')
-        if target_entries>aggregate_s_entries:
-            raise ValueError('目标机体频率不能高于 S 级合计频率')
-        other_s={key:rewards[key] for key in fixed_rare}
-        ordinary={key:rewards[key] for key in set(rewards)-fixed_rare}
-        allocations=_allocate_positive(other_s,aggregate_s_entries-target_entries,'S 级合计频率')
+        # Quantize the ordinary template first. The aggregate setting then has
+        # priority and proportionally rebalances the complete S subgroup.
+        baseline=compile_pool(list(rewards.values()))
+        baseline_entries={(row['category_id'],row['amount']):row['entries'] for row in baseline['rewards']}
+        for category,entries in baseline_entries.items():rewards[category]['weight']=entries
+        def is_s(category):
+            if category[0]==root_category:return root_is_s
+            item=cats.get(category[0])
+            unit=unit_map.get(item['RefIndex']) if item and category[0]//100000==11 else None
+            return bool(unit and unit['UnitGradeNumber']==4)
+        s_rewards={key:rewards[key] for key in rewards if is_s(key)}
+        ordinary={key:rewards[key] for key in rewards if not is_s(key)}
+        allocations=_allocate_positive(s_rewards,aggregate_s_entries,'S 级合计频率')
         allocations.update(_allocate_positive(ordinary,10000-aggregate_s_entries,'普通奖励频率'))
         for category,entries in allocations.items():rewards[category]['weight']=entries
-    else:
-        fixed_entries = sum(_weight(rewards[category]) for category in fixed_rare)
-        budget = 10000 - target_entries - fixed_entries
-        weight_sum = sum((_weight(rewards[category]) for category in flexible),Fraction())
-        if budget <= 0 or weight_sum <= 0:
-            raise ValueError('参考奖池没有足够的普通奖励空间，请手动配置')
-        for category in flexible:
-            weight = _weight(rewards[category]) * budget / weight_sum
-            rewards[category]['weight'] = {'numerator': weight.numerator, 'denominator': weight.denominator}
-    rewards[(root_category, 1)] = {'category_id': root_category, 'amount': 1, 'weight': target_entries,
-                              'name': '目标机体', 'role': 'featured', 'source': 'owner-preset-default'}
     compiled = compile_pool(list(rewards.values()))
     category_totals = Counter()
     for row in compiled['rewards']:category_totals[row['category_id']] += row['entries']
@@ -155,6 +164,7 @@ def build_pattern(pattern_id, root, root_category, *, units, categories, prices,
         item=cats.get(category);unit=unit_map.get(item['RefIndex']) if item and category//100000==11 else None
         if unit and unit['UnitGradeNumber']==4:s_categories.add(category)
     actual_s_entries=sum(category_totals[category] for category in s_categories)
+    actual_target_entries=category_totals[root_category]
     if aggregate_s_entries is not None and actual_s_entries!=aggregate_s_entries:
         raise ValueError('S 级合计频率无法精确编译为原生 10000 格序列')
     if max(category_totals.values()) > 5000:
@@ -162,6 +172,7 @@ def build_pattern(pattern_id, root, root_category, *, units, categories, prices,
     return {'pattern_id': pattern_id, 'currency_type': pattern['currency_type'],
             'price': settings.get('price',99 if premium else common_price), 'template_machine_id': template_id,
             'pool': [{key: r[key] for key in ('category_id', 'amount', 'entries')} for r in compiled['rewards']],
-            'balance': balance, 'target_entries': target_entries, 's_grade_entries': actual_s_entries,
+            'balance': balance, 'target_entries': actual_target_entries,
+            'requested_target_entries': requested_target_entries, 's_grade_entries': actual_s_entries,
             'source_machine_id': template_id,
             'method': 'Native reference items; target and aggregate S-grade frequencies are configurable; ordinary rewards fill the remaining slots.'}

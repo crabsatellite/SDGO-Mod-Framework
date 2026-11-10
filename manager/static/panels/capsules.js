@@ -1435,7 +1435,7 @@ function initializeActivityEditor(){
   const labeled=(text,input)=>{const label=el('label');label.className='activity-field';label.append(el('span',text),input);return label;};
   function renderPreferences(){
     defaults.replaceChildren(el('summary','本服模板参数（随制作目录保存）'));
-    defaults.append(el('p','留空沿用本服原生参考。价格、目标机体频率和 S 级合计频率只用于以后生成或套用模板，不会自动改变已有机台；它们属于服主配置，不进入通用工具包。'));
+    defaults.append(el('p','留空沿用本服原生参考。设置 S 级合计时，该合计优先；模板会按参考比例重排全部 S 级奖励，目标机体的实际频率会在奖池预览中显示。参数只用于以后生成或套用模板，不会自动改变已有机台；它们属于服主配置，不进入通用工具包。'));
     const table=el('table');table.className='activity-rewards';const head=el('tr');
     for(const name of ['模板','单次价格','目标机体 %','S 级合计 %'])head.append(el('th',name));table.append(head);
     const inputs=[];
@@ -1524,7 +1524,11 @@ function initializeActivityEditor(){
     for(const input of [name,currency,price])input.addEventListener('input',changed);
     const reference=el('p');
     function describe(){const balance=machine.balance?.rare_configuration_frequency;
-      reference.textContent=balance?'原生参考频率 '+(balance.value*100).toFixed(4)+'%；目标频率与所有奖品均可调整。':'';}
+      if(!balance){reference.textContent='';return;}
+      let text='原生参考频率 '+(balance.value*100).toFixed(4)+'%；目标频率与所有奖品均可调整。';
+      if(machine.requested_target_entries!=null&&machine.target_entries!==machine.requested_target_entries){
+        text+=' S 级合计设置优先：目标机体请求 '+(machine.requested_target_entries/100).toFixed(2)+'%，实际 '+(machine.target_entries/100).toFixed(2)+'%。';}
+      reference.textContent=text;}
     describe();editor.append(reference);
     const rewards=el('table');rewards.className='activity-rewards';const total=el('p');total.setAttribute('role','status');
     function summarize(){const sum=rows.reduce((value,row)=>value+Number(row.entries||0),0);
@@ -1573,7 +1577,9 @@ function initializeActivityEditor(){
         describe();
         currency.value=machine.currency_type;price.value=machine.price;
         for(const [identity,name] of Object.entries(result.reward_names||{}))choices.set(Number(identity),{name});
-        changed();drawRows();status.textContent='模板价格与奖池已预填，可继续调整。审核并保存后再编译应用。';
+        changed();drawRows();status.textContent='模板价格与奖池已预填；表格显示每项实际配置频率。'+
+          (machine.target_entries!==machine.requested_target_entries?' S 级合计优先，目标机体已按参考比例调整。':'')+
+          ' 审核并保存后再编译应用。';
       }catch(error){status.textContent=error.message;}finally{usePattern.disabled=false;}
     };
     save.onclick=async()=>{
