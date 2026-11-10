@@ -24,13 +24,17 @@ The feature only imports. It reads protocol data, generates the records and reso
 6. Click **Check server** to see the rows that will be added or updated and any conflicts; with no conflicts click **Apply to server**, then **Read back**.
 7. Restart the World/Battle services and the client.
 
+**Example map.** The **示例地图** (example maps) card downloads *Twin Valley Fortress · Operation Odessa* from the framework's public repository, checks every file against the SHA-256 in its `map.json` and registers it like any other package; then compile, install and apply as usual. The map has a south valley arena, a fortress line with a gate on the ridge and a mining base in the north valley, and comes with a six-phase PvE mission (opening, mid-mission and ending cutscenes, banners, a boss group and a countdown). Its files are in the repository under [`examples/maps/twin-valley-fortress`](../examples/maps/twin-valley-fortress) as a reference for writing your own packages; [`CREDITS.md`](../examples/maps/twin-valley-fortress/CREDITS.md) lists the CC0 sources of its textures and scans. It uses the game's own NPC templates, models, music and sounds by name, so it compiles only against a client and server that have them.
+
 Numbers are assigned at compile time: map numbers continue after the client's own maps, and every kind of mission record continues after the original mission records, without gaps (the game reads these lists as contiguous numbers). Removing or moving a map therefore renumbers the maps and missions after it; compile, install and apply again and the server updates and removes the rows this workspace wrote earlier.
 
 The server write runs in one transaction. A row with the same key that was not written by the map import refuses the whole apply, so original data is never overwritten.
 
 ## Map package protocol (`map.json`)
 
-A map package is a folder: one `map.json` plus the glTF 2.0 models (`.glb`/`.gltf`), PNG images and optional MP3 it references. Every file must be listed with its SHA-256 in `files`.
+A map package is a folder: one `map.json` plus the glTF 2.0 models (`.glb`/`.gltf`), images and optional MP3 it references. Every file must be listed with its SHA-256 in `files`.
+
+Colour textures (model base colour textures and terrain layer textures) may be PNG or JPEG; height images, layer masks and the preview, minimap, banner and catalogue images are PNG. Textures are scaled down to at most 2048 pixels; opaque textures are stored as JPEG in the game, textures with transparency stay lossless. Models are static meshes with one base colour texture per material; the client renders diffuse colour only, so bake ambient occlusion and other shading into that texture. A `.gltf` may keep its buffer and textures in separate package files, which several models can share.
 
 **Coordinates** match the game world: X east, Y up, Z north, origin at the terrain centre, game units. Height and mask images cover the whole terrain with row 0 at the north edge and column 0 at the west edge. glTF assets keep their own convention (right-handed, -Z forward) and are converted at compile time. `rotation_y` is clockwise seen from above: 0 faces north, 90 faces east.
 
@@ -43,7 +47,7 @@ A map package is a folder: one `map.json` plus the glTF 2.0 models (`.glb`/`.glt
 | `servers` | Server types: `training`, `beginner`, `expert`, `clan` |
 | `terrain.half_extent` | Terrain half size: 4096, 8192 or 16384 |
 | `terrain.height` | `image` (257×257 greyscale PNG), `min`, `max` |
-| `terrain.layers` | 1..8 surface layers: `texture` (PNG), `mask` (optional on the first layer), `tiling` |
+| `terrain.layers` | 1..8 surface layers painted bottom to top: `texture` (PNG or JPEG), `mask` (coverage 0..255, optional on the first layer), `tiling`. The compiler turns the coverage masks into per-vertex blend weights that sum to 255, as in the shipped maps |
 | `terrain.lighting` | `sun_direction` (y must be negative), `sun_color`, `ambient`, `bake_shadows` (baked light and shadows) |
 | `terrain.fog`, `terrain.sky` | Fog colour and start/end distance; sky `zenith`/`horizon`/`ground` colours |
 | `terrain.play_area` | Playable `half_x`, `half_z` and height `ceiling` |
@@ -68,6 +72,7 @@ Mission files live under `missions/` in the map package and are listed in `files
 | `npcs` | Units: `template` (an NPC the target server already has), or `unit` + `base` (any unit using an NPC template); `hp`, `boss`, `name` and `ai` (an AI script name such as the battle AI's `VSAI_Infighter_01`) can be changed |
 | `lines` | Character dialogue: `portrait` (a client portrait `sprs\\NNNN.spr`), `speaker`, `text` |
 | `banners` | Banners: `image` (512×128 PNG), shown as an effect in cutscenes |
+| `presentation` | Optional mission list artwork in PNG, each replacing the template mission's image: `list_banner` (155×68), `room_icon` (120×83; like the shipped icons, keep rows 0..18 for the title lettering), `room_poster` (250×120), `title` (155×22, white lettering on a transparent background) and `loading` (1024×1024 loading screen) |
 | `sectors` | Sector change: `warp` (1..8 points), `facing`, optional `rect` (playable area) |
 | `cutscenes` | Cutscenes, see below |
 | `phases` | 1..8 phases played in order, see below |
@@ -114,4 +119,6 @@ The compiler checks placement and camera work: spawn points, mission spawns, cut
 - In the client log `sdgo/logs/sdgo.log`, `map_catalog: native map rows registered` and `native mission records registered` confirm registration; `imported resource loaded: trns\…` shows that a battle used the imported terrain; `imported mission script call: …` and `imported cutscene finished: …` trace phase events and cutscenes.
 - If a mission does not start or units are missing, turn on "write the game's native debug log" in the Mod settings; the client `app_log` then names the missing record numbers.
 - Compile errors name the exact field (for example a spawn point below the ground, an undefined dialogue line, or an animation the actor's model does not have).
+- If the map looks washed out to white with Bloom (HDR) on, compile and install again with Manager 1.16.16 or later: earlier compilers left the map row's Bloom bright-pass threshold at 0.
+- If the example map download fails, check that the Manager can reach `raw.githubusercontent.com`; files already downloaded and verified are reused on the next try.
 - If "Check server" reports conflicts, the target database already has non-import rows with the same numbers and the apply is refused; make sure the client and the server come from the same original data.

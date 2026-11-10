@@ -24,13 +24,17 @@
 6. 点「**检查服务端**」查看将新增、更新的行和冲突；没有冲突时点「**应用到服务端**」，再「读回服务端」确认。
 7. 重启 World/Battle 服务和客户端后生效。
 
+**示例地图。** 「**示例地图**」卡片会从框架公开仓库下载《双谷要塞 · 奥德萨作战》，按其 `map.json` 中的 SHA-256 逐个校验文件后，像普通地图包一样登记；之后照常编译、安装并应用。地图包含南谷对战场、山脊上带闸门的要塞防线和北谷矿区基地，并附一个 6 阶段 PvE 任务（开场、中途和通关过场、横幅、首领小队与倒计时）。文件也在仓库的 [`examples/maps/twin-valley-fortress`](../examples/maps/twin-valley-fortress) 下，可作为编写地图包的参考；[`CREDITS.md`](../examples/maps/twin-valley-fortress/CREDITS.md) 列出贴图与扫描模型的 CC0 来源。它按名称引用游戏自带的 NPC 模板、模型、音乐和音效，因此只能在具备这些数据的客户端与服务端上编译。
+
 编号在编译时自动分配：地图编号接在客户端原有地图之后，任务的各类记录接在原有任务记录之后，并且彼此连续（游戏按连续编号读取列表，中间不能留空）。因此移除或调整一张地图的顺序，会让排在后面的地图和任务重新编号；重新编译、安装并应用即可，服务端会更新并清理本工作区写入过的旧行。
 
 服务端写入在一个事务里完成。已存在、但不是由地图导入写入的同键行会让整个应用被拒绝，不会覆盖原有数据。
 
 ## 地图包协议（`map.json`）
 
-地图包是一个文件夹：一个 `map.json`，以及它引用的 glTF 2.0 模型（`.glb`/`.gltf`）、PNG 图片和可选的 MP3。所有文件都必须在 `files` 中登记 SHA-256。
+地图包是一个文件夹：一个 `map.json`，以及它引用的 glTF 2.0 模型（`.glb`/`.gltf`）、图片和可选的 MP3。所有文件都必须在 `files` 中登记 SHA-256。
+
+彩色贴图（模型的基础色贴图和地表层贴图）可以是 PNG 或 JPEG；高度图、地表层遮罩以及预览图、小地图、横幅和任务目录图片使用 PNG。贴图最大缩到 2048 像素；不透明贴图在游戏中以 JPEG 保存，带透明的贴图保持无损。模型是静态网格，每个材质一张基础色贴图；客户端只渲染漫反射颜色，请把环境光遮蔽等明暗烘焙进这张贴图。`.gltf` 可以把缓冲区和贴图放在包内的独立文件中，多个模型可以共用。
 
 **坐标系**与游戏世界相同：X 向东，Y 向上，Z 向北，原点在地形中心，单位为游戏单位。高度图和遮罩图覆盖整块地形，第 0 行是北边、第 0 列是西边。glTF 资源保持自身约定（右手系，-Z 朝前），编译时会转换。`rotation_y` 为俯视顺时针角度：0 朝北，90 朝东。
 
@@ -43,7 +47,7 @@
 | `servers` | 服务器类型：`training`、`beginner`、`expert`、`clan` |
 | `terrain.half_extent` | 地形半宽：4096、8192 或 16384 |
 | `terrain.height` | `image`（257×257 灰度 PNG）、`min`、`max` |
-| `terrain.layers` | 1..8 层地表：`texture`（PNG）、`mask`（第一层可省略）、`tiling` |
+| `terrain.layers` | 1..8 层地表，自下而上绘制：`texture`（PNG 或 JPEG）、`mask`（覆盖度 0..255，第一层可省略）、`tiling`。编译器把覆盖度遮罩换算成每个顶点合计 255 的混合权重，与原版地图一致 |
 | `terrain.lighting` | `sun_direction`（y 必须小于 0）、`sun_color`、`ambient`、`bake_shadows`（烘焙光照与阴影） |
 | `terrain.fog`、`terrain.sky` | 雾的颜色与起止距离；天空 `zenith`/`horizon`/`ground` 颜色 |
 | `terrain.play_area` | 可活动范围 `half_x`、`half_z` 和高度上限 `ceiling` |
@@ -68,6 +72,7 @@
 | `npcs` | 登场单位：`template`（目标服务器已有的 NPC），或 `unit` + `base`（用任意机体套用一个 NPC 模板）；可改 `hp`、`boss`、`name`、`ai`（AI 脚本名，例如对战 AI 的 `VSAI_Infighter_01`） |
 | `lines` | 人物对话：`portrait`（客户端已有头像 `sprs\\NNNN.spr`）、`speaker`、`text` |
 | `banners` | 横幅：`image`（512×128 PNG），在过场中以特效显示 |
+| `presentation` | 可选的任务列表图片（PNG），各自替换模板任务的对应图片：`list_banner`（155×68）、`room_icon`（120×83；与原版图标一样，第 0..18 行留给标题字）、`room_poster`（250×120）、`title`（155×22，透明底白字）、`loading`（1024×1024 读取画面） |
 | `sectors` | 区域切换：`warp`（1..8 个传送点）、`facing`、可选 `rect`（活动范围） |
 | `cutscenes` | 过场动画，见下表 |
 | `phases` | 1..8 个阶段，按顺序推进，见下表 |
@@ -114,4 +119,6 @@
 - 客户端日志 `sdgo/logs/sdgo.log` 中，`map_catalog: native map rows registered` 与 `native mission records registered` 表示登记成功；`imported resource loaded: trns\…` 表示战斗确实使用了导入的地形；`imported mission script call: …` 与 `imported cutscene finished: …` 记录任务阶段事件和过场的执行。
 - 任务开不起来或单位缺失时，在 Mod 设置中打开「写入游戏原生调试日志」，客户端 `app_log` 会记录找不到的记录编号。
 - 编译报错会指出具体字段（例如刷怪点低于地面、引用了未定义的台词、演员模型没有该动作）。
+- 开启 Bloom（HDR）后地图整体发白：请用 Manager 1.16.16 或更新版本重新编译并安装；旧版编译器把地图行的 Bloom 亮度阈值留成了 0。
+- 示例地图下载失败：请确认 Manager 能访问 `raw.githubusercontent.com`；已下载并校验通过的文件会在下次重试时直接复用。
 - 「检查服务端」报告冲突时，说明目标数据库中已有同编号的非导入数据，应用会被拒绝；请确认客户端与服务端来自同一套原始数据。

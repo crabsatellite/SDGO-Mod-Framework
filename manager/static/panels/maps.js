@@ -36,6 +36,14 @@ export async function mount(root,ctx){
   button('登记',async()=>{const value=await ctx.request('/api/maps/add',{folder:folder.value});state=value.state;folder.value='';render();report(value.message);},ctx,'ui-btn is-blue'));
  root.append(addCard);
 
+ const examples=e('section',undefined,'manager-card');
+ examples.append(e('h2','示例地图'),e('p','从框架公开仓库下载完整的示例地图包（逐个文件校验 SHA-256）并登记到工作区，可直接编译试玩，也可作为编写地图包的参考。','muted'));
+ for(const item of state.examples||[]){
+  examples.append(e('p',item.name.zh+' — '+item.description),
+   button('下载并登记',async()=>{const value=await ctx.request('/api/maps/examples/add',{id:item.id});state=value.state;render();report(value.message);},ctx,'ui-btn'));
+ }
+ root.append(examples);
+
  const list=e('section',undefined,'manager-card');root.append(list);
 
  const flow=e('section',undefined,'manager-card'),summary=e('div'),actions=e('div',undefined,'actions'),result=e('p');

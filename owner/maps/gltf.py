@@ -131,8 +131,8 @@ class _Document:
         else:
             uri = img.get('uri', '')
             data = _uri_bytes(uri, self.read_file)
-        if not data.startswith(b'\x89PNG\r\n\x1a\n'):
-            raise GltfError('textures must be PNG images')
+        if not (data.startswith(b'\x89PNG\r\n\x1a\n') or data.startswith(b'\xff\xd8\xff')):
+            raise GltfError('textures must be PNG or JPEG images')
         return data
 
 

@@ -2,10 +2,76 @@
 build one client package + server plan, install the client package and apply the server rows."""
 from __future__ import annotations
 
+import hashlib
 import json
-from pathlib import Path
+import shutil
+from pathlib import Path, PurePosixPath
+from urllib.parse import quote
 
 from .providers import Provider, Binary
+
+# Example maps published in the framework's public repository. Each one is pinned to a commit and to the SHA-256
+# of its map.json; map.json in turn lists the SHA-256 of every other file, so the whole download is verified.
+EXAMPLES = {
+    'twin-valley-fortress': {
+        'name': {'zh': '双谷要塞 · 奥德萨作战', 'en': 'Twin Valley Fortress · Operation Odessa'},
+        'description': '南谷对战场、山脊要塞闸门和北谷基地，附 6 阶段 PvE 任务（过场、横幅、首领、核弹倒计时）。',
+        'path': 'examples/maps/twin-valley-fortress',
+        'commit': '24b3f804fd25257ed8b7e4374bccf8e7ecbc4052',
+        'map_json': '366c32c663d0c1e56dddff82c36fd94ce6c83db0a4ebffc14e285eafb821a00f',
+    },
+}
+EXAMPLE_FILE_LIMIT = 16 * 1024 * 1024
+EXAMPLE_TOTAL_LIMIT = 96 * 1024 * 1024
+
+
+def _example_path(name) -> str:
+    path = PurePosixPath(name) if isinstance(name, str) else None
+    if (path is None or not name or '\\' in name or path.is_absolute() or ':' in name
+            or any(part in ('', '.', '..') for part in path.parts)):
+        raise ValueError('示例地图包含无效文件路径')
+    return str(path)
+
+
+def fetch_example(example_id: str, root: Path, fetch=None, repository: str | None = None) -> Path:
+    """Download one example map package into root/<id> and verify it; unchanged files already there are kept."""
+    from . import updates
+    spec = EXAMPLES.get(example_id)
+    if not spec:
+        raise ValueError('没有这个示例地图')
+    fetch = fetch or updates.fetch
+    base = 'https://raw.githubusercontent.com/%s/%s/%s/' % (repository or updates.REPOSITORY, spec['commit'], spec['path'])
+    manifest_raw = fetch(base + 'map.json', EXAMPLE_FILE_LIMIT)
+    if hashlib.sha256(manifest_raw).hexdigest() != spec['map_json']:
+        raise ValueError('示例地图 map.json 校验失败')
+    files = json.loads(manifest_raw.decode('utf-8')).get('files')
+    if not isinstance(files, dict) or not files:
+        raise ValueError('示例地图没有文件清单')
+    target = Path(root) / example_id
+    staging = Path(root) / (example_id + '.download')
+    if staging.exists():
+        shutil.rmtree(staging)
+    total = 0
+    for name, digest in sorted(files.items()):
+        relative = _example_path(name)
+        cached = target / relative
+        if cached.is_file() and hashlib.sha256(cached.read_bytes()).hexdigest() == digest:
+            raw = cached.read_bytes()
+        else:
+            raw = fetch(base + quote(relative), EXAMPLE_FILE_LIMIT)
+            if hashlib.sha256(raw).hexdigest() != digest:
+                raise ValueError('示例地图文件校验失败：' + relative)
+        total += len(raw)
+        if total > EXAMPLE_TOTAL_LIMIT:
+            raise ValueError('示例地图超过大小限制')
+        out = staging / relative
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(raw)
+    (staging / 'map.json').write_bytes(manifest_raw)
+    if target.exists():
+        shutil.rmtree(target)
+    staging.replace(target)
+    return target
 
 
 def _text(body, key, limit=1024):
@@ -56,6 +122,8 @@ class Maps(Provider):
             if self.config.get('client') else None
         state['client_receipt'] = json.loads(receipt.read_text(encoding='utf-8')) \
             if receipt and receipt.is_file() else None
+        state['examples'] = [{'id': key, 'name': spec['name'], 'description': spec['description']}
+                             for key, spec in EXAMPLES.items()]
         state['server_configured'] = bool(self.config.get('server_ini'))
         state['client_configured'] = bool(self.config.get('client'))
         state['changes_applied'] = False
@@ -76,6 +144,12 @@ class Maps(Provider):
                 entry = self._maps().add(_text(body, 'folder'))
                 return {'map': entry, 'state': self._state(),
                         'message': '地图包已登记。编译、安装客户端包并应用服务端后，重启服务端和客户端生效。'}
+            if path == '/api/maps/examples/add':
+                maps = self._maps()
+                folder = fetch_example(_text(body, 'id', 80), maps.root / 'examples')
+                entry = maps.add(folder)
+                return {'map': entry, 'state': self._state(),
+                        'message': '示例地图已下载并登记。编译、安装客户端包并应用服务端后，重启服务端和客户端生效。'}
             if path == '/api/maps/update':
                 values = body.get('values') if isinstance(body, dict) else None
                 entry = self._maps().update(_text(body, 'key', 80), values)

@@ -33,6 +33,7 @@ MAP_ROW_FIRST_ID = 100001
 MAP_NO_LIMIT = 255
 FIRST_IMPORTED_MAP_NO = 143
 TEXTURE_LIMIT = 2048          # D3D9-safe maximum (txr_format.MAX_DIMENSION)
+TEXTURE_FORMATS = ('PNG', 'JPEG')   # model and terrain colour textures
 PREVIEW_SIZE = (120, 83)
 RADAR_SIZE = 256
 LIGHTMAP_SIZE = 512
@@ -83,14 +84,16 @@ def _png(image: Image.Image) -> bytes:
     return out.getvalue()
 
 
-def _open(raw: bytes, what: str) -> Image.Image:
+def _open(raw: bytes, what: str, formats: tuple[str, ...] = ('PNG',)) -> Image.Image:
+    """Decode a package image. Colour textures may also be JPEG (`formats`); masks, heights and UI art stay PNG."""
+    names = '/'.join(formats)
     try:
         image = Image.open(io.BytesIO(raw))
         image.load()
     except Exception as error:  # Pillow raises many types for bad input
-        raise MapCompileError(f'{what} 不是有效的 PNG：{error}') from None
-    if image.format != 'PNG':
-        raise MapCompileError(f'{what} 必须是 PNG')
+        raise MapCompileError(f'{what} 不是有效的 {names}：{error}') from None
+    if image.format not in formats:
+        raise MapCompileError(f'{what} 必须是 {names}')
     return image
 
 
@@ -279,7 +282,7 @@ class _ModelCompiler:
         digest = hashlib.sha256(source).hexdigest()
         if digest not in self.textures:
             name = f'txrs/{self.prefix}t{len(self.textures):02d}.txr'
-            self.resources[name] = _texture_txr(_open(source, what))
+            self.resources[name] = _texture_txr(_open(source, what, TEXTURE_FORMATS))
             self.textures[digest] = _native(name)
             self.stats['textures'] += 1
         return self.textures[digest]

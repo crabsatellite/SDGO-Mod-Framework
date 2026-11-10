@@ -156,6 +156,53 @@ class CompileTests(unittest.TestCase):
                 compiler.map_row(pkg, 143, 'mission', 'Trns\\m143.trn', 'sprs\\m143p.spr',
                                  'Txrs\\m143r.txr', 'BGM\\0001.mp3')
 
+    def test_jpeg_layer_and_model_textures_compile(self):
+        def jpeg(colour):
+            out = io.BytesIO()
+            Image.new('RGB', (64, 64), colour).save(out, format='JPEG', quality=90)
+            return out.getvalue()
+
+        def triangle_glb(image):
+            positions = struct.pack('<9f', -50, 0, 0, 50, 0, 0, 0, 100, 0)
+            uvs = struct.pack('<6f', 0, 1, 1, 1, 0.5, 0)
+            indices = struct.pack('<3H', 0, 1, 2) + b'\0\0'
+            blob = positions + uvs + indices + image + b'\0' * (-len(image) % 4)
+            views = [{'buffer': 0, 'byteOffset': 0, 'byteLength': 36}, {'buffer': 0, 'byteOffset': 36, 'byteLength': 24},
+                     {'buffer': 0, 'byteOffset': 60, 'byteLength': 6}, {'buffer': 0, 'byteOffset': 68, 'byteLength': len(image)}]
+            doc = {'asset': {'version': '2.0'}, 'scene': 0, 'scenes': [{'nodes': [0]}], 'nodes': [{'mesh': 0}],
+                   'meshes': [{'primitives': [{'attributes': {'POSITION': 0, 'TEXCOORD_0': 1}, 'indices': 2, 'material': 0}]}],
+                   'materials': [{'pbrMetallicRoughness': {'baseColorTexture': {'index': 0}}}],
+                   'textures': [{'source': 0}], 'images': [{'bufferView': 3, 'mimeType': 'image/jpeg'}],
+                   'accessors': [{'bufferView': 0, 'componentType': 5126, 'count': 3, 'type': 'VEC3',
+                                  'min': [-50, 0, 0], 'max': [50, 100, 0]},
+                                 {'bufferView': 1, 'componentType': 5126, 'count': 3, 'type': 'VEC2'},
+                                 {'bufferView': 2, 'componentType': 5123, 'count': 3, 'type': 'SCALAR'}],
+                   'bufferViews': views, 'buffers': [{'byteLength': len(blob)}]}
+            body = json.dumps(doc).encode('utf-8')
+            body += b' ' * (-len(body) % 4)
+            return (struct.pack('<4sII', b'glTF', 2, 28 + len(body) + len(blob)) + struct.pack('<I4s', len(body), b'JSON')
+                    + body + struct.pack('<I4s', len(blob), b'BIN\0') + blob)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp))
+            files = {'terrain/ground.jpg': jpeg((90, 120, 60)), 'models/rock.glb': triangle_glb(jpeg((120, 110, 100)))}
+            manifest = json.loads((root / 'map.json').read_text(encoding='utf-8'))
+            manifest['terrain']['layers'] = [{'texture': 'terrain/ground.jpg', 'tiling': 32}]
+            manifest['objects'] = [{'model': 'models/rock.glb', 'position': [2500, 0, 2500], 'rotation_y': 0}]
+            for name, raw in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_bytes(raw)
+                manifest['files'][name] = hashlib.sha256(raw).hexdigest()
+            (root / 'map.json').write_text(json.dumps(manifest), encoding='utf-8')
+            build = compiler.compile_map(P.load(root), map_no=143, map_id=500, variant='pvp')
+            self.assertEqual(build.report['models'], 1)
+            self.assertGreaterEqual(build.report['textures'], 2)
+            # height masks stay lossless: a JPEG mask is refused
+            manifest['terrain']['layers'].append({'texture': 'terrain/ground.jpg', 'mask': 'terrain/ground.jpg', 'tiling': 8})
+            (root / 'map.json').write_text(json.dumps(manifest), encoding='utf-8')
+            with self.assertRaises(P.MapPackageError):
+                P.load(root)
+
     def test_pvp_map_compiles_to_one_contiguous_row_and_server_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             pkg = P.load(write_package(Path(tmp)))
@@ -278,6 +325,57 @@ class InstallTests(unittest.TestCase):
             self.assertTrue((client / 'sdgo/mods/map_catalog/mod.ini').is_file())
             with zipfile.ZipFile(tmp / 'pub2/SDGO-MapImport-Client.zip') as archive:
                 self.assertNotIn('client/sdgo/mods/map_catalog/missions.lua', archive.namelist())
+
+
+class ExampleMapTests(unittest.TestCase):
+    def test_pinned_example_matches_the_committed_package(self):
+        from manager import maps as manager_maps
+        for key, spec in manager_maps.EXAMPLES.items():
+            folder = ROOT / spec['path']
+            raw = (folder / 'map.json').read_bytes()
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), spec['map_json'], key)
+            self.assertRegex(spec['commit'], r'^[0-9a-f]{40}$')
+            pkg = P.load(folder)
+            for name in json.loads(raw)['files']:
+                pkg.read(name)               # every listed file is present with its digest
+
+    def test_example_download_is_verified_and_cached(self):
+        from manager import maps as manager_maps
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            source = write_package(tmp / 'source')
+            served = {}
+
+            def fetch(url, limit):
+                name = url.split('/example/', 1)[1]
+                served[name] = served.get(name, 0) + 1
+                return (source / name).read_bytes()
+
+            spec = {'name': {'zh': '测试'}, 'description': '', 'path': 'example', 'commit': '0' * 40,
+                    'map_json': hashlib.sha256((source / 'map.json').read_bytes()).hexdigest()}
+            original = dict(manager_maps.EXAMPLES)
+            manager_maps.EXAMPLES.clear()
+            manager_maps.EXAMPLES['test'] = spec
+            try:
+                folder = manager_maps.fetch_example('test', tmp / 'cache', fetch=fetch)
+                self.assertEqual(P.load(folder).map_key, 'test.flat-plain')
+                manager_maps.fetch_example('test', tmp / 'cache', fetch=fetch)
+                self.assertEqual(served['terrain/ground.png'], 1)        # unchanged files are not fetched again
+                (source / 'terrain/ground.png').write_bytes(b'tampered')
+                (folder / 'terrain/ground.png').unlink()
+                with self.assertRaisesRegex(ValueError, '校验失败'):
+                    manager_maps.fetch_example('test', tmp / 'cache', fetch=fetch)
+                manifest = json.loads((source / 'map.json').read_text(encoding='utf-8'))
+                manifest['files']['../escape.png'] = '0' * 64
+                (source / 'map.json').write_text(json.dumps(manifest), encoding='utf-8')
+                spec['map_json'] = hashlib.sha256((source / 'map.json').read_bytes()).hexdigest()
+                with self.assertRaisesRegex(ValueError, '无效文件路径'):
+                    manager_maps.fetch_example('test', tmp / 'cache', fetch=fetch)
+                with self.assertRaisesRegex(ValueError, '没有这个示例地图'):
+                    manager_maps.fetch_example('missing', tmp / 'cache', fetch=fetch)
+            finally:
+                manager_maps.EXAMPLES.clear()
+                manager_maps.EXAMPLES.update(original)
 
 
 class WorkspaceTests(unittest.TestCase):

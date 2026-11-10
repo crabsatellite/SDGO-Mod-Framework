@@ -284,7 +284,7 @@ def load(root: Path | str) -> Package:
         if not isinstance(layer, dict):
             _fail(f'terrain.layers[{i}] 必须是对象')
         mask = '' if i == 0 and not layer.get('mask') else packaged(layer.get('mask'), f'terrain.layers[{i}].mask', ('.png',))
-        layers.append(Layer(packaged(layer.get('texture'), f'terrain.layers[{i}].texture', ('.png',)), mask,
+        layers.append(Layer(packaged(layer.get('texture'), f'terrain.layers[{i}].texture', ('.png', '.jpg', '.jpeg')), mask,
                             _number(layer.get('tiling', 32), f'terrain.layers[{i}].tiling', 1, 512)))
     lighting = terrain.get('lighting') or {}
     sun = _vector(lighting.get('sun_direction', [-0.4, -1.0, 0.3]), 3, 'terrain.lighting.sun_direction')
