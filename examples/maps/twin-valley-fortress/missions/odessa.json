@@ -1,0 +1,1574 @@
+{
+ "schema": "sdgo.map-mission",
+ "schema_version": 1,
+ "mission_key": "sdgo-sample.twin-valley-fortress.odessa",
+ "name": {
+  "zh": "奥德萨作战",
+  "en": "Operation Odessa"
+ },
+ "description": {
+  "zh": "一年战争·奥德萨反攻。突破矿区外围防线，摧毁导弹阵地，掩护钢坦克轰开基地闸门；迎击黑色三连星的喷射气流攻击，突入基地核心，在核弹发射前将其击破。"
+ },
+ "presentation": {
+  "list_banner": "images/cat_list_banner.png",
+  "room_icon": "images/cat_room_icon.png",
+  "room_poster": "images/cat_room_poster.png",
+  "title": "images/cat_title.png",
+  "loading": "images/cat_loading.png"
+ },
+ "briefing": {
+  "zh": [
+   "第1阶段：击破外围扎古部队",
+   "第2阶段：摧毁3座导弹阵地",
+   "第3阶段：掩护钢坦克90秒",
+   "第4阶段：击破黑色三连星",
+   "第5-6阶段：突入基地，60秒内击破核弹头"
+  ]
+ },
+ "difficulties": [
+  {
+   "level": 3,
+   "required_rank": 5,
+   "time_limit": 1200,
+   "lives": 7
+  }
+ ],
+ "bgm": {
+  "native": "BGM\\0036.mp3"
+ },
+ "npcs": {
+  "zaku": {
+   "template": 85392
+  },
+  "turret": {
+   "template": 85192
+  },
+  "nuke": {
+   "template": 85303
+  },
+  "gundam_actor": {
+   "template": 85512
+  },
+  "whitebase_actor": {
+   "template": 85268
+  },
+  "guntank": {
+   "template": 85502,
+   "name": {
+    "zh": "钢坦克（隼人）",
+    "en": "Guntank"
+   },
+   "hp": 12000
+  },
+  "gm_ally": {
+   "template": 85500,
+   "name": {
+    "zh": "吉姆（联邦友军）",
+    "en": "GM ally"
+   },
+   "hp": 6000,
+   "boss": false
+  },
+  "zaku_bazooka": {
+   "unit": 11011,
+   "base": 85392,
+   "hp": 4300,
+   "name": {
+    "zh": "扎古II改良型（火箭炮）",
+    "en": "Zaku II Bazooka"
+   }
+  },
+  "zaku_one": {
+   "unit": 11031,
+   "base": 85392,
+   "hp": 3600,
+   "name": {
+    "zh": "扎古I",
+    "en": "Zaku I"
+   }
+  },
+  "zaku_magella": {
+   "unit": 11024,
+   "base": 85392,
+   "hp": 4100,
+   "name": {
+    "zh": "扎古II（马哲兰炮）",
+    "en": "Zaku II Magella"
+   }
+  },
+  "zaku_mine": {
+   "unit": 11050,
+   "base": 85392,
+   "hp": 3900,
+   "name": {
+    "zh": "扎古布雷者",
+    "en": "Zaku Minelayer"
+   }
+  },
+  "zaku_cannon": {
+   "unit": 11060,
+   "base": 85392,
+   "hp": 4600,
+   "name": {
+    "zh": "扎古加农",
+    "en": "Zaku Cannon"
+   }
+  },
+  "dopp": {
+   "unit": 11010,
+   "base": 85392,
+   "hp": 2500,
+   "name": {
+    "zh": "老虎",
+    "en": "Dopp"
+   }
+  },
+  "dopp_fly": {
+   "unit": 11012,
+   "base": 85392,
+   "hp": 2600,
+   "name": {
+    "zh": "老虎试飞型",
+    "en": "Dopp flight"
+   }
+  },
+  "dom_trop": {
+   "unit": 11004,
+   "base": 85392,
+   "hp": 6200,
+   "name": {
+    "zh": "大魔热带型",
+    "en": "Dom Tropical"
+   }
+  },
+  "dom_desert": {
+   "unit": 11026,
+   "base": 85392,
+   "hp": 6400,
+   "name": {
+    "zh": "大魔热带型（沙漠战）",
+    "en": "Dom Desert"
+   }
+  },
+  "tristar_zaku": {
+   "unit": 11071,
+   "base": 85392,
+   "hp": 5200,
+   "name": {
+    "zh": "黑色三连星专用扎古II",
+    "en": "Tri-Stars Zaku"
+   }
+  },
+  "commander": {
+   "unit": 11046,
+   "base": 85392,
+   "hp": 6800,
+   "name": {
+    "zh": "扎古II（指挥官用）",
+    "en": "Commander Zaku"
+   }
+  },
+  "dom": {
+   "unit": 11003,
+   "base": 85392,
+   "hp": 6600,
+   "name": {
+    "zh": "大魔",
+    "en": "Dom"
+   }
+  },
+  "dopp_kai": {
+   "unit": 11017,
+   "base": 85392,
+   "hp": 3200,
+   "name": {
+    "zh": "老虎特装型",
+    "en": "Dopp custom"
+   }
+  },
+  "gaia": {
+   "template": 85109,
+   "ai": "VSAI_Infighter_01",
+   "hp": 9000,
+   "boss": true,
+   "name": {
+    "zh": "大魔（加亚）",
+    "en": "Dom Gaia"
+   }
+  },
+  "mash": {
+   "template": 85110,
+   "ai": "VSAI_Infighter_02",
+   "hp": 8500,
+   "boss": true,
+   "name": {
+    "zh": "大魔（马修）",
+    "en": "Dom Mash"
+   }
+  },
+  "ortega": {
+   "template": 85111,
+   "ai": "VSAI_Gunfighter_01",
+   "hp": 8800,
+   "boss": true,
+   "name": {
+    "zh": "大魔（奥尔迪加）",
+    "en": "Dom Ortega"
+   }
+  },
+  "gyan": {
+   "unit": 11021,
+   "base": 85109,
+   "ai": "VSAI_Infighter_03",
+   "hp": 12000,
+   "boss": true,
+   "name": {
+    "zh": "强人（马克贝）",
+    "en": "Gyan M'Quve"
+   }
+  }
+ },
+ "lines": {
+  "l01": {
+   "portrait": "sprs\\14116.spr",
+   "speaker": {
+    "zh": "联邦司令部"
+   },
+   "text": {
+    "zh": "全军听令，奥德萨作战开始。夺回矿山基地，把吉翁赶出欧洲！"
+   }
+  },
+  "l02": {
+   "portrait": "sprs\\15638.spr",
+   "speaker": {
+    "zh": "布莱德"
+   },
+   "text": {
+    "zh": "白色基地全机出击！阿姆罗、凯、隼人，按计划从南面突破外围防线！"
+   }
+  },
+  "l03": {
+   "portrait": "sprs\\8629.spr",
+   "speaker": {
+    "zh": "阿姆罗"
+   },
+   "text": {
+    "zh": "明白。高达，出击！"
+   }
+  },
+  "l04": {
+   "portrait": "sprs\\9070.spr",
+   "speaker": {
+    "zh": "芙劳"
+   },
+   "text": {
+    "zh": "外围扎古部队已溃散！前方山脊下有导弹阵地，正在锁定友军！"
+   }
+  },
+  "l05": {
+   "portrait": "sprs\\8819.spr",
+   "speaker": {
+    "zh": "凯"
+   },
+   "text": {
+    "zh": "又是导弹啊……好吧，我去把它们拆了！"
+   }
+  },
+  "l06": {
+   "portrait": "sprs\\15638.spr",
+   "speaker": {
+    "zh": "布莱德"
+   },
+   "text": {
+    "zh": "导弹阵地沉默了。隼人，用钢坦克轰开基地正门！其他人掩护他！"
+   }
+  },
+  "l07": {
+   "portrait": "sprs\\8644.spr",
+   "speaker": {
+    "zh": "隼人"
+   },
+   "text": {
+    "zh": "交给我吧！在打开大门之前，别让敌人靠近！"
+   }
+  },
+  "l08": {
+   "portrait": "sprs\\8722.spr",
+   "speaker": {
+    "zh": "芙劳"
+   },
+   "text": {
+    "zh": "截获吉翁通讯——是黑色三连星！三台大魔正高速接近！"
+   }
+  },
+  "l09": {
+   "portrait": "sprs\\9070.spr",
+   "speaker": {
+    "zh": "芙劳"
+   },
+   "text": {
+    "zh": "他们说……要发动“喷射气流攻击”！"
+   }
+  },
+  "l10": {
+   "portrait": "sprs\\8631.spr",
+   "speaker": {
+    "zh": "阿姆罗"
+   },
+   "text": {
+    "zh": "三台排成一列冲过来……别慌，先把最前面那台打下来！"
+   }
+  },
+  "l11": {
+   "portrait": "sprs\\8632.spr",
+   "speaker": {
+    "zh": "阿姆罗"
+   },
+   "text": {
+    "zh": "踩着同伴的肩膀……可我也看见你们的破绽了！"
+   }
+  },
+  "l12": {
+   "portrait": "sprs\\14116.spr",
+   "speaker": {
+    "zh": "联邦司令部"
+   },
+   "text": {
+    "zh": "三连星已被击退！闸门开了，全军突入基地核心！"
+   }
+  },
+  "l13": {
+   "portrait": "sprs\\8722.spr",
+   "speaker": {
+    "zh": "芙劳"
+   },
+   "text": {
+    "zh": "基地深处有导弹点火！是……核弹头！马克贝要用核弹攻击我军主力！"
+   }
+  },
+  "l14": {
+   "portrait": "sprs\\15638.spr",
+   "speaker": {
+    "zh": "布莱德"
+   },
+   "text": {
+    "zh": "绝不能让它飞出去！阿姆罗，拦截！只有六十秒！"
+   }
+  },
+  "l15": {
+   "portrait": "sprs\\8630.spr",
+   "speaker": {
+    "zh": "阿姆罗"
+   },
+   "text": {
+    "zh": "核弹……拦下来了。"
+   }
+  },
+  "l16": {
+   "portrait": "sprs\\15638.spr",
+   "speaker": {
+    "zh": "布莱德"
+   },
+   "text": {
+    "zh": "干得好。奥德萨作战，我军胜利！全机返航！"
+   }
+  }
+ },
+ "banners": {
+  "odessa": {
+   "image": "images/banner_odessa.png"
+  },
+  "tristars": {
+   "image": "images/banner_tristars.png"
+  },
+  "nuke": {
+   "image": "images/banner_nuke.png"
+  },
+  "gyan": {
+   "image": "images/banner_gyan.png"
+  },
+  "complete": {
+   "image": "images/banner_complete.png"
+  }
+ },
+ "sectors": {
+  "north_valley": {
+   "warp": [
+    [
+     -300.0,
+     140.9,
+     3300.0
+    ],
+    [
+     300.0,
+     141.1,
+     3300.0
+    ],
+    [
+     -300.0,
+     117.4,
+     3550.0
+    ],
+    [
+     300.0,
+     116.3,
+     3550.0
+    ]
+   ],
+   "facing": [
+    0,
+    1
+   ],
+   "rect": [
+    -4600,
+    6200,
+    4600,
+    2900
+   ]
+  }
+ },
+ "phases": [
+  {
+   "key": "outer",
+   "objective": {
+    "zh": "击破外围扎古部队（共16台）"
+   },
+   "slots": {
+    "ally": 2,
+    "enemy": 8
+   },
+   "spawns": [
+    {
+     "npc": "gm_ally",
+     "side": "ally",
+     "positions": [
+      [
+       -2600.0,
+       156.4,
+       -2700.0
+      ],
+      [
+       -2600.0,
+       150.1,
+       -1900.0
+      ]
+     ],
+     "at": 1
+    },
+    {
+     "npc": "zaku",
+     "positions": [
+      [
+       2100.0,
+       139.0,
+       -2300.0
+      ],
+      [
+       1650.0,
+       145.8,
+       -1520.5771365940054
+      ],
+      [
+       750.0000000000002,
+       143.2,
+       -1520.5771365940052
+      ],
+      [
+       300.0,
+       349.7,
+       -2300.0
+      ],
+      [
+       749.9999999999995,
+       130.4,
+       -3079.4228634059946
+      ],
+      [
+       1650.0,
+       132.1,
+       -3079.4228634059946
+      ]
+     ],
+     "at": 1,
+     "every": 2
+    },
+    {
+     "npc": "zaku_bazooka",
+     "positions": [
+      [
+       2700.0,
+       128.3,
+       -3200.0
+      ],
+      [
+       2200.0,
+       134.4,
+       -2700.0
+      ],
+      [
+       1700.0,
+       140.2,
+       -3200.0
+      ],
+      [
+       2200.0,
+       139.0,
+       -3700.0
+      ]
+     ],
+     "at": 8,
+     "every": 3
+    },
+    {
+     "npc": "zaku_one",
+     "positions": [
+      [
+       2700.0,
+       141.2,
+       -1400.0
+      ],
+      [
+       1950.0,
+       199.7,
+       -966.9872981077806
+      ],
+      [
+       1949.9999999999998,
+       143.3,
+       -1833.0127018922192
+      ]
+     ],
+     "at": 12,
+     "every": 3
+    },
+    {
+     "npc": "zaku_magella",
+     "positions": [
+      [
+       3400.0,
+       143.7,
+       -2300.0
+      ],
+      [
+       2800.0,
+       139.3,
+       -1953.5898384862244
+      ],
+      [
+       2800.0,
+       137.3,
+       -2646.410161513775
+      ]
+     ],
+     "at": 18,
+     "every": 3
+    }
+   ],
+   "goal": {
+    "kill": [
+     {
+      "npc": "zaku",
+      "count": 6
+     },
+     {
+      "npc": "zaku_bazooka",
+      "count": 4
+     },
+     {
+      "npc": "zaku_one",
+      "count": 3
+     },
+     {
+      "npc": "zaku_magella",
+      "count": 3
+     }
+    ]
+   },
+   "fail": [
+    {
+     "time_limit": 420
+    }
+   ],
+   "reward": {
+    "points": 60,
+    "unit_exp": 120
+   }
+  },
+  {
+   "key": "missiles",
+   "objective": {
+    "zh": "摧毁3座四联装导弹阵地"
+   },
+   "slots": {
+    "ally": 0,
+    "enemy": 9
+   },
+   "enter": {
+    "lines": [
+     "l04",
+     "l05"
+    ]
+   },
+   "spawns": [
+    {
+     "npc": "turret",
+     "positions": [
+      [
+       -1500.0,
+       60.7,
+       -500.0
+      ],
+      [
+       0.0,
+       27.7,
+       200.0
+      ],
+      [
+       1500.0,
+       43.4,
+       -500.0
+      ]
+     ],
+     "at": 1,
+     "min_free": 3
+    },
+    {
+     "npc": "zaku_cannon",
+     "positions": [
+      [
+       1300.0,
+       153.0,
+       -900.0
+      ],
+      [
+       7.960204194457796e-14,
+       147.5,
+       400.0
+      ],
+      [
+       -1300.0,
+       168.1,
+       -899.9999999999999
+      ],
+      [
+       -2.3880612583373384e-13,
+       406.7,
+       -2200.0
+      ]
+     ],
+     "at": 3,
+     "every": 2
+    },
+    {
+     "npc": "dopp",
+     "positions": [
+      [
+       1800.0,
+       146.3,
+       -1600.0
+      ],
+      [
+       -899.9999999999995,
+       163.5,
+       -41.15427318801039
+      ],
+      [
+       -900.0000000000008,
+       146.9,
+       -3158.845726811989
+      ]
+     ],
+     "at": 10,
+     "every": 4
+    },
+    {
+     "npc": "zaku_mine",
+     "positions": [
+      [
+       1500.0,
+       149.4,
+       -1200.0
+      ],
+      [
+       -1500.0,
+       201.1,
+       -1199.9999999999998
+      ]
+     ],
+     "at": 16,
+     "every": 4
+    }
+   ],
+   "goal": {
+    "kill": [
+     {
+      "npc": "turret",
+      "count": 3
+     }
+    ]
+   },
+   "fail": [
+    {
+     "time_limit": 360
+    }
+   ],
+   "reward": {
+    "points": 60,
+    "unit_exp": 120
+   }
+  },
+  {
+   "key": "guntank",
+   "objective": {
+    "zh": "掩护钢坦克炮击闸门（坚守90秒）"
+   },
+   "slots": {
+    "ally": 1,
+    "enemy": 8
+   },
+   "enter": {
+    "lines": [
+     "l06",
+     "l07"
+    ]
+   },
+   "spawns": [
+    {
+     "npc": "guntank",
+     "side": "ally",
+     "positions": [
+      [
+       0.0,
+       140.0,
+       700.0
+      ]
+     ],
+     "at": 1
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       1900.0,
+       185.1,
+       900.0
+      ],
+      [
+       1.1634144591899854e-13,
+       147.8,
+       2800.0
+      ],
+      [
+       -1900.0,
+       122.7,
+       900.0000000000002
+      ],
+      [
+       -3.4902433775699563e-13,
+       154.1,
+       -1000.0
+      ]
+     ],
+     "at": 6,
+     "every": 4
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       2300.0,
+       130.2,
+       600.0
+      ],
+      [
+       1.4083438190194562e-13,
+       148.4,
+       2900.0
+      ],
+      [
+       -2300.0,
+       124.1,
+       600.0000000000002
+      ],
+      [
+       -4.225031457058368e-13,
+       225.0,
+       -1700.0
+      ]
+     ],
+     "at": 20,
+     "every": 5
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       2100.0,
+       142.7,
+       300.0
+      ],
+      [
+       -2100.0,
+       147.3,
+       300.0000000000003
+      ]
+     ],
+     "at": 45,
+     "every": 6
+    }
+   ],
+   "goal": {
+    "survive": 90
+   },
+   "fail": [
+    {
+     "lose": {
+      "npc": "guntank"
+     }
+    }
+   ],
+   "reward": {
+    "points": 80,
+    "unit_exp": 150
+   }
+  },
+  {
+   "key": "tristars",
+   "objective": {
+    "zh": "击破黑色三连星（3台大魔）"
+   },
+   "slots": {
+    "ally": 0,
+    "enemy": 6
+   },
+   "enter": {
+    "cutscene": "tristars",
+    "lines": [
+     "l10"
+    ]
+   },
+   "spawns": [
+    {
+     "npc": "mash",
+     "positions": [
+      [
+       0.0,
+       135.0,
+       1300.0
+      ]
+     ],
+     "at": 1,
+     "min_free": 3
+    },
+    {
+     "npc": "gaia",
+     "positions": [
+      [
+       0.0,
+       136.1,
+       1650.0
+      ]
+     ],
+     "at": 1
+    },
+    {
+     "npc": "ortega",
+     "positions": [
+      [
+       0.0,
+       139.6,
+       2000.0
+      ]
+     ],
+     "at": 1
+    },
+    {
+     "npc": "tristar_zaku",
+     "positions": [
+      [
+       1200.0,
+       141.1,
+       900.0
+      ],
+      [
+       -599.9999999999998,
+       172.0,
+       1939.2304845413264
+      ],
+      [
+       -600.0000000000006,
+       162.1,
+       -139.23048454132618
+      ]
+     ],
+     "at": 5,
+     "every": 2
+    }
+   ],
+   "goal": {
+    "kill": [
+     {
+      "npc": "mash",
+      "count": 1
+     },
+     {
+      "npc": "gaia",
+      "count": 1
+     },
+     {
+      "npc": "ortega",
+      "count": 1
+     }
+    ]
+   },
+   "fail": [
+    {
+     "time_limit": 360
+    }
+   ],
+   "reward": {
+    "points": 150,
+    "unit_exp": 300
+   }
+  },
+  {
+   "key": "core",
+   "objective": {
+    "zh": "突入基地核心：击破指挥官型扎古"
+   },
+   "slots": {
+    "ally": 0,
+    "enemy": 8
+   },
+   "enter": {
+    "lines": [
+     "l11",
+     "l12"
+    ],
+    "sector": "north_valley"
+   },
+   "spawns": [
+    {
+     "npc": "commander",
+     "positions": [
+      [
+       -900.0,
+       76.2,
+       4600.0
+      ],
+      [
+       900.0,
+       73.2,
+       4600.0
+      ]
+     ],
+     "at": 3
+    },
+    {
+     "npc": "dom",
+     "positions": [
+      [
+       1500.0,
+       139.6,
+       4300.0
+      ],
+      [
+       9.184850993605149e-14,
+       98.8,
+       5800.0
+      ],
+      [
+       -1500.0,
+       145.4,
+       4300.0
+      ],
+      [
+       -2.7554552980815444e-13,
+       147.8,
+       2800.0
+      ]
+     ],
+     "at": 4,
+     "every": 2
+    }
+   ],
+   "goal": {
+    "kill": [
+     {
+      "npc": "commander",
+      "count": 2
+     }
+    ]
+   },
+   "fail": [
+    {
+     "time_limit": 300
+    }
+   ],
+   "reward": {
+    "points": 80,
+    "unit_exp": 150
+   }
+  },
+  {
+   "key": "nuke",
+   "objective": {
+    "zh": "60秒内击破核弹头"
+   },
+   "slots": {
+    "ally": 0,
+    "enemy": 5
+   },
+   "enter": {
+    "cutscene": "nuke",
+    "lines": [
+     "l14"
+    ]
+   },
+   "spawns": [
+    {
+     "npc": "nuke",
+     "positions": [
+      [
+       0.0,
+       -58.6,
+       5300.0
+      ]
+     ],
+     "at": 1,
+     "min_free": 3
+    },
+    {
+     "npc": "gyan",
+     "positions": [
+      [
+       0.0,
+       -10.5,
+       4700.0
+      ]
+     ],
+     "at": 1
+    },
+    {
+     "npc": "dopp_kai",
+     "positions": [
+      [
+       -800.0,
+       65.1,
+       4900.0
+      ],
+      [
+       800.0,
+       60.6,
+       4900.0
+      ]
+     ],
+     "at": 6
+    }
+   ],
+   "goal": {
+    "kill": [
+     {
+      "npc": "nuke",
+      "count": 1
+     }
+    ]
+   },
+   "fail": [
+    {
+     "time_limit": 60
+    }
+   ],
+   "reward": {
+    "points": 200,
+    "unit_exp": 400
+   }
+  }
+ ],
+ "opening": "opening",
+ "ending": "ending",
+ "cutscenes": {
+  "opening": {
+   "length": 12.0,
+   "actors": {
+    "wb": {
+     "npc": "whitebase_actor",
+     "at": [
+      -4400.0,
+      884.8,
+      -3000.0
+     ],
+     "facing": [
+      1,
+      0.2
+     ]
+    },
+    "gundam": {
+     "npc": "gundam_actor",
+     "at": [
+      -3900.0,
+      626.4,
+      -2800.0
+     ],
+     "facing": [
+      1,
+      0.3
+     ]
+    }
+   },
+   "camera": [
+    {
+     "t": 0,
+     "pos": [
+      -1300.0,
+      1515.9,
+      -4600.0
+     ],
+     "look": [
+      -4300.0,
+      824.8,
+      -2950.0
+     ]
+    },
+    {
+     "t": 4,
+     "pos": [
+      -2500.0,
+      1046.6,
+      -3900.0
+     ],
+     "look": [
+      -4000.0,
+      665.5,
+      -2850.0
+     ]
+    },
+    {
+     "t": 8,
+     "pos": [
+      -2500.0,
+      537.2,
+      -2900.0
+     ],
+     "look": [
+      -3300.0,
+      247.6,
+      -2400.0
+     ]
+    },
+    {
+     "t": 12,
+     "pos": [
+      -2150.0,
+      374.0,
+      -2350.0
+     ],
+     "look": [
+      -3250.0,
+      157.6,
+      -2350.0
+     ]
+    }
+   ],
+   "events": [
+    {
+     "t": 0.5,
+     "line": "l01"
+    },
+    {
+     "t": 3.5,
+     "line": "l02"
+    },
+    {
+     "t": 4.0,
+     "actor": "gundam",
+     "anim": "boost_forward_02",
+     "loop": true
+    },
+    {
+     "t": 4.2,
+     "actor": "gundam",
+     "move_to": [
+      -3250.0,
+      -12.4,
+      -2350.0
+     ]
+    },
+    {
+     "t": 8.2,
+     "actor": "gundam",
+     "anim": "wait_01",
+     "loop": true
+    },
+    {
+     "t": 8.3,
+     "shake": [
+      1,
+      0.5
+     ]
+    },
+    {
+     "t": 8.3,
+     "sound": "0190.zsd"
+    },
+    {
+     "t": 8.8,
+     "banner": "odessa"
+    },
+    {
+     "t": 10.0,
+     "line": "l03"
+    }
+   ]
+  },
+  "tristars": {
+   "length": 9.0,
+   "actors": {
+    "d1": {
+     "npc": "mash",
+     "at": [
+      0.0,
+      114.9,
+      3900.0
+     ],
+     "facing": [
+      0,
+      -1
+     ]
+    },
+    "d2": {
+     "npc": "gaia",
+     "at": [
+      0.0,
+      71.0,
+      4250.0
+     ],
+     "facing": [
+      0,
+      -1
+     ]
+    },
+    "d3": {
+     "npc": "ortega",
+     "at": [
+      0.0,
+      41.2,
+      4600.0
+     ],
+     "facing": [
+      0,
+      -1
+     ]
+    }
+   },
+   "camera": [
+    {
+     "t": 0,
+     "pos": [
+      900.0,
+      894.2,
+      3200.0
+     ],
+     "look": [
+      0.0,
+      126.4,
+      4200.0
+     ]
+    },
+    {
+     "t": 3,
+     "pos": [
+      280.0,
+      509.6,
+      2700.0
+     ],
+     "look": [
+      0.0,
+      238.0,
+      3300.0
+     ]
+    },
+    {
+     "t": 6,
+     "pos": [
+      180.0,
+      282.3,
+      1150.0
+     ],
+     "look": [
+      0.0,
+      310.9,
+      2200.0
+     ]
+    },
+    {
+     "t": 9,
+     "pos": [
+      40.0,
+      256.6,
+      1000.0
+     ],
+     "look": [
+      0.0,
+      186.5,
+      1700.0
+     ]
+    }
+   ],
+   "events": [
+    {
+     "t": 0.3,
+     "actor": "d1",
+     "anim": "boost_forward_02",
+     "loop": true
+    },
+    {
+     "t": 0.3,
+     "actor": "d2",
+     "anim": "boost_forward_02",
+     "loop": true
+    },
+    {
+     "t": 0.3,
+     "actor": "d3",
+     "anim": "boost_forward_02",
+     "loop": true
+    },
+    {
+     "t": 0.5,
+     "actor": "d1",
+     "move_to": [
+      0.0,
+      -15.0,
+      1300.0
+     ]
+    },
+    {
+     "t": 0.8,
+     "actor": "d2",
+     "move_to": [
+      0.0,
+      -13.9,
+      1650.0
+     ]
+    },
+    {
+     "t": 1.1,
+     "actor": "d3",
+     "move_to": [
+      0.0,
+      -10.4,
+      2000.0
+     ]
+    },
+    {
+     "t": 1.0,
+     "line": "l08"
+    },
+    {
+     "t": 6.2,
+     "shake": [
+      1,
+      1
+     ]
+    },
+    {
+     "t": 6.5,
+     "banner": "tristars"
+    },
+    {
+     "t": 4.0,
+     "line": "l09"
+    }
+   ]
+  },
+  "nuke": {
+   "length": 8.0,
+   "camera": [
+    {
+     "t": 0,
+     "pos": [
+      -1500.0,
+      698.6,
+      3900.0
+     ],
+     "look": [
+      0.0,
+      -58.6,
+      5300.0
+     ]
+    },
+    {
+     "t": 4,
+     "pos": [
+      -700.0,
+      323.2,
+      4500.0
+     ],
+     "look": [
+      0.0,
+      -58.6,
+      5300.0
+     ]
+    },
+    {
+     "t": 8,
+     "pos": [
+      -250.0,
+      158.3,
+      4250.0
+     ],
+     "look": [
+      0.0,
+      39.5,
+      4700.0
+     ]
+    }
+   ],
+   "events": [
+    {
+     "t": 0.5,
+     "line": "l13"
+    },
+    {
+     "t": 1.0,
+     "effect": {
+      "fx": "0390.zfx",
+      "at": [
+       0.0,
+       -58.6,
+       5300.0
+      ],
+      "scale": 4
+     }
+    },
+    {
+     "t": 1.0,
+     "sound": "0190.zsd"
+    },
+    {
+     "t": 2.5,
+     "banner": "nuke"
+    },
+    {
+     "t": 5.5,
+     "banner": "gyan"
+    }
+   ]
+  },
+  "ending": {
+   "length": 10.0,
+   "actors": {
+    "gundam": {
+     "npc": "gundam_actor",
+     "at": [
+      0.0,
+      16.1,
+      4300.0
+     ],
+     "facing": [
+      0,
+      -1
+     ]
+    }
+   },
+   "camera": [
+    {
+     "t": 0,
+     "pos": [
+      -900.0,
+      485.7,
+      3900.0
+     ],
+     "look": [
+      0.0,
+      -58.6,
+      5300.0
+     ]
+    },
+    {
+     "t": 3,
+     "pos": [
+      -550.0,
+      203.1,
+      3850.0
+     ],
+     "look": [
+      0.0,
+      16.1,
+      4300.0
+     ]
+    },
+    {
+     "t": 6,
+     "pos": [
+      0.0,
+      174.2,
+      3700.0
+     ],
+     "look": [
+      0.0,
+      16.1,
+      4300.0
+     ]
+    },
+    {
+     "t": 10,
+     "pos": [
+      60.0,
+      181.3,
+      3720.0
+     ],
+     "look": [
+      0.0,
+      16.1,
+      4300.0
+     ]
+    }
+   ],
+   "events": [
+    {
+     "t": 0.3,
+     "effect": {
+      "fx": "0004.zfx",
+      "at": [
+       0.0,
+       -58.6,
+       5300.0
+      ],
+      "scale": 6
+     }
+    },
+    {
+     "t": 0.3,
+     "sound": "0050.zsd"
+    },
+    {
+     "t": 0.4,
+     "shake": [
+      2,
+      1.5
+     ]
+    },
+    {
+     "t": 2.0,
+     "actor": "gundam",
+     "anim": "win",
+     "loop": false
+    },
+    {
+     "t": 3.0,
+     "line": "l15"
+    },
+    {
+     "t": 5.5,
+     "line": "l16"
+    },
+    {
+     "t": 7.0,
+     "banner": "complete"
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,9440 @@
+{
+ "schema": "sdgo.map-package",
+ "schema_version": 1,
+ "map_key": "sdgo-sample.twin-valley-fortress",
+ "name": {
+  "zh": "双谷要塞",
+  "en": "Twin Valley Fortress"
+ },
+ "description": {
+  "zh": "南谷是对战主战场，北谷是首领区，山脊隘口由闸门封闭。",
+  "en": "The south valley is the main arena; the north valley holds the boss; a gate closes the pass between them."
+ },
+ "modes": [
+  "normal",
+  "deathmatch",
+  "captain"
+ ],
+ "servers": [
+  "beginner",
+  "expert"
+ ],
+ "terrain": {
+  "half_extent": 8192.0,
+  "height": {
+   "image": "terrain/height.png",
+   "min": -160.83,
+   "max": 2540.57
+  },
+  "layers": [
+   {
+    "texture": "terrain/base_dry_ground.jpg",
+    "tiling": 31.51
+   },
+   {
+    "texture": "terrain/gravel_sand.jpg",
+    "tiling": 39.01,
+    "mask": "terrain/gravel_sand_mask.png"
+   },
+   {
+    "texture": "terrain/cracked.jpg",
+    "tiling": 25.6,
+    "mask": "terrain/cracked_mask.png"
+   },
+   {
+    "texture": "terrain/rocky.jpg",
+    "tiling": 35.62,
+    "mask": "terrain/rocky_mask.png"
+   },
+   {
+    "texture": "terrain/cliff.jpg",
+    "tiling": 43.12,
+    "mask": "terrain/cliff_mask.png"
+   },
+   {
+    "texture": "terrain/road.jpg",
+    "tiling": 45.51,
+    "mask": "terrain/road_mask.png"
+   },
+   {
+    "texture": "terrain/concrete.jpg",
+    "tiling": 31.51,
+    "mask": "terrain/concrete_mask.png"
+   },
+   {
+    "texture": "terrain/scorch.jpg",
+    "tiling": 27.31,
+    "mask": "terrain/scorch_mask.png"
+   }
+  ],
+  "lighting": {
+   "sun_direction": [
+    -0.5,
+    -0.85,
+    0.4
+   ],
+   "sun_color": [
+    1.0,
+    0.94,
+    0.84
+   ],
+   "ambient": [
+    0.42,
+    0.42,
+    0.46
+   ],
+   "bake_shadows": true
+  },
+  "fog": {
+   "color": [
+    0.72,
+    0.72,
+    0.7
+   ],
+   "start": 6000,
+   "end": 15500
+  },
+  "sky": {
+   "zenith": [
+    0.24,
+    0.4,
+    0.7
+   ],
+   "horizon": [
+    0.78,
+    0.77,
+    0.72
+   ],
+   "ground": [
+    0.52,
+    0.47,
+    0.38
+   ]
+  },
+  "play_area": {
+   "half_x": 4800,
+   "half_z": 6400,
+   "ceiling": 4341
+  }
+ },
+ "objects": [
+  {
+   "position": [
+    0.0,
+    -29.1,
+    2200.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 0.85,
+   "collision": "auto",
+   "native_model": "mdrs\\2858.mod"
+  },
+  {
+   "position": [
+    -1050.0,
+    877.4,
+    2200.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      12.0,
+      0.0
+     ],
+     "half_extents": [
+      11.0,
+      12.0,
+      11.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      12.0,
+      0.0
+     ],
+     "half_extents": [
+      11.0,
+      12.0,
+      11.0
+     ],
+     "rotation_y": 45
+    },
+    {
+     "center": [
+      0.0,
+      25.0,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      2.5,
+      4.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bastion.gltf"
+  },
+  {
+   "position": [
+    -1740.0,
+    993.7,
+    2200.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.5,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      9.6,
+      5.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.0,
+      7.0
+     ],
+     "half_extents": [
+      30.0,
+      5.0,
+      2.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/wall_segment.gltf"
+  },
+  {
+   "position": [
+    -2400.0,
+    990.9,
+    2200.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.5,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      9.6,
+      5.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.0,
+      7.0
+     ],
+     "half_extents": [
+      30.0,
+      5.0,
+      2.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/wall_segment.gltf"
+  },
+  {
+   "position": [
+    -3060.0,
+    991.0,
+    2200.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.5,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      9.6,
+      5.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.0,
+      7.0
+     ],
+     "half_extents": [
+      30.0,
+      5.0,
+      2.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/wall_segment.gltf"
+  },
+  {
+   "position": [
+    -3720.0,
+    989.0,
+    2200.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.5,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      9.6,
+      5.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.0,
+      7.0
+     ],
+     "half_extents": [
+      30.0,
+      5.0,
+      2.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/wall_segment.gltf"
+  },
+  {
+   "position": [
+    -4410.0,
+    1048.6,
+    2200.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      12.0,
+      0.0
+     ],
+     "half_extents": [
+      11.0,
+      12.0,
+      11.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      12.0,
+      0.0
+     ],
+     "half_extents": [
+      11.0,
+      12.0,
+      11.0
+     ],
+     "rotation_y": 45
+    },
+    {
+     "center": [
+      0.0,
+      25.0,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      2.5,
+      4.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bastion.gltf"
+  },
+  {
+   "position": [
+    1050.0,
+    879.9,
+    2200.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      12.0,
+      0.0
+     ],
+     "half_extents": [
+      11.0,
+      12.0,
+      11.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      12.0,
+      0.0
+     ],
+     "half_extents": [
+      11.0,
+      12.0,
+      11.0
+     ],
+     "rotation_y": 45
+    },
+    {
+     "center": [
+      0.0,
+      25.0,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      2.5,
+      4.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bastion.gltf"
+  },
+  {
+   "position": [
+    1740.0,
+    985.5,
+    2200.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.5,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      9.6,
+      5.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.0,
+      7.0
+     ],
+     "half_extents": [
+      30.0,
+      5.0,
+      2.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/wall_segment.gltf"
+  },
+  {
+   "position": [
+    2400.0,
+    991.1,
+    2200.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.5,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      9.6,
+      5.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.0,
+      7.0
+     ],
+     "half_extents": [
+      30.0,
+      5.0,
+      2.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/wall_segment.gltf"
+  },
+  {
+   "position": [
+    3060.0,
+    998.1,
+    2200.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.5,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      9.6,
+      5.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.0,
+      7.0
+     ],
+     "half_extents": [
+      30.0,
+      5.0,
+      2.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/wall_segment.gltf"
+  },
+  {
+   "position": [
+    3720.0,
+    992.9,
+    2200.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.5,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      9.6,
+      5.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.0,
+      7.0
+     ],
+     "half_extents": [
+      30.0,
+      5.0,
+      2.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/wall_segment.gltf"
+  },
+  {
+   "position": [
+    4410.0,
+    1060.8,
+    2200.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      12.0,
+      0.0
+     ],
+     "half_extents": [
+      11.0,
+      12.0,
+      11.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      12.0,
+      0.0
+     ],
+     "half_extents": [
+      11.0,
+      12.0,
+      11.0
+     ],
+     "rotation_y": 45
+    },
+    {
+     "center": [
+      0.0,
+      25.0,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      2.5,
+      4.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bastion.gltf"
+  },
+  {
+   "position": [
+    0.0,
+    203.2,
+    -2560.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      21.0,
+      0.0
+     ],
+     "half_extents": [
+      4.0,
+      21.0,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.5,
+      26.0
+     ],
+     "half_extents": [
+      8.0,
+      5.5,
+      6.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/headframe.gltf"
+  },
+  {
+   "position": [
+    -470.0,
+    109.1,
+    -2130.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 6.05,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 45
+    }
+   ],
+   "model": "models/fuel_tank.gltf"
+  },
+  {
+   "position": [
+    470.0,
+    108.4,
+    -2130.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 6.05,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 45
+    }
+   ],
+   "model": "models/fuel_tank.gltf"
+  },
+  {
+   "position": [
+    0.0,
+    157.3,
+    -1900.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      4.0,
+      9.5
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bunker.gltf"
+  },
+  {
+   "position": [
+    -1700.0,
+    24.8,
+    -3600.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      4.0,
+      9.5
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bunker.gltf"
+  },
+  {
+   "position": [
+    1700.0,
+    6.9,
+    -3600.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      4.0,
+      9.5
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bunker.gltf"
+  },
+  {
+   "position": [
+    -2350.0,
+    126.8,
+    -650.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      4.0,
+      9.5
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bunker.gltf"
+  },
+  {
+   "position": [
+    2350.0,
+    23.6,
+    -650.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      4.0,
+      9.5
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bunker.gltf"
+  },
+  {
+   "position": [
+    -2650.0,
+    -9.0,
+    -3750.0
+   ],
+   "rotation_y": 30.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      2.0,
+      9.0,
+      2.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      7.0,
+      1.7,
+      -4.0
+     ],
+     "half_extents": [
+      4.0,
+      1.7,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/radar.gltf"
+  },
+  {
+   "position": [
+    2650.0,
+    -28.6,
+    -3750.0
+   ],
+   "rotation_y": -30.0,
+   "scale": 8.8,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      17.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      17.0,
+      11.5
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      37.0,
+      0.0
+     ],
+     "half_extents": [
+      5.0,
+      4.0,
+      5.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/silos.gltf"
+  },
+  {
+   "position": [
+    -1850.0,
+    11.8,
+    -20.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      0.7,
+      0.0
+     ],
+     "half_extents": [
+      12.0,
+      0.7,
+      12.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      4.7,
+      9.0
+     ],
+     "half_extents": [
+      5.0,
+      3.5,
+      6.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      6.0,
+      0.0
+     ],
+     "half_extents": [
+      3.5,
+      4.0,
+      4.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/missile_pad.gltf"
+  },
+  {
+   "position": [
+    1850.0,
+    -2.9,
+    -20.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      0.7,
+      0.0
+     ],
+     "half_extents": [
+      12.0,
+      0.7,
+      12.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      4.7,
+      9.0
+     ],
+     "half_extents": [
+      5.0,
+      3.5,
+      6.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      6.0,
+      0.0
+     ],
+     "half_extents": [
+      3.5,
+      4.0,
+      4.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/missile_pad.gltf"
+  },
+  {
+   "position": [
+    380.0,
+    -18.7,
+    780.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      0.7,
+      0.0
+     ],
+     "half_extents": [
+      12.0,
+      0.7,
+      12.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      4.7,
+      9.0
+     ],
+     "half_extents": [
+      5.0,
+      3.5,
+      6.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      6.0,
+      0.0
+     ],
+     "half_extents": [
+      3.5,
+      4.0,
+      4.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/missile_pad.gltf"
+  },
+  {
+   "position": [
+    -2700.0,
+    -0.6,
+    3700.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      13.0,
+      0.0
+     ],
+     "half_extents": [
+      20.0,
+      13.0,
+      35.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      25.0,
+      4.5,
+      6.0
+     ],
+     "half_extents": [
+      6.0,
+      4.5,
+      12.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/hangar.gltf"
+  },
+  {
+   "position": [
+    2700.0,
+    -5.6,
+    3700.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      13.0,
+      0.0
+     ],
+     "half_extents": [
+      20.0,
+      13.0,
+      35.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      25.0,
+      4.5,
+      6.0
+     ],
+     "half_extents": [
+      6.0,
+      4.5,
+      12.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/hangar.gltf"
+  },
+  {
+   "position": [
+    -2600.0,
+    -21.7,
+    5300.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      17.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      17.0,
+      11.5
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      37.0,
+      0.0
+     ],
+     "half_extents": [
+      5.0,
+      4.0,
+      5.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/silos.gltf"
+  },
+  {
+   "position": [
+    2600.0,
+    -23.4,
+    5350.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      21.0,
+      0.0
+     ],
+     "half_extents": [
+      4.0,
+      21.0,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      5.5,
+      26.0
+     ],
+     "half_extents": [
+      8.0,
+      5.5,
+      6.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/headframe.gltf"
+  },
+  {
+   "position": [
+    -1700.0,
+    6.1,
+    6150.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 45
+    }
+   ],
+   "model": "models/fuel_tank.gltf"
+  },
+  {
+   "position": [
+    1700.0,
+    -17.8,
+    6150.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 45
+    }
+   ],
+   "model": "models/fuel_tank.gltf"
+  },
+  {
+   "position": [
+    1100.0,
+    -20.1,
+    5800.0
+   ],
+   "rotation_y": 200.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      2.0,
+      9.0,
+      2.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      7.0,
+      1.7,
+      -4.0
+     ],
+     "half_extents": [
+      4.0,
+      1.7,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/radar.gltf"
+  },
+  {
+   "position": [
+    -1100.0,
+    -15.4,
+    5800.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      4.0,
+      9.5
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bunker.gltf"
+  },
+  {
+   "position": [
+    -4150.0,
+    -10.8,
+    5000.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      7.5,
+      0.0
+     ],
+     "half_extents": [
+      17.0,
+      7.5,
+      11.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      2.5,
+      -12.5
+     ],
+     "half_extents": [
+      5.5,
+      2.5,
+      2.5
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/command_block.gltf"
+  },
+  {
+   "position": [
+    -3850.0,
+    5.9,
+    3420.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      5.5,
+      0.0
+     ],
+     "half_extents": [
+      22.6,
+      5.5,
+      6.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/barracks.gltf"
+  },
+  {
+   "position": [
+    -3850.0,
+    -12.9,
+    3980.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      5.5,
+      0.0
+     ],
+     "half_extents": [
+      22.6,
+      5.5,
+      6.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/barracks.gltf"
+  },
+  {
+   "position": [
+    -4500.0,
+    3.4,
+    4450.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      5.5,
+      0.0
+     ],
+     "half_extents": [
+      22.6,
+      5.5,
+      6.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/barracks.gltf"
+  },
+  {
+   "position": [
+    -3250.0,
+    -17.9,
+    4550.0
+   ],
+   "rotation_y": 15.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    -2250.0,
+    3.2,
+    2950.0
+   ],
+   "rotation_y": 80.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    -3300.0,
+    -7.9,
+    6050.0
+   ],
+   "rotation_y": 200.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    -2950.0,
+    -22.5,
+    6500.0
+   ],
+   "rotation_y": 160.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      4.0,
+      9.5
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/bunker.gltf"
+  },
+  {
+   "position": [
+    3330.0,
+    -2.6,
+    5330.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      7.0,
+      -20.0
+     ],
+     "half_extents": [
+      2.0,
+      7.0,
+      20.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      13.0,
+      20.0
+     ],
+     "half_extents": [
+      2.0,
+      13.0,
+      20.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      3.5,
+      -44.0
+     ],
+     "half_extents": [
+      6.0,
+      3.5,
+      5.2
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      14.0,
+      44.0
+     ],
+     "half_extents": [
+      5.3,
+      14.3,
+      5.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/conveyor.gltf"
+  },
+  {
+   "position": [
+    4300.0,
+    3.6,
+    5350.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 9.35,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      17.0,
+      0.0
+     ],
+     "half_extents": [
+      11.5,
+      17.0,
+      11.5
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      37.0,
+      0.0
+     ],
+     "half_extents": [
+      5.0,
+      4.0,
+      5.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/silos.gltf"
+  },
+  {
+   "position": [
+    3850.0,
+    2.9,
+    4250.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      5.5,
+      0.0
+     ],
+     "half_extents": [
+      22.6,
+      5.5,
+      6.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/barracks.gltf"
+  },
+  {
+   "position": [
+    3250.0,
+    17.2,
+    3150.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      5.5,
+      0.0
+     ],
+     "half_extents": [
+      22.6,
+      5.5,
+      6.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/barracks.gltf"
+  },
+  {
+   "position": [
+    3200.0,
+    3.4,
+    4550.0
+   ],
+   "rotation_y": -20.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    2250.0,
+    432.0,
+    2950.0
+   ],
+   "rotation_y": 260.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    2900.0,
+    -42.9,
+    6500.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 7.7,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 45
+    }
+   ],
+   "model": "models/fuel_tank.gltf"
+  },
+  {
+   "position": [
+    -2350.0,
+    -17.4,
+    6650.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 6.6,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      9.0,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      9.0,
+      14.0
+     ],
+     "rotation_y": 45
+    }
+   ],
+   "model": "models/fuel_tank.gltf"
+  },
+  {
+   "position": [
+    -4650.0,
+    110.3,
+    3050.0
+   ],
+   "rotation_y": 107.7,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    -4700.0,
+    19.2,
+    6150.0
+   ],
+   "rotation_y": 62.7,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    4650.0,
+    -14.0,
+    3050.0
+   ],
+   "rotation_y": 302.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    4700.0,
+    4.3,
+    6150.0
+   ],
+   "rotation_y": 260.7,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    -1350.0,
+    3.8,
+    6750.0
+   ],
+   "rotation_y": 261.9,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    1350.0,
+    -44.8,
+    6750.0
+   ],
+   "rotation_y": 134.3,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    -5050.0,
+    28.1,
+    3200.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    -5050.0,
+    -11.1,
+    3900.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    -5050.0,
+    -5.5,
+    4600.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    -5050.0,
+    19.2,
+    5300.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    -5050.0,
+    7.7,
+    6000.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    5050.0,
+    -1.6,
+    3200.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    5050.0,
+    27.0,
+    3900.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    5050.0,
+    24.7,
+    4600.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    5050.0,
+    35.2,
+    5300.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    5050.0,
+    13.4,
+    6000.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      16.0,
+      0.0
+     ],
+     "half_extents": [
+      3.0,
+      16.0,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pylon.gltf"
+  },
+  {
+   "position": [
+    -3300.0,
+    -4.0,
+    3850.0
+   ],
+   "rotation_y": 20.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    -2350.0,
+    15.5,
+    4250.0
+   ],
+   "rotation_y": 100.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    -3700.0,
+    -12.6,
+    4700.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    -4500.0,
+    10.8,
+    5600.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    3300.0,
+    4.0,
+    3850.0
+   ],
+   "rotation_y": -25.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    2450.0,
+    4.7,
+    4300.0
+   ],
+   "rotation_y": 260.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    3900.0,
+    -3.6,
+    5900.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    2750.0,
+    -21.5,
+    6100.0
+   ],
+   "rotation_y": 300.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    -500.0,
+    -7.4,
+    6450.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    500.0,
+    -12.9,
+    6450.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    -2350.0,
+    10.5,
+    -5500.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      8.4,
+      0.0
+     ],
+     "half_extents": [
+      32.6,
+      8.4,
+      18.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      39.0,
+      4.5,
+      -11.0
+     ],
+     "half_extents": [
+      7.0,
+      4.5,
+      7.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/factory_hall.gltf"
+  },
+  {
+   "position": [
+    1950.0,
+    -3.4,
+    -5650.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      8.4,
+      0.0
+     ],
+     "half_extents": [
+      32.6,
+      8.4,
+      18.6
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      39.0,
+      4.5,
+      -11.0
+     ],
+     "half_extents": [
+      7.0,
+      4.5,
+      7.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/factory_hall.gltf"
+  },
+  {
+   "position": [
+    -1640.0,
+    35.7,
+    -5430.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.6,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      4.6,
+      2.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pipe_rack.gltf"
+  },
+  {
+   "position": [
+    -980.0,
+    28.7,
+    -5430.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.6,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      4.6,
+      2.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pipe_rack.gltf"
+  },
+  {
+   "position": [
+    -60.0,
+    1.2,
+    -5470.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      12.5,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      12.5,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      14.0,
+      13.0,
+      4.0
+     ],
+     "half_extents": [
+      1.6,
+      12.0,
+      1.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/process_tanks.gltf"
+  },
+  {
+   "position": [
+    900.0,
+    -10.4,
+    -5430.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      4.6,
+      0.0
+     ],
+     "half_extents": [
+      30.5,
+      4.6,
+      2.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/pipe_rack.gltf"
+  },
+  {
+   "position": [
+    -1250.0,
+    54.8,
+    -5980.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      3.0,
+      0.0
+     ],
+     "half_extents": [
+      5.5,
+      3.0,
+      5.5
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      33.5,
+      0.0
+     ],
+     "half_extents": [
+      3.4,
+      27.5,
+      3.4
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/smokestack.gltf"
+  },
+  {
+   "position": [
+    -820.0,
+    54.4,
+    -6040.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      3.0,
+      0.0
+     ],
+     "half_extents": [
+      5.5,
+      3.0,
+      5.5
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      33.5,
+      0.0
+     ],
+     "half_extents": [
+      3.4,
+      27.5,
+      3.4
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/smokestack.gltf"
+  },
+  {
+   "position": [
+    3750.0,
+    -5.8,
+    -5300.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      22.5,
+      0.0
+     ],
+     "half_extents": [
+      16.0,
+      22.5,
+      16.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      22.5,
+      0.0
+     ],
+     "half_extents": [
+      16.0,
+      22.5,
+      16.0
+     ],
+     "rotation_y": 45
+    }
+   ],
+   "model": "models/cooling_tower.gltf"
+  },
+  {
+   "position": [
+    3500.0,
+    18.4,
+    -4650.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 9.9,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      12.5,
+      0.0
+     ],
+     "half_extents": [
+      14.0,
+      12.5,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      14.0,
+      13.0,
+      4.0
+     ],
+     "half_extents": [
+      1.6,
+      12.0,
+      1.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/process_tanks.gltf"
+  },
+  {
+   "position": [
+    -3200.0,
+    -7.3,
+    -4950.0
+   ],
+   "rotation_y": 25.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    750.0,
+    -27.0,
+    -4950.0
+   ],
+   "rotation_y": -10.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    2950.0,
+    -11.3,
+    -6050.0
+   ],
+   "rotation_y": 80.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    -1700.0,
+    27.1,
+    -4950.0
+   ],
+   "rotation_y": 15.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    -2900.0,
+    47.1,
+    -6050.0
+   ],
+   "rotation_y": 95.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    1300.0,
+    5.3,
+    -5000.0
+   ],
+   "rotation_y": 200.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    2600.0,
+    7.1,
+    -4950.0
+   ],
+   "rotation_y": 340.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    300.0,
+    0.3,
+    -6050.0
+   ],
+   "rotation_y": 80.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    -4450.0,
+    -8.8,
+    -3350.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      5.5,
+      0.0
+     ],
+     "half_extents": [
+      22.6,
+      5.5,
+      6.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/barracks.gltf"
+  },
+  {
+   "position": [
+    -4450.0,
+    -23.7,
+    -1150.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      5.5,
+      0.0
+     ],
+     "half_extents": [
+      22.6,
+      5.5,
+      6.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/barracks.gltf"
+  },
+  {
+   "position": [
+    -4350.0,
+    6.2,
+    -2250.0
+   ],
+   "rotation_y": 80.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    -4650.0,
+    -9.6,
+    -4250.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    -4650.0,
+    -18.2,
+    -300.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    -4100.0,
+    -37.1,
+    -2900.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    4450.0,
+    -18.4,
+    -3350.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      5.5,
+      0.0
+     ],
+     "half_extents": [
+      22.6,
+      5.5,
+      6.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/barracks.gltf"
+  },
+  {
+   "position": [
+    4450.0,
+    34.0,
+    -1150.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      5.5,
+      0.0
+     ],
+     "half_extents": [
+      22.6,
+      5.5,
+      6.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/barracks.gltf"
+  },
+  {
+   "position": [
+    4350.0,
+    8.4,
+    -2250.0
+   ],
+   "rotation_y": 100.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.1,
+      2.65,
+      2.7
+     ],
+     "half_extents": [
+      6.7,
+      2.65,
+      4.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      9.0,
+      1.3,
+      9.0
+     ],
+     "half_extents": [
+      6.1,
+      1.3,
+      1.25
+     ],
+     "rotation_y": -75
+    }
+   ],
+   "model": "models/container_stack.gltf"
+  },
+  {
+   "position": [
+    4650.0,
+    4.4,
+    -4250.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    4650.0,
+    19.2,
+    -300.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      11.5,
+      0.0
+     ],
+     "half_extents": [
+      2.8,
+      11.5,
+      2.8
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      21.5,
+      0.0
+     ],
+     "half_extents": [
+      4.6,
+      2.6,
+      4.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/watch_tower.gltf"
+  },
+  {
+   "position": [
+    4100.0,
+    -7.4,
+    -2900.0
+   ],
+   "rotation_y": 180.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      1.7,
+      0.0
+     ],
+     "half_extents": [
+      4.5,
+      1.7,
+      1.3
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/truck.gltf"
+  },
+  {
+   "position": [
+    -2100.0,
+    -21.6,
+    -4500.0
+   ],
+   "rotation_y": 4.0,
+   "scale": 6.0872,
+   "collision": "auto",
+   "model": "models/mountainside.gltf"
+  },
+  {
+   "position": [
+    2100.0,
+    -36.8,
+    -4500.0
+   ],
+   "rotation_y": -33.6,
+   "scale": 6.0882,
+   "collision": "auto",
+   "model": "models/mountainside.gltf"
+  },
+  {
+   "position": [
+    -3500.0,
+    -25.3,
+    -1100.0
+   ],
+   "rotation_y": 2.3,
+   "scale": 7.2332,
+   "collision": "auto",
+   "model": "models/cliff_01.gltf"
+  },
+  {
+   "position": [
+    3500.0,
+    -4.0,
+    -1100.0
+   ],
+   "rotation_y": 202.3,
+   "scale": 6.9159,
+   "collision": "auto",
+   "model": "models/cliff_01.gltf"
+  },
+  {
+   "position": [
+    -600.0,
+    -81.7,
+    -4800.0
+   ],
+   "rotation_y": 44.7,
+   "scale": 14.0723,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -3100.0,
+    -79.3,
+    -200.0
+   ],
+   "rotation_y": 75.6,
+   "scale": 14.3356,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    3100.0,
+    -68.2,
+    -200.0
+   ],
+   "rotation_y": -56.8,
+   "scale": 15.3633,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -3200.0,
+    -77.3,
+    -4300.0
+   ],
+   "rotation_y": -4.7,
+   "scale": 15.9253,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -700.0,
+    -91.8,
+    -4300.0
+   ],
+   "rotation_y": -14.7,
+   "scale": 15.1954,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    0.0,
+    -186.1,
+    7660.0
+   ],
+   "rotation_y": 185.1,
+   "scale": 7.7663,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    1397.2,
+    -308.4,
+    7551.3
+   ],
+   "rotation_y": 154.7,
+   "scale": 8.8816,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    2977.3,
+    -107.6,
+    7600.7
+   ],
+   "rotation_y": 181.1,
+   "scale": 11.981,
+   "collision": "auto",
+   "model": "models/cliff_01_t35.gltf"
+  },
+  {
+   "position": [
+    4584.7,
+    -39.8,
+    7119.3
+   ],
+   "rotation_y": 226.7,
+   "scale": 8.1711,
+   "collision": "auto",
+   "model": "models/cliff_02.gltf"
+  },
+  {
+   "position": [
+    5796.5,
+    -54.0,
+    5888.3
+   ],
+   "rotation_y": 237.1,
+   "scale": 7.0755,
+   "collision": "auto",
+   "model": "models/cliff_02.gltf"
+  },
+  {
+   "position": [
+    3637.3,
+    -131.5,
+    2600.0
+   ],
+   "rotation_y": 14.6,
+   "scale": 8.8492,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    4450.9,
+    -230.1,
+    1755.2
+   ],
+   "rotation_y": 169.1,
+   "scale": 7.1224,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    7100.9,
+    58.3,
+    850.9
+   ],
+   "rotation_y": 282.1,
+   "scale": 10.8653,
+   "collision": "auto",
+   "model": "models/cliff_01_t35.gltf"
+  },
+  {
+   "position": [
+    6981.5,
+    -52.7,
+    -838.3
+   ],
+   "rotation_y": 248.0,
+   "scale": 6.6224,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    6961.7,
+    -200.3,
+    -2571.0
+   ],
+   "rotation_y": 304.0,
+   "scale": 7.9812,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    6755.0,
+    -186.7,
+    -4400.0
+   ],
+   "rotation_y": 273.5,
+   "scale": 6.6923,
+   "collision": "auto",
+   "model": "models/mountainside_t20.gltf"
+  },
+  {
+   "position": [
+    5796.5,
+    -206.0,
+    -5888.3
+   ],
+   "rotation_y": 272.4,
+   "scale": 8.109,
+   "collision": "auto",
+   "model": "models/mountainside.gltf"
+  },
+  {
+   "position": [
+    4161.5,
+    -36.9,
+    -6536.9
+   ],
+   "rotation_y": 349.0,
+   "scale": 6.0256,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    2538.0,
+    -209.1,
+    -6614.1
+   ],
+   "rotation_y": 333.9,
+   "scale": 7.1578,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    1197.6,
+    -300.5,
+    -6612.3
+   ],
+   "rotation_y": 346.9,
+   "scale": 9.4198,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    0.0,
+    -93.9,
+    -6640.0
+   ],
+   "rotation_y": 26.4,
+   "scale": 11.098,
+   "collision": "auto",
+   "model": "models/cliff_01_t35.gltf"
+  },
+  {
+   "position": [
+    -1172.6,
+    105.4,
+    -6494.9
+   ],
+   "rotation_y": 359.9,
+   "scale": 6.5823,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -2367.2,
+    47.8,
+    -6230.4
+   ],
+   "rotation_y": 346.5,
+   "scale": 9.2147,
+   "collision": "auto",
+   "model": "models/cliff_01_t35.gltf"
+  },
+  {
+   "position": [
+    -4443.7,
+    -295.9,
+    -6925.2
+   ],
+   "rotation_y": 12.8,
+   "scale": 8.9751,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -5796.5,
+    -96.1,
+    -5888.3
+   ],
+   "rotation_y": 53.9,
+   "scale": 8.5681,
+   "collision": "auto",
+   "model": "models/cliff_02.gltf"
+  },
+  {
+   "position": [
+    -6755.0,
+    10.7,
+    -4400.0
+   ],
+   "rotation_y": 221.3,
+   "scale": 7.7121,
+   "collision": "auto",
+   "model": "models/mountainside.gltf"
+  },
+  {
+   "position": [
+    -7418.2,
+    65.3,
+    -2719.3
+   ],
+   "rotation_y": 98.5,
+   "scale": 9.6398,
+   "collision": "auto",
+   "model": "models/cliff_01_t35.gltf"
+  },
+  {
+   "position": [
+    -6981.5,
+    -90.4,
+    -838.3
+   ],
+   "rotation_y": 105.9,
+   "scale": 11.4034,
+   "collision": "auto",
+   "model": "models/cliff_01_t35.gltf"
+  },
+  {
+   "position": [
+    -6563.8,
+    -204.4,
+    794.4
+   ],
+   "rotation_y": 104.7,
+   "scale": 8.4251,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -4165.6,
+    -41.8,
+    1662.5
+   ],
+   "rotation_y": 186.0,
+   "scale": 6.1476,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -3637.3,
+    -204.5,
+    2600.0
+   ],
+   "rotation_y": 353.1,
+   "scale": 8.3382,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -5796.5,
+    -232.5,
+    5888.3
+   ],
+   "rotation_y": 99.3,
+   "scale": 8.0387,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -4408.4,
+    46.6,
+    6876.6
+   ],
+   "rotation_y": 204.1,
+   "scale": 7.9479,
+   "collision": "auto",
+   "model": "models/mountainside_t20.gltf"
+  },
+  {
+   "position": [
+    -2782.1,
+    36.6,
+    7162.2
+   ],
+   "rotation_y": 156.0,
+   "scale": 11.0936,
+   "collision": "auto",
+   "model": "models/cliff_01_t20.gltf"
+  },
+  {
+   "position": [
+    -1397.2,
+    29.9,
+    7551.3
+   ],
+   "rotation_y": 154.1,
+   "scale": 6.0787,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -1478.6,
+    744.1,
+    1814.7
+   ],
+   "rotation_y": 144.2,
+   "scale": 5.4514,
+   "collision": "auto",
+   "model": "models/mountainside_t20.gltf"
+  },
+  {
+   "position": [
+    -1798.2,
+    675.3,
+    1746.1
+   ],
+   "rotation_y": 183.6,
+   "scale": 6.2339,
+   "collision": "auto",
+   "model": "models/mountainside_t20.gltf"
+  },
+  {
+   "position": [
+    -2146.5,
+    721.7,
+    1755.4
+   ],
+   "rotation_y": 194.4,
+   "scale": 5.7108,
+   "collision": "auto",
+   "model": "models/mountainside_t20.gltf"
+  },
+  {
+   "position": [
+    -2639.2,
+    518.5,
+    1829.1
+   ],
+   "rotation_y": 200.6,
+   "scale": 8.1537,
+   "collision": "auto",
+   "model": "models/cliff_02_t20.gltf"
+  },
+  {
+   "position": [
+    -3064.6,
+    381.2,
+    1826.5
+   ],
+   "rotation_y": 177.4,
+   "scale": 7.6136,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -3303.5,
+    99.1,
+    1734.4
+   ],
+   "rotation_y": 189.9,
+   "scale": 6.2825,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -3667.6,
+    119.3,
+    1738.2
+   ],
+   "rotation_y": 168.2,
+   "scale": 7.7611,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -3976.4,
+    249.8,
+    1850.5
+   ],
+   "rotation_y": 176.6,
+   "scale": 8.1378,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -4244.9,
+    340.1,
+    1852.2
+   ],
+   "rotation_y": 170.4,
+   "scale": 6.6601,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -1226.4,
+    254.9,
+    1625.2
+   ],
+   "rotation_y": 170.6,
+   "scale": 6.6046,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -1724.6,
+    272.3,
+    1535.7
+   ],
+   "rotation_y": 178.9,
+   "scale": 6.3278,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -2949.4,
+    -93.8,
+    1458.2
+   ],
+   "rotation_y": 225.0,
+   "scale": 6.7715,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -3301.9,
+    16.1,
+    1671.4
+   ],
+   "rotation_y": 182.6,
+   "scale": 8.3499,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -3578.2,
+    -123.5,
+    1543.2
+   ],
+   "rotation_y": 173.9,
+   "scale": 6.0719,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -3834.3,
+    -169.0,
+    1462.8
+   ],
+   "rotation_y": 164.1,
+   "scale": 7.0412,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -4282.5,
+    120.7,
+    1622.0
+   ],
+   "rotation_y": 182.7,
+   "scale": 6.3628,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -1216.8,
+    101.7,
+    2636.6
+   ],
+   "rotation_y": 0.1,
+   "scale": 6.9967,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -1414.3,
+    159.0,
+    2526.7
+   ],
+   "rotation_y": 359.6,
+   "scale": 6.3399,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -1726.1,
+    220.2,
+    2544.3
+   ],
+   "rotation_y": 8.1,
+   "scale": 5.5046,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -2158.3,
+    -80.4,
+    2602.2
+   ],
+   "rotation_y": 351.9,
+   "scale": 7.3306,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -2426.2,
+    72.3,
+    2507.8
+   ],
+   "rotation_y": 357.2,
+   "scale": 7.2534,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -2663.7,
+    52.7,
+    2574.3
+   ],
+   "rotation_y": 352.1,
+   "scale": 6.7241,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -2964.3,
+    -31.6,
+    2574.0
+   ],
+   "rotation_y": 4.5,
+   "scale": 7.0845,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -3266.9,
+    28.3,
+    2584.6
+   ],
+   "rotation_y": 353.8,
+   "scale": 7.5742,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -3653.4,
+    96.3,
+    2625.7
+   ],
+   "rotation_y": 1.9,
+   "scale": 5.622,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    -3966.2,
+    55.6,
+    2635.4
+   ],
+   "rotation_y": 12.5,
+   "scale": 7.6558,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -4128.1,
+    114.9,
+    2654.8
+   ],
+   "rotation_y": 15.5,
+   "scale": 7.3945,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -2128.7,
+    -92.9,
+    2783.1
+   ],
+   "rotation_y": 353.2,
+   "scale": 7.8471,
+   "collision": "auto",
+   "model": "models/cliff_02_t20.gltf"
+  },
+  {
+   "position": [
+    -2660.4,
+    -69.0,
+    2726.7
+   ],
+   "rotation_y": 3.4,
+   "scale": 6.6035,
+   "collision": "auto",
+   "model": "models/cliff_02_t20.gltf"
+  },
+  {
+   "position": [
+    -3508.1,
+    -103.3,
+    2749.7
+   ],
+   "rotation_y": 1.1,
+   "scale": 7.4229,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    -4295.6,
+    57.8,
+    2741.1
+   ],
+   "rotation_y": 17.6,
+   "scale": 6.6741,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    978.0,
+    97.6,
+    1754.8
+   ],
+   "rotation_y": 225.1,
+   "scale": 7.1933,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    3375.6,
+    494.4,
+    1840.8
+   ],
+   "rotation_y": 154.9,
+   "scale": 8.3299,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    3601.9,
+    512.8,
+    1872.8
+   ],
+   "rotation_y": 168.1,
+   "scale": 6.3983,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    3949.9,
+    131.3,
+    1767.2
+   ],
+   "rotation_y": 166.7,
+   "scale": 6.987,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    4116.3,
+    214.4,
+    1813.9
+   ],
+   "rotation_y": 175.4,
+   "scale": 5.4685,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    1113.5,
+    135.7,
+    1632.6
+   ],
+   "rotation_y": 222.8,
+   "scale": 6.0707,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    2110.1,
+    549.6,
+    1495.3
+   ],
+   "rotation_y": 163.5,
+   "scale": 6.061,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    2765.3,
+    428.9,
+    1675.8
+   ],
+   "rotation_y": 161.4,
+   "scale": 7.6753,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    3081.5,
+    401.8,
+    1587.2
+   ],
+   "rotation_y": 178.6,
+   "scale": 5.6279,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    3257.0,
+    156.4,
+    1520.0
+   ],
+   "rotation_y": 170.9,
+   "scale": 6.5675,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    3501.3,
+    67.6,
+    1650.1
+   ],
+   "rotation_y": 147.0,
+   "scale": 7.9688,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    3919.7,
+    -32.9,
+    1545.0
+   ],
+   "rotation_y": 154.6,
+   "scale": 6.4036,
+   "collision": "auto",
+   "model": "models/mountainside_t20.gltf"
+  },
+  {
+   "position": [
+    4150.8,
+    -86.2,
+    1582.6
+   ],
+   "rotation_y": 176.2,
+   "scale": 7.201,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    1883.0,
+    450.0,
+    2606.2
+   ],
+   "rotation_y": 317.3,
+   "scale": 6.55,
+   "collision": "auto",
+   "model": "models/cliff_02_t20.gltf"
+  },
+  {
+   "position": [
+    2305.1,
+    586.0,
+    2603.8
+   ],
+   "rotation_y": 20.4,
+   "scale": 6.8442,
+   "collision": "auto",
+   "model": "models/mountainside_t20.gltf"
+  },
+  {
+   "position": [
+    2696.9,
+    450.9,
+    2604.0
+   ],
+   "rotation_y": 4.4,
+   "scale": 7.21,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    2941.3,
+    336.0,
+    2585.5
+   ],
+   "rotation_y": 9.6,
+   "scale": 7.3495,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    3259.4,
+    50.5,
+    2653.9
+   ],
+   "rotation_y": 13.4,
+   "scale": 8.4716,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    3655.3,
+    442.7,
+    2511.3
+   ],
+   "rotation_y": 353.4,
+   "scale": 5.6,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    3914.2,
+    46.3,
+    2555.0
+   ],
+   "rotation_y": 9.5,
+   "scale": 7.2781,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    4219.8,
+    -15.8,
+    2618.5
+   ],
+   "rotation_y": 8.3,
+   "scale": 7.3263,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    2020.6,
+    233.7,
+    2856.3
+   ],
+   "rotation_y": 355.5,
+   "scale": 7.1958,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    2389.8,
+    349.6,
+    2736.3
+   ],
+   "rotation_y": 22.8,
+   "scale": 7.4856,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    2626.7,
+    46.0,
+    2896.4
+   ],
+   "rotation_y": 24.4,
+   "scale": 7.1539,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    2954.3,
+    4.3,
+    2880.1
+   ],
+   "rotation_y": 10.5,
+   "scale": 6.7446,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    3262.8,
+    -10.6,
+    2904.2
+   ],
+   "rotation_y": 13.5,
+   "scale": 6.4151,
+   "collision": "auto",
+   "model": "models/cliff_02_t20.gltf"
+  },
+  {
+   "position": [
+    3586.8,
+    -82.4,
+    2806.4
+   ],
+   "rotation_y": 358.2,
+   "scale": 7.0107,
+   "collision": "auto",
+   "model": "models/cliff_02_t35.gltf"
+  },
+  {
+   "position": [
+    3825.7,
+    -39.6,
+    2775.0
+   ],
+   "rotation_y": 21.4,
+   "scale": 6.5698,
+   "collision": "auto",
+   "model": "models/mountainside_t35.gltf"
+  },
+  {
+   "position": [
+    4508.7,
+    -18.8,
+    -4922.6
+   ],
+   "rotation_y": 210.1,
+   "scale": 5.1363,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -1914.1,
+    31.2,
+    -4393.6
+   ],
+   "rotation_y": 23.9,
+   "scale": 5.0536,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    5652.0,
+    -6.1,
+    3099.6
+   ],
+   "rotation_y": 181.8,
+   "scale": 7.4655,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -6543.9,
+    211.9,
+    -3708.9
+   ],
+   "rotation_y": 132.7,
+   "scale": 6.5751,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -1230.7,
+    -16.7,
+    748.3
+   ],
+   "rotation_y": 196.9,
+   "scale": 6.6373,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -6625.7,
+    1507.7,
+    6426.9
+   ],
+   "rotation_y": 247.2,
+   "scale": 3.0257,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -5934.7,
+    0.4,
+    1086.7
+   ],
+   "rotation_y": 210.1,
+   "scale": 6.1908,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -4497.9,
+    3.7,
+    3158.5
+   ],
+   "rotation_y": 268.7,
+   "scale": 3.5925,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    4494.9,
+    21.3,
+    7066.4
+   ],
+   "rotation_y": 132.7,
+   "scale": 6.853,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -1476.0,
+    -6.5,
+    3114.2
+   ],
+   "rotation_y": 59.4,
+   "scale": 4.4381,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    6813.5,
+    15.6,
+    1109.5
+   ],
+   "rotation_y": 66.5,
+   "scale": 3.3795,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -6203.1,
+    -58.2,
+    -6661.6
+   ],
+   "rotation_y": 13.5,
+   "scale": 7.0395,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -3321.9,
+    -22.5,
+    6537.7
+   ],
+   "rotation_y": 275.8,
+   "scale": 2.8152,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -6436.5,
+    28.9,
+    -3302.1
+   ],
+   "rotation_y": 243.9,
+   "scale": 6.3574,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    3953.2,
+    18.9,
+    -1610.9
+   ],
+   "rotation_y": 111.0,
+   "scale": 4.5464,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -6711.9,
+    245.9,
+    -3747.6
+   ],
+   "rotation_y": 102.7,
+   "scale": 7.0272,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -6101.7,
+    92.6,
+    3018.7
+   ],
+   "rotation_y": 286.1,
+   "scale": 2.9471,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    6678.8,
+    -6.0,
+    1097.8
+   ],
+   "rotation_y": 239.6,
+   "scale": 4.1985,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -6457.6,
+    220.0,
+    -3938.7
+   ],
+   "rotation_y": 31.4,
+   "scale": 5.0522,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    4781.6,
+    -30.7,
+    2897.4
+   ],
+   "rotation_y": 258.7,
+   "scale": 4.0808,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -5066.6,
+    -25.5,
+    890.2
+   ],
+   "rotation_y": 179.0,
+   "scale": 3.6578,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    3841.7,
+    10.8,
+    6998.5
+   ],
+   "rotation_y": 256.3,
+   "scale": 4.9328,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    5672.2,
+    18.7,
+    6867.8
+   ],
+   "rotation_y": 1.4,
+   "scale": 7.1583,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -6405.9,
+    10.5,
+    2993.7
+   ],
+   "rotation_y": 158.7,
+   "scale": 4.7163,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -6743.7,
+    61.4,
+    -2803.8
+   ],
+   "rotation_y": 42.6,
+   "scale": 5.5803,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -6382.6,
+    24.0,
+    -3342.3
+   ],
+   "rotation_y": 257.4,
+   "scale": 5.1585,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    6445.4,
+    -10.9,
+    5481.9
+   ],
+   "rotation_y": 243.8,
+   "scale": 2.9828,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    627.3,
+    -19.0,
+    -4256.7
+   ],
+   "rotation_y": 351.0,
+   "scale": 5.407,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    4118.0,
+    10.8,
+    7025.0
+   ],
+   "rotation_y": 92.7,
+   "scale": 7.1466,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    5428.0,
+    95.0,
+    7051.9
+   ],
+   "rotation_y": 246.7,
+   "scale": 2.8552,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -6075.7,
+    -4.4,
+    -4393.7
+   ],
+   "rotation_y": 66.6,
+   "scale": 4.7612,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -6736.9,
+    -13.5,
+    -2238.4
+   ],
+   "rotation_y": 338.4,
+   "scale": 6.4927,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -6568.9,
+    60.8,
+    -3333.6
+   ],
+   "rotation_y": 116.8,
+   "scale": 6.1578,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -5997.7,
+    -29.7,
+    -5341.0
+   ],
+   "rotation_y": 348.4,
+   "scale": 6.5658,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -6392.6,
+    0.7,
+    -3108.3
+   ],
+   "rotation_y": 149.8,
+   "scale": 4.1329,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -6570.1,
+    209.4,
+    -4687.0
+   ],
+   "rotation_y": 297.6,
+   "scale": 5.5222,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    4028.7,
+    -12.9,
+    6891.8
+   ],
+   "rotation_y": 244.9,
+   "scale": 5.1456,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -6431.9,
+    -17.3,
+    -456.0
+   ],
+   "rotation_y": 109.2,
+   "scale": 7.154,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -2124.9,
+    -26.7,
+    6109.4
+   ],
+   "rotation_y": 17.9,
+   "scale": 4.0225,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -5679.8,
+    0.4,
+    5505.8
+   ],
+   "rotation_y": 304.8,
+   "scale": 5.3186,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    4568.4,
+    -8.4,
+    -4846.2
+   ],
+   "rotation_y": 45.0,
+   "scale": 3.9037,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    4478.1,
+    0.4,
+    -6181.8
+   ],
+   "rotation_y": 45.8,
+   "scale": 4.5002,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -2929.5,
+    -39.4,
+    393.4
+   ],
+   "rotation_y": 314.6,
+   "scale": 4.7994,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    1600.8,
+    4.0,
+    -4217.6
+   ],
+   "rotation_y": 124.0,
+   "scale": 3.1043,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    5933.5,
+    -1.9,
+    3268.3
+   ],
+   "rotation_y": 338.2,
+   "scale": 4.6923,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -6532.2,
+    17.2,
+    -663.9
+   ],
+   "rotation_y": 16.6,
+   "scale": 5.0461,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -3371.7,
+    256.8,
+    7024.4
+   ],
+   "rotation_y": 145.8,
+   "scale": 3.8622,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    6775.3,
+    49.1,
+    -1276.5
+   ],
+   "rotation_y": 196.9,
+   "scale": 5.4999,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -5601.6,
+    9.4,
+    3319.8
+   ],
+   "rotation_y": 145.2,
+   "scale": 4.9332,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    5475.7,
+    110.2,
+    7068.0
+   ],
+   "rotation_y": 264.2,
+   "scale": 4.8785,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -4866.5,
+    26.2,
+    3135.7
+   ],
+   "rotation_y": 41.5,
+   "scale": 6.0651,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -56.1,
+    183.6,
+    -3165.3
+   ],
+   "rotation_y": 286.3,
+   "scale": 3.1196,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    6694.3,
+    20.4,
+    985.3
+   ],
+   "rotation_y": 208.3,
+   "scale": 5.9633,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -3999.1,
+    -13.5,
+    6330.9
+   ],
+   "rotation_y": 291.9,
+   "scale": 4.5326,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    6110.3,
+    -8.8,
+    -6379.6
+   ],
+   "rotation_y": 89.2,
+   "scale": 4.0764,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -6852.4,
+    125.1,
+    -2967.5
+   ],
+   "rotation_y": 118.7,
+   "scale": 5.1409,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    6603.8,
+    -18.4,
+    6686.0
+   ],
+   "rotation_y": 172.3,
+   "scale": 7.1956,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -3932.0,
+    -11.9,
+    -1862.1
+   ],
+   "rotation_y": 219.4,
+   "scale": 4.42,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -6379.1,
+    92.4,
+    -4483.0
+   ],
+   "rotation_y": 93.8,
+   "scale": 5.5756,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -1046.7,
+    94.4,
+    -6086.3
+   ],
+   "rotation_y": 87.4,
+   "scale": 4.826,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    6327.4,
+    944.5,
+    2426.3
+   ],
+   "rotation_y": 222.7,
+   "scale": 4.1971,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -6247.0,
+    53.9,
+    2958.0
+   ],
+   "rotation_y": 48.4,
+   "scale": 3.1764,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -6223.6,
+    40.6,
+    -3851.4
+   ],
+   "rotation_y": 20.3,
+   "scale": 3.5785,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    6312.9,
+    19.8,
+    6839.7
+   ],
+   "rotation_y": 280.4,
+   "scale": 2.8015,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    6180.5,
+    37.8,
+    -5097.5
+   ],
+   "rotation_y": 72.6,
+   "scale": 4.6466,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    3264.6,
+    -1.9,
+    -1243.5
+   ],
+   "rotation_y": 67.7,
+   "scale": 3.8879,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -422.2,
+    61.4,
+    -2735.4
+   ],
+   "rotation_y": 90.0,
+   "scale": 6.6109,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -3021.4,
+    1379.3,
+    -7173.0
+   ],
+   "rotation_y": 110.5,
+   "scale": 3.9771,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    6705.7,
+    -4.9,
+    -3836.1
+   ],
+   "rotation_y": 196.5,
+   "scale": 5.6006,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    1925.6,
+    -52.9,
+    6470.7
+   ],
+   "rotation_y": 147.3,
+   "scale": 3.201,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -6260.4,
+    27.0,
+    3097.1
+   ],
+   "rotation_y": 89.9,
+   "scale": 2.9705,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -5779.2,
+    963.1,
+    1993.3
+   ],
+   "rotation_y": 33.5,
+   "scale": 6.9153,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    677.0,
+    -13.5,
+    -4350.8
+   ],
+   "rotation_y": 135.7,
+   "scale": 5.2461,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    6028.5,
+    13.5,
+    6908.0
+   ],
+   "rotation_y": 24.8,
+   "scale": 7.1522,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    75.4,
+    69.8,
+    -3343.6
+   ],
+   "rotation_y": 322.4,
+   "scale": 4.5181,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -1477.7,
+    11.7,
+    -1760.6
+   ],
+   "rotation_y": 56.1,
+   "scale": 7.1439,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    6698.8,
+    -48.3,
+    6793.6
+   ],
+   "rotation_y": 168.4,
+   "scale": 7.1321,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -6055.3,
+    -2.5,
+    4615.2
+   ],
+   "rotation_y": 129.7,
+   "scale": 3.5026,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -5315.7,
+    14.2,
+    3198.9
+   ],
+   "rotation_y": 173.0,
+   "scale": 6.2106,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -3545.3,
+    -0.6,
+    -6249.6
+   ],
+   "rotation_y": 176.3,
+   "scale": 6.4657,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -1567.1,
+    149.7,
+    -4252.5
+   ],
+   "rotation_y": 292.8,
+   "scale": 6.6159,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    4323.6,
+    13.0,
+    7053.1
+   ],
+   "rotation_y": 36.4,
+   "scale": 7.4612,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -6872.5,
+    253.3,
+    -3808.3
+   ],
+   "rotation_y": 169.7,
+   "scale": 5.9243,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -6823.8,
+    1538.4,
+    5762.7
+   ],
+   "rotation_y": 153.6,
+   "scale": 6.7908,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    803.7,
+    8.2,
+    -4368.9
+   ],
+   "rotation_y": 130.3,
+   "scale": 3.895,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -1415.6,
+    25.6,
+    -1706.0
+   ],
+   "rotation_y": 41.5,
+   "scale": 3.8982,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -6436.8,
+    -19.9,
+    -164.0
+   ],
+   "rotation_y": 324.2,
+   "scale": 6.3357,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    4292.8,
+    3.9,
+    7039.5
+   ],
+   "rotation_y": 290.0,
+   "scale": 7.3922,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    5480.0,
+    831.9,
+    2287.3
+   ],
+   "rotation_y": 188.2,
+   "scale": 6.9278,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -5888.8,
+    7.8,
+    5213.7
+   ],
+   "rotation_y": 265.7,
+   "scale": 3.6333,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -2052.0,
+    -24.6,
+    5984.4
+   ],
+   "rotation_y": 183.2,
+   "scale": 5.4471,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -5941.5,
+    284.8,
+    2661.1
+   ],
+   "rotation_y": 168.5,
+   "scale": 5.6771,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -6304.1,
+    -52.4,
+    -954.7
+   ],
+   "rotation_y": 240.1,
+   "scale": 6.6615,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -507.2,
+    21.8,
+    -2772.5
+   ],
+   "rotation_y": 24.8,
+   "scale": 6.9512,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -1417.7,
+    10.3,
+    3080.0
+   ],
+   "rotation_y": 247.1,
+   "scale": 6.7831,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -6152.6,
+    5.4,
+    -4713.4
+   ],
+   "rotation_y": 48.2,
+   "scale": 6.3065,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    6674.1,
+    -30.4,
+    6808.1
+   ],
+   "rotation_y": 303.6,
+   "scale": 6.3849,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    5305.5,
+    57.3,
+    6854.5
+   ],
+   "rotation_y": 319.0,
+   "scale": 5.2453,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    1044.9,
+    1.5,
+    7196.3
+   ],
+   "rotation_y": 233.3,
+   "scale": 5.2797,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -1344.8,
+    67.2,
+    2954.9
+   ],
+   "rotation_y": 286.0,
+   "scale": 3.5139,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    6622.8,
+    -26.5,
+    6739.0
+   ],
+   "rotation_y": 169.5,
+   "scale": 2.8841,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    3356.3,
+    6.1,
+    -1200.0
+   ],
+   "rotation_y": 37.7,
+   "scale": 4.734,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -6938.6,
+    1427.4,
+    5506.1
+   ],
+   "rotation_y": 160.1,
+   "scale": 3.1461,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    4747.4,
+    69.1,
+    7108.3
+   ],
+   "rotation_y": 157.7,
+   "scale": 3.9321,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    2697.0,
+    -38.8,
+    7137.1
+   ],
+   "rotation_y": 300.9,
+   "scale": 5.8979,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    6100.9,
+    904.4,
+    2460.6
+   ],
+   "rotation_y": 329.8,
+   "scale": 5.2922,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -5944.9,
+    974.0,
+    1936.2
+   ],
+   "rotation_y": 291.5,
+   "scale": 7.4942,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -1767.2,
+    108.4,
+    -4171.8
+   ],
+   "rotation_y": 312.2,
+   "scale": 4.437,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -1881.4,
+    125.8,
+    -758.1
+   ],
+   "rotation_y": 333.5,
+   "scale": 3.6079,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    3881.5,
+    -2.9,
+    6915.4
+   ],
+   "rotation_y": 160.7,
+   "scale": 3.1266,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -1926.0,
+    5.4,
+    6825.3
+   ],
+   "rotation_y": 48.3,
+   "scale": 5.6579,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -6057.7,
+    -4.7,
+    -4665.8
+   ],
+   "rotation_y": 131.9,
+   "scale": 3.8593,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    6158.5,
+    41.3,
+    -6046.0
+   ],
+   "rotation_y": 239.9,
+   "scale": 4.6429,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -6448.3,
+    33.2,
+    -3248.3
+   ],
+   "rotation_y": 66.6,
+   "scale": 3.6925,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    6341.3,
+    43.3,
+    5230.6
+   ],
+   "rotation_y": 260.5,
+   "scale": 5.0591,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -4956.2,
+    -43.0,
+    -1900.6
+   ],
+   "rotation_y": 211.9,
+   "scale": 3.059,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -4757.3,
+    89.5,
+    6612.5
+   ],
+   "rotation_y": 163.4,
+   "scale": 3.7081,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    3910.2,
+    5.4,
+    -1569.1
+   ],
+   "rotation_y": 145.6,
+   "scale": 3.522,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    5376.7,
+    812.4,
+    2251.9
+   ],
+   "rotation_y": 301.1,
+   "scale": 3.3349,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -5666.0,
+    67.1,
+    3175.0
+   ],
+   "rotation_y": 131.5,
+   "scale": 7.421,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    4587.7,
+    36.6,
+    7041.2
+   ],
+   "rotation_y": 38.4,
+   "scale": 4.2937,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    1821.9,
+    -16.1,
+    -3994.2
+   ],
+   "rotation_y": 337.8,
+   "scale": 6.6679,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    2117.9,
+    46.2,
+    -452.9
+   ],
+   "rotation_y": 91.3,
+   "scale": 5.1894,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -1146.2,
+    -25.1,
+    688.6
+   ],
+   "rotation_y": 239.0,
+   "scale": 3.4235,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -5757.8,
+    -7.3,
+    5356.4
+   ],
+   "rotation_y": 210.7,
+   "scale": 4.6745,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -10.7,
+    188.2,
+    -3112.7
+   ],
+   "rotation_y": 200.8,
+   "scale": 3.7226,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -4878.4,
+    40.3,
+    6513.1
+   ],
+   "rotation_y": 346.8,
+   "scale": 4.1082,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    6046.0,
+    37.4,
+    3831.0
+   ],
+   "rotation_y": 50.1,
+   "scale": 5.5255,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    1591.6,
+    15.3,
+    -4315.1
+   ],
+   "rotation_y": 129.9,
+   "scale": 5.9906,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    1869.1,
+    -44.9,
+    6488.7
+   ],
+   "rotation_y": 295.2,
+   "scale": 7.1577,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -6403.5,
+    112.7,
+    -4598.0
+   ],
+   "rotation_y": 326.5,
+   "scale": 3.9245,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -2176.8,
+    17.0,
+    -294.1
+   ],
+   "rotation_y": 72.4,
+   "scale": 3.3154,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    1459.9,
+    13.4,
+    -6231.9
+   ],
+   "rotation_y": 251.8,
+   "scale": 5.2971,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    831.4,
+    16.6,
+    -4376.6
+   ],
+   "rotation_y": 103.0,
+   "scale": 5.8523,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -2014.3,
+    -6.4,
+    -4246.4
+   ],
+   "rotation_y": 50.2,
+   "scale": 2.9314,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    6376.3,
+    142.1,
+    -5020.6
+   ],
+   "rotation_y": 153.3,
+   "scale": 5.2793,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -6573.8,
+    139.6,
+    -3515.1
+   ],
+   "rotation_y": 32.1,
+   "scale": 6.7497,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -3511.6,
+    360.4,
+    7166.6
+   ],
+   "rotation_y": 290.0,
+   "scale": 5.5016,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    883.1,
+    0.7,
+    1355.0
+   ],
+   "rotation_y": 352.0,
+   "scale": 6.7529,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -5789.7,
+    -49.2,
+    -6654.6
+   ],
+   "rotation_y": 159.4,
+   "scale": 5.0,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    1328.9,
+    166.1,
+    -4330.8
+   ],
+   "rotation_y": 208.2,
+   "scale": 3.4998,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -2724.0,
+    -35.4,
+    1123.6
+   ],
+   "rotation_y": 100.9,
+   "scale": 3.2374,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -5711.5,
+    18.0,
+    5555.0
+   ],
+   "rotation_y": 234.4,
+   "scale": 5.0576,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -1856.5,
+    51.5,
+    -4309.7
+   ],
+   "rotation_y": 146.8,
+   "scale": 4.2417,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    2671.7,
+    -18.6,
+    -6127.6
+   ],
+   "rotation_y": 114.6,
+   "scale": 3.7374,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    6305.3,
+    79.3,
+    -6120.7
+   ],
+   "rotation_y": 156.2,
+   "scale": 2.8195,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -5870.7,
+    -6.3,
+    5190.9
+   ],
+   "rotation_y": 72.2,
+   "scale": 4.3833,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    3313.0,
+    -39.6,
+    6075.0
+   ],
+   "rotation_y": 114.7,
+   "scale": 7.1856,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    1794.6,
+    5.1,
+    3304.0
+   ],
+   "rotation_y": 281.0,
+   "scale": 3.8205,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -4786.7,
+    1005.6,
+    2063.4
+   ],
+   "rotation_y": 262.0,
+   "scale": 7.1246,
+   "collision": "auto",
+   "model": "models/boulder_03.gltf"
+  },
+  {
+   "position": [
+    -1221.7,
+    1.5,
+    -2870.4
+   ],
+   "rotation_y": 35.2,
+   "scale": 6.3161,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -1299.0,
+    3.9,
+    -3013.6
+   ],
+   "rotation_y": 329.1,
+   "scale": 6.9919,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -1407.8,
+    14.4,
+    -2977.9
+   ],
+   "rotation_y": 226.2,
+   "scale": 7.2275,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    1172.2,
+    -51.2,
+    -2959.7
+   ],
+   "rotation_y": 244.3,
+   "scale": 8.9375,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    1220.8,
+    -51.6,
+    -2953.7
+   ],
+   "rotation_y": 60.6,
+   "scale": 6.7004,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    1306.5,
+    -46.6,
+    -3060.7
+   ],
+   "rotation_y": 329.7,
+   "scale": 7.6229,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -1905.9,
+    -6.2,
+    -1833.4
+   ],
+   "rotation_y": 261.9,
+   "scale": 5.8584,
+   "collision": "auto",
+   "model": "models/boulder_06.gltf"
+  },
+  {
+   "position": [
+    -778.7,
+    11.3,
+    -1304.7
+   ],
+   "rotation_y": 347.1,
+   "scale": 6.9506,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    -771.9,
+    3.0,
+    -1473.5
+   ],
+   "rotation_y": 1.4,
+   "scale": 5.8415,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -596.6,
+    13.0,
+    -1254.3
+   ],
+   "rotation_y": 161.7,
+   "scale": 5.984,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    849.9,
+    -21.5,
+    -1324.3
+   ],
+   "rotation_y": 223.0,
+   "scale": 8.0755,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -1151.8,
+    1.2,
+    271.0
+   ],
+   "rotation_y": 90.6,
+   "scale": 6.9638,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -1220.2,
+    0.5,
+    397.1
+   ],
+   "rotation_y": 137.0,
+   "scale": 5.6897,
+   "collision": "auto",
+   "model": "models/boulder_05.gltf"
+  },
+  {
+   "position": [
+    -1050.9,
+    3.2,
+    170.1
+   ],
+   "rotation_y": 110.4,
+   "scale": 8.1738,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    969.5,
+    -45.1,
+    140.1
+   ],
+   "rotation_y": 32.6,
+   "scale": 6.0532,
+   "collision": "auto",
+   "model": "models/boulder_02.gltf"
+  },
+  {
+   "position": [
+    1163.3,
+    -36.4,
+    441.2
+   ],
+   "rotation_y": 344.9,
+   "scale": 6.1806,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    1132.3,
+    -34.7,
+    275.2
+   ],
+   "rotation_y": 163.7,
+   "scale": 8.322,
+   "collision": "auto",
+   "model": "models/boulder_04.gltf"
+  },
+  {
+   "position": [
+    -3979.9,
+    21.1,
+    -5090.6
+   ],
+   "rotation_y": 354.8,
+   "scale": 22.2003,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -4773.6,
+    6.9,
+    -6095.2
+   ],
+   "rotation_y": 247.2,
+   "scale": 16.145,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    4625.5,
+    6.1,
+    -5992.5
+   ],
+   "rotation_y": 332.1,
+   "scale": 14.9209,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    5045.8,
+    24.8,
+    -3803.6
+   ],
+   "rotation_y": 27.8,
+   "scale": 16.1911,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -5805.7,
+    -2.3,
+    -3826.5
+   ],
+   "rotation_y": 302.2,
+   "scale": 23.1769,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    4166.6,
+    29.0,
+    -1710.4
+   ],
+   "rotation_y": 11.8,
+   "scale": 20.3859,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    3948.7,
+    13.1,
+    -4311.9
+   ],
+   "rotation_y": 336.1,
+   "scale": 14.9068,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    -5139.4,
+    -13.5,
+    644.1
+   ],
+   "rotation_y": 247.8,
+   "scale": 20.422,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    4773.9,
+    25.9,
+    -1818.9
+   ],
+   "rotation_y": 19.0,
+   "scale": 12.7094,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    4094.3,
+    16.7,
+    -4875.7
+   ],
+   "rotation_y": 242.0,
+   "scale": 17.3315,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    -5206.6,
+    -9.2,
+    4508.8
+   ],
+   "rotation_y": 359.0,
+   "scale": 18.3906,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -510.2,
+    -24.3,
+    865.3
+   ],
+   "rotation_y": 218.1,
+   "scale": 18.9175,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    944.0,
+    -13.2,
+    -4628.0
+   ],
+   "rotation_y": 251.9,
+   "scale": 19.6907,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    -1685.7,
+    7.7,
+    3104.1
+   ],
+   "rotation_y": 293.7,
+   "scale": 24.3282,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    -2810.7,
+    -25.6,
+    423.7
+   ],
+   "rotation_y": 169.0,
+   "scale": 18.6862,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    3282.1,
+    -7.8,
+    -5534.6
+   ],
+   "rotation_y": 157.7,
+   "scale": 17.0927,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    -5611.8,
+    -9.9,
+    773.7
+   ],
+   "rotation_y": 52.0,
+   "scale": 12.3273,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    5157.0,
+    5.3,
+    1077.4
+   ],
+   "rotation_y": 174.8,
+   "scale": 12.8603,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    -4897.4,
+    11.3,
+    -5634.9
+   ],
+   "rotation_y": 93.5,
+   "scale": 18.6408,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -4714.7,
+    7.5,
+    3494.8
+   ],
+   "rotation_y": 221.5,
+   "scale": 24.1274,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    4578.0,
+    5.5,
+    3920.1
+   ],
+   "rotation_y": 325.3,
+   "scale": 20.9083,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -5069.9,
+    -4.7,
+    -3407.0
+   ],
+   "rotation_y": 20.5,
+   "scale": 15.4696,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    506.2,
+    -15.5,
+    -955.7
+   ],
+   "rotation_y": 233.0,
+   "scale": 13.764,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -5732.7,
+    -14.7,
+    724.5
+   ],
+   "rotation_y": 299.9,
+   "scale": 21.0298,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    -4995.8,
+    0.5,
+    -4832.2
+   ],
+   "rotation_y": 220.2,
+   "scale": 16.6767,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    5692.2,
+    -9.1,
+    -6080.8
+   ],
+   "rotation_y": 97.9,
+   "scale": 25.292,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    -1105.4,
+    21.2,
+    -1402.8
+   ],
+   "rotation_y": 312.0,
+   "scale": 20.0418,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    2281.4,
+    6.3,
+    -294.5
+   ],
+   "rotation_y": 327.1,
+   "scale": 21.4739,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    -3519.7,
+    23.0,
+    -5201.0
+   ],
+   "rotation_y": 45.0,
+   "scale": 19.9862,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    1138.4,
+    0.7,
+    -6249.4
+   ],
+   "rotation_y": 236.7,
+   "scale": 12.2237,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    4716.4,
+    -19.0,
+    -5139.8
+   ],
+   "rotation_y": 259.8,
+   "scale": 17.5024,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    -2081.9,
+    19.8,
+    -4589.5
+   ],
+   "rotation_y": 245.4,
+   "scale": 18.3438,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    759.7,
+    -31.3,
+    427.0
+   ],
+   "rotation_y": 150.9,
+   "scale": 19.8268,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    -5474.1,
+    -32.2,
+    -1899.6
+   ],
+   "rotation_y": 152.5,
+   "scale": 22.2029,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    4688.2,
+    -1.4,
+    -5937.6
+   ],
+   "rotation_y": 79.8,
+   "scale": 13.3331,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -5615.7,
+    -6.4,
+    3883.0
+   ],
+   "rotation_y": 15.3,
+   "scale": 24.6348,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    6144.5,
+    44.5,
+    -6057.8
+   ],
+   "rotation_y": 50.4,
+   "scale": 22.911,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    918.0,
+    -34.6,
+    16.4
+   ],
+   "rotation_y": 307.7,
+   "scale": 13.9428,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    1359.4,
+    -30.6,
+    6974.0
+   ],
+   "rotation_y": 46.5,
+   "scale": 20.8644,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    1387.2,
+    -15.5,
+    98.4
+   ],
+   "rotation_y": 308.4,
+   "scale": 13.4461,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    -6136.0,
+    -6.1,
+    -2475.5
+   ],
+   "rotation_y": 311.9,
+   "scale": 16.6596,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    -5081.9,
+    -2.1,
+    -5889.9
+   ],
+   "rotation_y": 153.0,
+   "scale": 17.5338,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    774.4,
+    -31.3,
+    456.4
+   ],
+   "rotation_y": 306.5,
+   "scale": 14.8169,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    5826.9,
+    -4.5,
+    -5247.0
+   ],
+   "rotation_y": 80.0,
+   "scale": 17.3668,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -2141.6,
+    19.7,
+    -4682.8
+   ],
+   "rotation_y": 113.4,
+   "scale": 13.284,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    5637.3,
+    4.8,
+    5750.7
+   ],
+   "rotation_y": 148.9,
+   "scale": 15.6214,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    -5795.5,
+    -12.9,
+    4494.1
+   ],
+   "rotation_y": 219.4,
+   "scale": 20.4961,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -4310.9,
+    22.9,
+    -5241.3
+   ],
+   "rotation_y": 258.3,
+   "scale": 12.0872,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    4746.0,
+    2.3,
+    -2172.7
+   ],
+   "rotation_y": 34.3,
+   "scale": 23.8809,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    2036.4,
+    -26.7,
+    5623.2
+   ],
+   "rotation_y": 55.6,
+   "scale": 13.2007,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    1263.7,
+    -18.0,
+    -119.2
+   ],
+   "rotation_y": 345.1,
+   "scale": 24.5416,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -6029.2,
+    0.9,
+    1032.4
+   ],
+   "rotation_y": 155.1,
+   "scale": 21.2671,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    6401.5,
+    40.5,
+    -249.8
+   ],
+   "rotation_y": 177.2,
+   "scale": 21.9173,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    4347.3,
+    40.1,
+    -504.7
+   ],
+   "rotation_y": 210.5,
+   "scale": 15.2127,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -3202.8,
+    -39.0,
+    647.3
+   ],
+   "rotation_y": 299.7,
+   "scale": 18.9736,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    -3341.6,
+    -35.1,
+    417.2
+   ],
+   "rotation_y": 252.1,
+   "scale": 14.9379,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    4769.0,
+    16.9,
+    -6105.2
+   ],
+   "rotation_y": 222.2,
+   "scale": 17.6631,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    -2128.5,
+    13.9,
+    -4528.9
+   ],
+   "rotation_y": 95.2,
+   "scale": 21.2204,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    5764.6,
+    23.1,
+    3473.4
+   ],
+   "rotation_y": 81.3,
+   "scale": 23.2578,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    2659.2,
+    -17.8,
+    -6024.9
+   ],
+   "rotation_y": 327.9,
+   "scale": 14.6853,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    4065.1,
+    -10.7,
+    4956.8
+   ],
+   "rotation_y": 296.6,
+   "scale": 17.3996,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    2943.0,
+    10.0,
+    -169.1
+   ],
+   "rotation_y": 139.1,
+   "scale": 14.7409,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -5545.1,
+    -14.7,
+    3999.6
+   ],
+   "rotation_y": 245.4,
+   "scale": 16.3179,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    -5896.3,
+    -6.0,
+    -3653.8
+   ],
+   "rotation_y": 270.3,
+   "scale": 15.6693,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    -5011.2,
+    -21.5,
+    -6260.1
+   ],
+   "rotation_y": 239.4,
+   "scale": 16.8334,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    4012.3,
+    9.2,
+    880.7
+   ],
+   "rotation_y": 315.4,
+   "scale": 13.9367,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    4943.9,
+    32.0,
+    4855.4
+   ],
+   "rotation_y": 114.9,
+   "scale": 25.1539,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -3989.3,
+    11.0,
+    -4932.4
+   ],
+   "rotation_y": 0.8,
+   "scale": 20.9537,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    4839.1,
+    -11.4,
+    2967.7
+   ],
+   "rotation_y": 323.4,
+   "scale": 12.7918,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    5580.8,
+    17.4,
+    -4707.5
+   ],
+   "rotation_y": 5.2,
+   "scale": 22.1594,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    6256.7,
+    -7.2,
+    -1414.0
+   ],
+   "rotation_y": 254.1,
+   "scale": 12.946,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    5017.1,
+    -11.8,
+    -5204.0
+   ],
+   "rotation_y": 239.5,
+   "scale": 15.6011,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    -6088.7,
+    23.0,
+    -4177.3
+   ],
+   "rotation_y": 154.9,
+   "scale": 18.1832,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -6342.4,
+    -34.6,
+    -880.9
+   ],
+   "rotation_y": 133.7,
+   "scale": 15.0143,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    4170.7,
+    14.2,
+    -1860.9
+   ],
+   "rotation_y": 331.3,
+   "scale": 16.6632,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -5095.7,
+    -1.0,
+    3690.1
+   ],
+   "rotation_y": 304.9,
+   "scale": 21.8355,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    1793.9,
+    -11.8,
+    -4415.3
+   ],
+   "rotation_y": 267.0,
+   "scale": 12.6231,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    3913.8,
+    12.5,
+    -1976.8
+   ],
+   "rotation_y": 353.8,
+   "scale": 17.9261,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    1320.4,
+    -14.8,
+    -2621.7
+   ],
+   "rotation_y": 337.4,
+   "scale": 23.3039,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -5812.2,
+    -30.2,
+    428.0
+   ],
+   "rotation_y": 306.6,
+   "scale": 13.2703,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    5082.8,
+    22.8,
+    -3794.7
+   ],
+   "rotation_y": 353.9,
+   "scale": 24.4971,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    4051.7,
+    -2.3,
+    1221.4
+   ],
+   "rotation_y": 145.4,
+   "scale": 13.59,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    4624.6,
+    -15.7,
+    -5464.1
+   ],
+   "rotation_y": 326.4,
+   "scale": 20.1172,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    5154.7,
+    12.3,
+    -4371.3
+   ],
+   "rotation_y": 248.2,
+   "scale": 15.7004,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    5645.7,
+    5.0,
+    5757.7
+   ],
+   "rotation_y": 57.5,
+   "scale": 20.3547,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    5458.2,
+    19.6,
+    520.8
+   ],
+   "rotation_y": 345.1,
+   "scale": 14.0003,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    304.0,
+    10.7,
+    -3400.9
+   ],
+   "rotation_y": 207.2,
+   "scale": 19.3509,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    4466.0,
+    5.9,
+    323.7
+   ],
+   "rotation_y": 225.5,
+   "scale": 21.5875,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    -5785.9,
+    -22.4,
+    -3154.5
+   ],
+   "rotation_y": 139.9,
+   "scale": 12.0967,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    -3454.7,
+    -23.4,
+    -238.9
+   ],
+   "rotation_y": 335.9,
+   "scale": 18.2895,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    4810.4,
+    17.8,
+    -6128.9
+   ],
+   "rotation_y": 147.2,
+   "scale": 24.9767,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    4467.2,
+    1.0,
+    5919.3
+   ],
+   "rotation_y": 55.9,
+   "scale": 19.5698,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    -4952.6,
+    -19.6,
+    -160.5
+   ],
+   "rotation_y": 312.2,
+   "scale": 24.2359,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    -3926.2,
+    -31.3,
+    -663.7
+   ],
+   "rotation_y": 273.0,
+   "scale": 25.9329,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    -3795.6,
+    15.2,
+    -6118.4
+   ],
+   "rotation_y": 113.8,
+   "scale": 23.6553,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    -3675.0,
+    21.2,
+    -6155.9
+   ],
+   "rotation_y": 75.1,
+   "scale": 17.473,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_a.gltf"
+  },
+  {
+   "position": [
+    -4231.5,
+    36.7,
+    -6546.3
+   ],
+   "rotation_y": 313.8,
+   "scale": 22.476,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    -2384.8,
+    6.7,
+    -4725.1
+   ],
+   "rotation_y": 334.0,
+   "scale": 20.5356,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    -3558.8,
+    -29.7,
+    -62.8
+   ],
+   "rotation_y": 348.1,
+   "scale": 18.1583,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -1227.7,
+    8.0,
+    544.8
+   ],
+   "rotation_y": 235.1,
+   "scale": 17.501,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    5716.0,
+    3.8,
+    -3383.1
+   ],
+   "rotation_y": 37.9,
+   "scale": 19.3094,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    4607.2,
+    14.9,
+    -6085.5
+   ],
+   "rotation_y": 86.2,
+   "scale": 19.1879,
+   "collision": "none",
+   "model": "models/rocks__namaqualand_rocks_02_b.gltf"
+  },
+  {
+   "position": [
+    1806.2,
+    -16.1,
+    -4353.2
+   ],
+   "rotation_y": 41.6,
+   "scale": 23.1718,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -5092.9,
+    -10.8,
+    850.6
+   ],
+   "rotation_y": 294.3,
+   "scale": 19.5039,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    -4665.1,
+    14.3,
+    3264.1
+   ],
+   "rotation_y": 243.3,
+   "scale": 21.9781,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -4296.0,
+    19.0,
+    3203.0
+   ],
+   "rotation_y": 214.1,
+   "scale": 14.3789,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_a.gltf"
+  },
+  {
+   "position": [
+    4640.6,
+    9.8,
+    3892.9
+   ],
+   "rotation_y": 50.9,
+   "scale": 13.4214,
+   "collision": "none",
+   "model": "models/stones__namaqualand_stones_01_b.gltf"
+  },
+  {
+   "position": [
+    1387.0,
+    -20.6,
+    -21.9
+   ],
+   "rotation_y": 114.6,
+   "scale": 18.9586,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_a.gltf"
+  },
+  {
+   "position": [
+    4889.3,
+    -4.1,
+    -2338.6
+   ],
+   "rotation_y": 245.9,
+   "scale": 15.7011,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    3026.4,
+    1.1,
+    -4304.6
+   ],
+   "rotation_y": 287.2,
+   "scale": 14.3207,
+   "collision": "none",
+   "model": "models/boulders__namaqualand_rocks_01_b.gltf"
+  },
+  {
+   "position": [
+    -1836.8,
+    -3.1,
+    4587.5
+   ],
+   "rotation_y": 234.2,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -1905.4,
+    -3.6,
+    4546.6
+   ],
+   "rotation_y": 315.2,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -1986.6,
+    -2.8,
+    4615.7
+   ],
+   "rotation_y": 0.7,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -1867.5,
+    -3.4,
+    4534.6
+   ],
+   "rotation_y": 164.7,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -1822.5,
+    -3.1,
+    4584.2
+   ],
+   "rotation_y": 128.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    -1946.0,
+    -2.6,
+    4632.6
+   ],
+   "rotation_y": 266.1,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    -1946.5,
+    -2.6,
+    4632.9
+   ],
+   "rotation_y": 175.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    -1822.5,
+    -3.2,
+    4559.5
+   ],
+   "rotation_y": 214.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/generator.gltf"
+  },
+  {
+   "position": [
+    -1883.9,
+    -3.7,
+    4475.5
+   ],
+   "rotation_y": 213.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/compressor.gltf"
+  },
+  {
+   "position": [
+    -1862.4,
+    -3.5,
+    4505.6
+   ],
+   "rotation_y": 233.9,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/utility_box.gltf"
+  },
+  {
+   "position": [
+    1957.0,
+    -5.5,
+    4486.7
+   ],
+   "rotation_y": 334.3,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    1983.1,
+    -5.5,
+    4534.3
+   ],
+   "rotation_y": 118.7,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    1851.9,
+    -8.0,
+    4580.5
+   ],
+   "rotation_y": 217.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    1989.6,
+    -5.3,
+    4532.2
+   ],
+   "rotation_y": 350.4,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    1893.3,
+    -7.6,
+    4521.2
+   ],
+   "rotation_y": 344.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    1951.3,
+    -5.9,
+    4499.1
+   ],
+   "rotation_y": 154.2,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    1842.2,
+    -8.4,
+    4537.2
+   ],
+   "rotation_y": 287.3,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    1953.7,
+    -6.9,
+    4592.0
+   ],
+   "rotation_y": 122.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/generator.gltf"
+  },
+  {
+   "position": [
+    1920.4,
+    -7.0,
+    4513.8
+   ],
+   "rotation_y": 25.4,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/compressor.gltf"
+  },
+  {
+   "position": [
+    1915.6,
+    -7.1,
+    4526.8
+   ],
+   "rotation_y": 55.7,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/utility_box.gltf"
+  },
+  {
+   "position": [
+    -985.9,
+    -12.3,
+    3619.1
+   ],
+   "rotation_y": 149.5,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -833.7,
+    -16.8,
+    3550.8
+   ],
+   "rotation_y": 65.9,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -958.9,
+    -11.5,
+    3566.4
+   ],
+   "rotation_y": 197.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -825.3,
+    -17.5,
+    3558.5
+   ],
+   "rotation_y": 99.2,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -926.2,
+    -12.9,
+    3561.7
+   ],
+   "rotation_y": 290.3,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    -817.1,
+    -22.1,
+    3653.0
+   ],
+   "rotation_y": 267.3,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    -933.4,
+    -17.2,
+    3681.9
+   ],
+   "rotation_y": 133.4,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    -988.9,
+    -13.2,
+    3645.1
+   ],
+   "rotation_y": 191.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/generator.gltf"
+  },
+  {
+   "position": [
+    -859.7,
+    -17.5,
+    3601.3
+   ],
+   "rotation_y": 132.2,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/compressor.gltf"
+  },
+  {
+   "position": [
+    -929.2,
+    -11.9,
+    3537.5
+   ],
+   "rotation_y": 3.9,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/utility_box.gltf"
+  },
+  {
+   "position": [
+    815.3,
+    -22.2,
+    3610.1
+   ],
+   "rotation_y": 142.4,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    863.4,
+    -20.4,
+    3626.0
+   ],
+   "rotation_y": 88.4,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    984.4,
+    -10.8,
+    3562.4
+   ],
+   "rotation_y": 137.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    847.5,
+    -24.5,
+    3671.5
+   ],
+   "rotation_y": 144.7,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    973.3,
+    -13.3,
+    3609.9
+   ],
+   "rotation_y": 273.1,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    978.6,
+    -9.1,
+    3510.6
+   ],
+   "rotation_y": 221.4,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    913.3,
+    -20.5,
+    3678.5
+   ],
+   "rotation_y": 234.7,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    890.9,
+    -17.7,
+    3610.9
+   ],
+   "rotation_y": 77.8,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/generator.gltf"
+  },
+  {
+   "position": [
+    864.1,
+    -18.8,
+    3603.5
+   ],
+   "rotation_y": 73.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/compressor.gltf"
+  },
+  {
+   "position": [
+    868.8,
+    -16.0,
+    3562.0
+   ],
+   "rotation_y": 122.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/utility_box.gltf"
+  },
+  {
+   "position": [
+    -1509.6,
+    -3.4,
+    5262.0
+   ],
+   "rotation_y": 174.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -1447.6,
+    -9.8,
+    5110.5
+   ],
+   "rotation_y": 312.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -1533.3,
+    -4.0,
+    5158.0
+   ],
+   "rotation_y": 299.7,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -1419.3,
+    -11.8,
+    5117.9
+   ],
+   "rotation_y": 41.4,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    -1510.5,
+    -3.9,
+    5228.4
+   ],
+   "rotation_y": 219.1,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    -1461.7,
+    -5.1,
+    5273.9
+   ],
+   "rotation_y": 340.8,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    -1538.1,
+    -2.5,
+    5248.4
+   ],
+   "rotation_y": 56.8,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    -1492.4,
+    -5.4,
+    5187.8
+   ],
+   "rotation_y": 216.7,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/generator.gltf"
+  },
+  {
+   "position": [
+    -1501.6,
+    -4.5,
+    5217.5
+   ],
+   "rotation_y": 177.8,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/compressor.gltf"
+  },
+  {
+   "position": [
+    -1426.6,
+    -10.0,
+    5163.5
+   ],
+   "rotation_y": 14.4,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/utility_box.gltf"
+  },
+  {
+   "position": [
+    1508.4,
+    -16.5,
+    5276.1
+   ],
+   "rotation_y": 345.2,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    1494.3,
+    -16.0,
+    5206.1
+   ],
+   "rotation_y": 19.2,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    1568.6,
+    -14.4,
+    5207.2
+   ],
+   "rotation_y": 268.8,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    1538.8,
+    -15.4,
+    5266.3
+   ],
+   "rotation_y": 123.4,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_01.gltf"
+  },
+  {
+   "position": [
+    1413.6,
+    -19.8,
+    5230.8
+   ],
+   "rotation_y": 11.3,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    1420.7,
+    -18.8,
+    5194.8
+   ],
+   "rotation_y": 12.6,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    1492.7,
+    -17.0,
+    5278.4
+   ],
+   "rotation_y": 128.2,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrel_03.gltf"
+  },
+  {
+   "position": [
+    1562.5,
+    -13.2,
+    5121.7
+   ],
+   "rotation_y": 303.1,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/generator.gltf"
+  },
+  {
+   "position": [
+    1479.6,
+    -16.2,
+    5190.6
+   ],
+   "rotation_y": 340.1,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/compressor.gltf"
+  },
+  {
+   "position": [
+    1420.5,
+    -19.7,
+    5243.1
+   ],
+   "rotation_y": 182.7,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/utility_box.gltf"
+  },
+  {
+   "position": [
+    -1500.0,
+    -1.9,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_01.gltf"
+  },
+  {
+   "position": [
+    -1200.0,
+    -2.3,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_02.gltf"
+  },
+  {
+   "position": [
+    -900.0,
+    -7.8,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_01.gltf"
+  },
+  {
+   "position": [
+    -600.0,
+    -13.3,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_02.gltf"
+  },
+  {
+   "position": [
+    -300.0,
+    -13.0,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_01.gltf"
+  },
+  {
+   "position": [
+    0.0,
+    -15.9,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_02.gltf"
+  },
+  {
+   "position": [
+    300.0,
+    -13.4,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_01.gltf"
+  },
+  {
+   "position": [
+    600.0,
+    -12.5,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_02.gltf"
+  },
+  {
+   "position": [
+    900.0,
+    -8.3,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_01.gltf"
+  },
+  {
+   "position": [
+    1200.0,
+    -6.3,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_02.gltf"
+  },
+  {
+   "position": [
+    1500.0,
+    -4.5,
+    3350.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/barrier_01.gltf"
+  },
+  {
+   "position": [
+    -2300.0,
+    14.0,
+    3300.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "auto",
+   "model": "models/crane.gltf"
+  },
+  {
+   "position": [
+    -2050.0,
+    8.9,
+    3180.0
+   ],
+   "rotation_y": 27.9,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/covered_car.gltf"
+  },
+  {
+   "position": [
+    2300.0,
+    13.3,
+    3300.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "auto",
+   "model": "models/crane.gltf"
+  },
+  {
+   "position": [
+    2550.0,
+    60.3,
+    3180.0
+   ],
+   "rotation_y": 7.5,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/covered_car.gltf"
+  },
+  {
+   "position": [
+    -260.0,
+    -4.0,
+    3000.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    260.0,
+    -1.4,
+    3000.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    -260.0,
+    -17.8,
+    3400.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    260.0,
+    -18.4,
+    3400.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    -260.0,
+    -64.3,
+    3800.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    260.0,
+    -65.3,
+    3800.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    -260.0,
+    -115.9,
+    4200.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    260.0,
+    -118.7,
+    4200.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    -260.0,
+    -148.6,
+    4600.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    260.0,
+    -151.0,
+    4600.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    -260.0,
+    -141.3,
+    5000.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    260.0,
+    -140.8,
+    5000.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    -260.0,
+    -99.5,
+    5400.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    260.0,
+    -102.4,
+    5400.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    -260.0,
+    -48.0,
+    5800.0
+   ],
+   "rotation_y": 90.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  },
+  {
+   "position": [
+    260.0,
+    -48.2,
+    5800.0
+   ],
+   "rotation_y": 270.0,
+   "scale": 11.0,
+   "collision": "none",
+   "model": "models/street_lamp.gltf"
+  }
+ ],
+ "spawns": {
+  "team_a": [
+   {
+    "position": [
+     -3000,
+     144.7,
+     -2620
+    ],
+    "facing": [
+     1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     -3000,
+     140.3,
+     -2300
+    ],
+    "facing": [
+     1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     -3000,
+     140.9,
+     -1980
+    ],
+    "facing": [
+     1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     -3260,
+     139.9,
+     -2620
+    ],
+    "facing": [
+     1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     -3260,
+     137.4,
+     -2300
+    ],
+    "facing": [
+     1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     -3260,
+     135.8,
+     -1980
+    ],
+    "facing": [
+     1.0,
+     0.0
+    ]
+   }
+  ],
+  "team_b": [
+   {
+    "position": [
+     3000,
+     138.2,
+     -2620
+    ],
+    "facing": [
+     -1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     3000,
+     131.2,
+     -2300
+    ],
+    "facing": [
+     -1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     3000,
+     137.3,
+     -1980
+    ],
+    "facing": [
+     -1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     3260,
+     139.5,
+     -2620
+    ],
+    "facing": [
+     -1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     3260,
+     139.0,
+     -2300
+    ],
+    "facing": [
+     -1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     3260,
+     141.6,
+     -1980
+    ],
+    "facing": [
+     -1.0,
+     0.0
+    ]
+   }
+  ],
+  "shared": [
+   {
+    "position": [
+     2400.0,
+     134.2,
+     -2300.0
+    ],
+    "facing": [
+     -1.0,
+     -0.0
+    ]
+   },
+   {
+    "position": [
+     2078.5,
+     161.8,
+     -1450.0
+    ],
+    "facing": [
+     -0.9256,
+     -0.3785
+    ]
+   },
+   {
+    "position": [
+     1200.0,
+     140.6,
+     -827.8
+    ],
+    "facing": [
+     -0.6318,
+     -0.7751
+    ]
+   },
+   {
+    "position": [
+     0.0,
+     150.4,
+     -600.0
+    ],
+    "facing": [
+     -0.0,
+     -1.0
+    ]
+   },
+   {
+    "position": [
+     -1200.0,
+     160.6,
+     -827.8
+    ],
+    "facing": [
+     0.6318,
+     -0.7751
+    ]
+   },
+   {
+    "position": [
+     -2078.5,
+     171.9,
+     -1450.0
+    ],
+    "facing": [
+     0.9256,
+     -0.3785
+    ]
+   },
+   {
+    "position": [
+     -2400.0,
+     157.0,
+     -2300.0
+    ],
+    "facing": [
+     1.0,
+     -0.0
+    ]
+   },
+   {
+    "position": [
+     -2078.5,
+     158.5,
+     -3150.0
+    ],
+    "facing": [
+     0.9256,
+     0.3785
+    ]
+   },
+   {
+    "position": [
+     -1200.0,
+     256.1,
+     -3772.2
+    ],
+    "facing": [
+     0.6318,
+     0.7751
+    ]
+   },
+   {
+    "position": [
+     -0.0,
+     139.6,
+     -4000.0
+    ],
+    "facing": [
+     0.0,
+     1.0
+    ]
+   },
+   {
+    "position": [
+     1200.0,
+     254.5,
+     -3772.2
+    ],
+    "facing": [
+     -0.6318,
+     0.7751
+    ]
+   },
+   {
+    "position": [
+     2078.5,
+     150.2,
+     -3150.0
+    ],
+    "facing": [
+     -0.9256,
+     0.3785
+    ]
+   }
+  ],
+  "grid_respawn_a": [
+   {
+    "position": [
+     -3400,
+     141.7,
+     -2800
+    ],
+    "facing": [
+     1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     -3400,
+     133.5,
+     -1800
+    ],
+    "facing": [
+     1.0,
+     0.0
+    ]
+   }
+  ],
+  "grid_respawn_b": [
+   {
+    "position": [
+     3400,
+     136.4,
+     -2800
+    ],
+    "facing": [
+     -1.0,
+     0.0
+    ]
+   },
+   {
+    "position": [
+     3400,
+     143.6,
+     -1800
+    ],
+    "facing": [
+     -1.0,
+     0.0
+    ]
+   }
+  ]
+ },
+ "sectors": {
+  "north_valley": {
+   "spawns": [
+    {
+     "position": [
+      -300,
+      140.9,
+      3300
+     ],
+     "facing": [
+      0.0,
+      1.0
+     ]
+    },
+    {
+     "position": [
+      300,
+      141.1,
+      3300
+     ],
+     "facing": [
+      0.0,
+      1.0
+     ]
+    },
+    {
+     "position": [
+      -300,
+      117.4,
+      3550
+     ],
+     "facing": [
+      0.0,
+      1.0
+     ]
+    },
+    {
+     "position": [
+      300,
+      116.3,
+      3550
+     ],
+     "facing": [
+      0.0,
+      1.0
+     ]
+    }
+   ]
+  }
+ },
+ "item_patterns": {
+  "red": [
+   [
+    {
+     "position": [
+      -2200.0,
+      72.9,
+      -2300.0
+     ]
+    },
+    {
+     "position": [
+      -1700.0,
+      85.6,
+      -1500.0
+     ]
+    },
+    {
+     "position": [
+      -1700.0,
+      73.7,
+      -3100.0
+     ]
+    },
+    {
+     "position": [
+      -900.0,
+      65.5,
+      -2300.0
+     ]
+    },
+    {
+     "position": [
+      -2400.0,
+      58.0,
+      -3700.0
+     ]
+    },
+    {
+     "position": [
+      -2400.0,
+      171.0,
+      -900.0
+     ]
+    },
+    {
+     "position": [
+      -600.0,
+      43.2,
+      -3600.0
+     ]
+    },
+    {
+     "position": [
+      -600.0,
+      83.8,
+      -1000.0
+     ]
+    }
+   ]
+  ],
+  "blue": [
+   [
+    {
+     "position": [
+      2200.0,
+      72.9,
+      -2300.0
+     ]
+    },
+    {
+     "position": [
+      1700.0,
+      85.6,
+      -1500.0
+     ]
+    },
+    {
+     "position": [
+      1700.0,
+      73.7,
+      -3100.0
+     ]
+    },
+    {
+     "position": [
+      900.0,
+      65.5,
+      -2300.0
+     ]
+    },
+    {
+     "position": [
+      2400.0,
+      58.0,
+      -3700.0
+     ]
+    },
+    {
+     "position": [
+      2400.0,
+      171.0,
+      -900.0
+     ]
+    },
+    {
+     "position": [
+      600.0,
+      43.2,
+      -3600.0
+     ]
+    },
+    {
+     "position": [
+      600.0,
+      83.8,
+      -1000.0
+     ]
+    }
+   ]
+  ]
+ },
+ "presentation": {
+  "preview": "images/preview.png",
+  "minimap": "images/minimap.png",
+  "bgm": {
+   "native": "BGM\\0019.mp3"
+  }
+ },
+ "missions": [
+  "missions/odessa.json"
+ ],
+ "files": {
+  "images/banner_complete.png": "fe85389afc682a9ffc372b5f123a101a1d8fe45e2930cd9f5d84ca847d8d131c",
+  "images/banner_gyan.png": "51d0a430dc366372bdb36c2d7811646e02969817c9164386fe8b802163e9d045",
+  "images/banner_nuke.png": "a05631be19bc3763f50b2b9625a6743522278a6cfe932b2896eb5e36eb998fa5",
+  "images/banner_odessa.png": "ae3f5d816913e4fca965f434c5574b44edb88359b746f61173122c0283aa790f",
+  "images/banner_tristars.png": "b2c9aa9451f7a1c3462ce079a5089f16ddb53ded70953abb2455c40c9adb7026",
+  "images/cat_list_banner.png": "d6bd7cb09cf92c025e2ee48c01f25578609a4179b6c05bb646cec7f02b459cdf",
+  "images/cat_loading.png": "030302683dd225c6b689071c04e79d8803ead2dd57cd695b922ab79c01816582",
+  "images/cat_room_icon.png": "9de6a6ab756097a46f661a3ed95d82eb7c9cdcf5a921afe95fc74e2412e0f6e0",
+  "images/cat_room_poster.png": "df2b793421943d70c4262e5eefff8e0f117052805358227a596a43c836b45994",
+  "images/cat_title.png": "e977809842c5f9fae66dc3684843491f6d93d9db5d85ebf42fe9d325fac9601f",
+  "images/minimap.png": "fd8fe07dd9923ba9688aba7e1455852708e0d0c5051c90ce8ba806376260e25c",
+  "images/preview.png": "2a4391041044f4e87b4cfe2c2566be7735bba2ea9fbc5dfb51c5bab9cd7758cc",
+  "missions/odessa.json": "08e6ac255615c48c5c75168f64e13f27da29e5dff1f703c4acc8b13edaf14dce",
+  "models/barracks.gltf": "70493cba0fbb9a440ef2b92c1de8945e75da181ebb50833f5e474289788dcc95",
+  "models/barrel_01.gltf": "ec7dbdb749d2b2a25ca1c672cefd3338b94fc1260bc64b0933bca92288c7afc6",
+  "models/barrel_03.gltf": "d74b760fd7f93cbf08a15e2732c0863405a4295f094cfce62ec351ef60970b37",
+  "models/barrier_01.gltf": "97699a9314fa0b976ce581fbed2bf952ea4f59dacd724c33dee11cc8aa358a32",
+  "models/barrier_02.gltf": "ebd16f1a51a631b955a615437bb8b6063a778396d44206dae59c9991b15d4064",
+  "models/bastion.gltf": "52589c66de5c671efb46c61583cf98c39f27facca3a23021e062bc0b6939f8dc",
+  "models/boulder_02.gltf": "96a7606b977648e3a8b280d836af0c7946551e17d7470638c4b36d536e26061e",
+  "models/boulder_03.gltf": "8e33fb3187f5e0f4798d51887c1a1623a72a16f8b56ecb5d77247cf6dd0c4672",
+  "models/boulder_04.gltf": "38d6c904d2a0dea2f50281d660f159aebb74d189a931e7ff3202564e07482ef5",
+  "models/boulder_05.gltf": "d471af3aeeb0c297aba55d656d2de6e1df7c316c4aa484ca8abdaf424a1dd2de",
+  "models/boulder_06.gltf": "44d705cbee80c16d9ad70221b74b8ec6369dc47b0448691500ea15f8fcafe8ca",
+  "models/boulders__namaqualand_rocks_01_a.gltf": "ae064e3007422fa8916a33888e26677e45860e74729a6f74bfc30f262bf24784",
+  "models/boulders__namaqualand_rocks_01_b.gltf": "86f928077787a4af91c84326e165c0ef7443ac5a80f4279dc2e3962d11494732",
+  "models/bunker.gltf": "4aca33c065c7f182009e987a8b9b372a1bade6e08efa8c9f4c043407aba51475",
+  "models/cliff_01.gltf": "56ccfdc8b86ff816c2bc1d308facd607aace7533ad31693b61ddb0e24756330a",
+  "models/cliff_01_t20.gltf": "85d39d514c2ebecc7ac7f7fb897eec2858408aa6822189bae7d71ee37876ac1d",
+  "models/cliff_01_t35.gltf": "97c6d4511da8db587f0e57283f4ec69d837a0f296925e20303b2e90d3095e2cb",
+  "models/cliff_02.gltf": "ae0868e85bc10c5fb17029832d292b900d9b9370695e7d48788a3f7c539e2ffc",
+  "models/cliff_02_t20.gltf": "b171b14c44cc32a8e8952e609267f0cf69426623f8aa64e40a631a9b74fa0c8e",
+  "models/cliff_02_t35.gltf": "e286f410d40455c106a2b9182d159d5116ab885ebd95d79435229313b7a4259b",
+  "models/command_block.gltf": "b741f20a6c3ded1597d90172fdd565107874d43bec74170a7fef71c894e6a8bc",
+  "models/compressor.gltf": "cee623178bc9f2d394686b106ce31a1bd3e1034280a0aba3067531dd10700f44",
+  "models/container_stack.gltf": "4b3d467962472515fc6a48e5d84ba108f42050a55bc86bdc589dc84ad44ce979",
+  "models/conveyor.gltf": "02e2f867645879aec64c0ebc8a67e78343b658983cd832ed9805f01d87b5a8c0",
+  "models/cooling_tower.gltf": "75ae0a49cad85b16747f0be178db651e980113a86b93b006e55e0a5b31417564",
+  "models/covered_car.gltf": "13f9b6b194abc12c08f80def7c4bca71456adfa9757ff2c114fa5b2366db94b7",
+  "models/crane.gltf": "2acca2127d1b0b796b56e835192fedc8cec76ff2d051e316d8a1591f363427f5",
+  "models/data/011048a9c59105b9.jpg": "011048a9c59105b9f82cafa04035671405512b8fe30faab6182cdd82a6790c03",
+  "models/data/022287b7c223a05a.bin": "022287b7c223a05a24667cc53fa019d4680092aecceaac279ad34c58f9f0882c",
+  "models/data/0a80458dbe5b61a2.jpg": "0a80458dbe5b61a2ca2d498c6648a7ea31d38f8746286ae723c242cd2ceee9dc",
+  "models/data/0b06e37bc1fee9a2.bin": "0b06e37bc1fee9a2dd3e25c1af614eedde0b08c3c5407644e1c38e9d2beff682",
+  "models/data/0c2c512fa72c5340.bin": "0c2c512fa72c5340d0c8274b0b9e05f1b4162c8bac72cf50ccc90053a60ff6da",
+  "models/data/0d015abfb2b413db.jpg": "0d015abfb2b413db16eae82d70f0101aa73f203170863feac515964eae3a63c3",
+  "models/data/1045d94b61a12fd5.bin": "1045d94b61a12fd58e63cd75e60acba9b9e6b07c1cb5a98b3bebe1d60acc8040",
+  "models/data/125e2d2ab906c679.bin": "125e2d2ab906c67934241b97b267254271607fce059574ed0a3782b3904328d3",
+  "models/data/1c41cdad384bb8c8.jpg": "1c41cdad384bb8c818292383e80e9dc355fc7965a8ab0e62a0a60faeec54a876",
+  "models/data/2483524542b663c0.bin": "2483524542b663c03fa7a098e746efd99ca18389effc623cf7bc3df91648551c",
+  "models/data/250ff6d0f470155b.bin": "250ff6d0f470155b6576cbe7e1d244165fb020af51c90a6042e40c0b10fde66b",
+  "models/data/271b9b7ecccb19d9.bin": "271b9b7ecccb19d9203df0500e874fabfda61bb09c6fa86c19940a838b1f4ee1",
+  "models/data/29c8735ca47f75fc.jpg": "29c8735ca47f75fc914a259838fe61f51ab877ae7cb2df81bc6901217bb9fe9f",
+  "models/data/2c5c9509355ff525.bin": "2c5c9509355ff525e9af9c9f360c7a6b9414576e0d3ec60ec0274ba0cd45b63d",
+  "models/data/2e8bbfaa02b27735.jpg": "2e8bbfaa02b277354d7634742394bf3d1f63461a96d94926bdcf9eb806a1487d",
+  "models/data/2fed2f06c665adf0.jpg": "2fed2f06c665adf029f22d3133f264ce890f95364b7d9ff059ddcc9986d3fa23",
+  "models/data/312ba4816b0e1009.bin": "312ba4816b0e10096617b2136490cf80c20ce775e035bb7137e5920b76893a1e",
+  "models/data/316479041bf1382f.bin": "316479041bf1382f8d97f03c1f1f9e713f0f5b548e19daacb550c840333b71c3",
+  "models/data/339932ea8bd877f1.jpg": "339932ea8bd877f18a737216d4093832f406512dd72257bbcd078cadb06123c1",
+  "models/data/39b20062301c8822.jpg": "39b20062301c88228e300fc0ebbbc8246238af3a20ac6c5437a4d497828e76da",
+  "models/data/3ad55c5687e59369.jpg": "3ad55c5687e59369caf555e39c53823df2269f8e5d17b6c9fdf51876fd990678",
+  "models/data/3f15eb525065eee6.bin": "3f15eb525065eee64bed3f24f27a119e9fec447a113bbbdbe5e322e922a9dee1",
+  "models/data/3f800020c4bf7966.jpg": "3f800020c4bf79661b192e28fe064e5c9dd7ab976e97f698e518353bf7164864",
+  "models/data/4276bcd4e7d778e0.bin": "4276bcd4e7d778e0f9bbbe6aec8e40993e94e92b1b334253f1de9bfbf6fca051",
+  "models/data/4476b675fbe4d7d6.bin": "4476b675fbe4d7d64b64dc792806599e027f8fc5fcc37a93348eacf3eb79c68b",
+  "models/data/477391c40b21b18d.jpg": "477391c40b21b18d8e441f6030ae12b69d6733f4f287de609675a98e8fc2d147",
+  "models/data/4a2b8345d9313868.jpg": "4a2b8345d931386845dd0d97638de0f4517453a0195dc1e14830b245d6c450d7",
+  "models/data/4adaace4ec3dfc4c.jpg": "4adaace4ec3dfc4c5513627df3502bd25cbe5232993ee7aeb86cf619adb67302",
+  "models/data/4b49b1d4fdd78486.jpg": "4b49b1d4fdd784865fc0d14d20bec43bbdd30b9923da138e0728a11450f73aa2",
+  "models/data/4c0bb7f5e7bad952.bin": "4c0bb7f5e7bad952cf3b5161636929767a5c97dde847ed74f6999137132f3e21",
+  "models/data/5286684615592dcf.jpg": "5286684615592dcff898572f835b72a5e4e345783ab7c9983ff073254f83fe5c",
+  "models/data/5409a3fd29ae7e98.jpg": "5409a3fd29ae7e98b52764cfd22b2e09aad8d569367f7d841dac13ce26b5f988",
+  "models/data/5621409d1f9d0ea9.jpg": "5621409d1f9d0ea91dbdd25875225ff6774a2ccb80c8842f5dda913df0710cb7",
+  "models/data/570ef426d16c165f.bin": "570ef426d16c165fa0fb29ee9c21b430e2a6df4fcb01ce1cf26eb0d42bc861f7",
+  "models/data/5da064dcae639795.jpg": "5da064dcae6397959ccd94c3501656033dc125477df023060ff1a84b5e23a41b",
+  "models/data/60bf1c32acb85172.bin": "60bf1c32acb85172d2e5671207090615bfb458ab20533f8234d27e6fad53014e",
+  "models/data/6120f3922749f6be.bin": "6120f3922749f6beeb84ec7c7c990685638a831ada700ef7d8e3e76095cb9c6f",
+  "models/data/64ad5fc2d3619f6c.jpg": "64ad5fc2d3619f6ca600a637e8c7e82d724436a9e41dba7ed75123674c701d3f",
+  "models/data/651a1bdbcce0862f.bin": "651a1bdbcce0862fb74db1be20abf6446377d994b60aff1fbe2f7bc28ae7f954",
+  "models/data/67ecf1a5bac195eb.jpg": "67ecf1a5bac195eb489f9529100dd4df85e710f023df0ad1e59050ab16f28c69",
+  "models/data/6905c20d6ca1192a.jpg": "6905c20d6ca1192aef89e60bb880dd8b262ea8441212d335faf398633a81e180",
+  "models/data/6ab61ef36d811f11.bin": "6ab61ef36d811f11124924a74e890fd92c2623cc940edc5ba19daa2d0f638da1",
+  "models/data/6b6224ef439d2e00.bin": "6b6224ef439d2e00e50185e24cc0cd80f704dc3d82a50bd6d28658720a686f63",
+  "models/data/6f0d594c1dcefc0c.jpg": "6f0d594c1dcefc0c84cfc7602fefdf4454608b56f5ebdf66d074f782095c8815",
+  "models/data/740ec6f84c3d7a66.jpg": "740ec6f84c3d7a661d95ea3ba53719537a6131255e3f37d62ba6eda2bfd7cd41",
+  "models/data/78195c538b20f509.jpg": "78195c538b20f5091128700689e22c387057d4d0a5a1931664bf1c817d5f500a",
+  "models/data/7830d521bbce2b19.jpg": "7830d521bbce2b19a2fb50705f6f54952c06d345ff9b3734ee12c18581339486",
+  "models/data/79d69babf17de9c2.jpg": "79d69babf17de9c2304071873ebf61b4dbe3b005a2323ae7bc45235f1604db2e",
+  "models/data/7c22bd4621d5139a.jpg": "7c22bd4621d5139a0a87becaaced6ad2054c80b9f0130912835dfd57b366fffd",
+  "models/data/7c3491bf0aba357f.bin": "7c3491bf0aba357fde97f7c3fc1bde58a83067d349291d4b92a629a2e5370aaf",
+  "models/data/7d3a289ddba71b1b.bin": "7d3a289ddba71b1b5ff86599f51bad1e19fecf496fef12f6937a23b4244b9a3e",
+  "models/data/7da46e3a77f0d6df.bin": "7da46e3a77f0d6dfcca1a8a7985cb41fbcaea4c17c07ffb63ddf0c679c833fd8",
+  "models/data/85390afdc1527897.jpg": "85390afdc1527897f9dc9236bb250825aa994b2fe785a5de14943178e93fddc2",
+  "models/data/860744e2b86d03e8.jpg": "860744e2b86d03e82b775097630a1aeb37043e5df3456d1b3b41ae989709b069",
+  "models/data/86755c09b4a03fbf.jpg": "86755c09b4a03fbf2daa7127b9482998ea459831e743e8ec6cbdf8aae40b4f76",
+  "models/data/91576ba9e43f8610.jpg": "91576ba9e43f8610b649f41ba44065654f37c392f718cc3b81c5292eaae5c30f",
+  "models/data/962995c6c9fba09d.bin": "962995c6c9fba09d37fcdc7688695619466794d2a05ffe5e29dc0ee5f211b8ce",
+  "models/data/97a9ca84cbcd82d8.jpg": "97a9ca84cbcd82d8632043856df942c6722a0068aaadaad7b37e147cbd6a7b36",
+  "models/data/98541e8fe4a55110.bin": "98541e8fe4a55110c0267be63b7f3fda9461831c9a9fc75b7ad4cc3ca3732e32",
+  "models/data/9b2fc6aa3f28f0da.jpg": "9b2fc6aa3f28f0da00e12556285a3f6c0b6ad2db2385d2e11c9101a04f326597",
+  "models/data/9fba14287288f087.jpg": "9fba14287288f0871ddf6aa4e9c3d8ec549ba5e5ba01935d77a9b24d3355fa89",
+  "models/data/a200689449411ea0.bin": "a200689449411ea0facb2ffead9036ad73a21030d6bc72de2a00785d5279107c",
+  "models/data/a376378e77a6f99a.bin": "a376378e77a6f99a732dbc9ac619428d219eae6e4f5c7e570144e3d986ad5177",
+  "models/data/a3cf9e2c459207b6.jpg": "a3cf9e2c459207b6f38d03781677ee33fa9958c16bbac92a3969d72f682b5993",
+  "models/data/a42100a2ec71e60e.bin": "a42100a2ec71e60e629c5711f0214ca3376659de0d4bf365817719dab501e561",
+  "models/data/a66c5175d2e6c389.jpg": "a66c5175d2e6c389a3b761d6e7157d451541a5f97fae32b63dc4a2fe848fe436",
+  "models/data/acc2c22f9c5b0ded.bin": "acc2c22f9c5b0deddee98f1e19657025f94680890d64ae9871aaf5af89b1ae1a",
+  "models/data/af8209aebeed1b69.bin": "af8209aebeed1b69e9a1c207307685615d6fb1e91c7481b01d09b15b261c130b",
+  "models/data/b8755f5600b5cd12.bin": "b8755f5600b5cd12ac28d1319a64e572f1d7a74caebf4b61953e3e8041d73d7b",
+  "models/data/baae8e6eee4201a2.bin": "baae8e6eee4201a2fa1582d67ddf81fef6ccb4d6a191c8b1e1a6ab6f9fa86877",
+  "models/data/bcace56008c6de4c.bin": "bcace56008c6de4cdcf8925326224c22775df1ba372eec06427ba45eefb79742",
+  "models/data/ccec0d691ae00619.jpg": "ccec0d691ae00619e738067a5ccde28f56b6b811dc59ff5b17a67e08189f0ad9",
+  "models/data/cf255099c46cb271.bin": "cf255099c46cb2711ba28dc0b56d8495e95742843a75f31b8861f5b95fbb7484",
+  "models/data/d275c9f108b36c92.jpg": "d275c9f108b36c9214cc130ec4a7690b550d03bddeec91181d63729fb0a2b8a8",
+  "models/data/dc008d84a64a4c11.bin": "dc008d84a64a4c11351933575cf093facdee4e5d114c8e7d3408ce9efa564319",
+  "models/data/df46326e31f25e61.bin": "df46326e31f25e61a712ea2bfac64a5bda4b7cb2aa4fd65d8978ec9a4ac0f97f",
+  "models/data/e132b053c83ccf04.jpg": "e132b053c83ccf041c8c387ef5919f50211e2e30b72762c74556f5d3166a9035",
+  "models/data/e22637125afd988f.bin": "e22637125afd988f7cb398d8e9f08bf439ff21c597e4a9c198be06c2caeb40a7",
+  "models/data/eaff3e9bbddfa136.bin": "eaff3e9bbddfa136fa52ebcea96480c3aa62a03ce8f2e609638648db4a83a4f4",
+  "models/data/eb882118368dc989.bin": "eb882118368dc989bd9190b662d67aedc3d940493febecd72c03a3e097c4ba0e",
+  "models/data/ed139a99556d9d8c.jpg": "ed139a99556d9d8cd71ef03c3f686b87debbb05adfb8b9a6ac5350db162b4624",
+  "models/data/ef006d17c06f980b.bin": "ef006d17c06f980bfafd73204533a507c776600b07b76b17b0f8a978aa522a7d",
+  "models/data/ef67c1d66673944b.bin": "ef67c1d66673944b5f8540b810cf2cfe1dff8d8396cf17b88c2e3d0b79d85ba3",
+  "models/data/f3a4793e497bc548.bin": "f3a4793e497bc548625b36d85349d476d96cc4a6cd69f6eb29b9aa33584300c9",
+  "models/data/f43f78478f0020b2.bin": "f43f78478f0020b2933881afd9d33847bd1b02bd6210251de0c3493c12a7f40c",
+  "models/data/f59c1bbc746e4186.jpg": "f59c1bbc746e418683758952c87e54b4c695d4d258e09882119c003b76fc7efc",
+  "models/data/fac996c0cfc44424.jpg": "fac996c0cfc444248936c314f341f9e7e16912a6c98cb1971d03d52326f7c8fc",
+  "models/data/ff77846221cd1e10.bin": "ff77846221cd1e1009f3a2efcdbaea85d7078d16808dc1934c3cd3f0ec665e56",
+  "models/factory_hall.gltf": "f217ff12a1a45f1938257b50b8b58c7df3bf221b4c2714f3d153866dcae36ef2",
+  "models/fuel_tank.gltf": "3a498c0076ee9a24477985cd552d2d580fde0f25507c25e33285a6575b375f41",
+  "models/generator.gltf": "b7b0d087de5bb13d3d421f1b0c41e962328f708146f3552028649abd2e8e6349",
+  "models/hangar.gltf": "455d49e00bb1e22c280fb5bd565d35d3ba7086b0adb52f385e22b2f25735cfb7",
+  "models/headframe.gltf": "5a5c44ca86b68b19e72c489b5cabebb547c9c158b3e64da056aa463b18bab26d",
+  "models/missile_pad.gltf": "221ca83a0f9491ad7b0eb8b2b4eccf4a7cc408ef50af0752ad355c97748f08ce",
+  "models/mountainside.gltf": "1ac61b5b1503f5ce6c8e95030d22680717844e7a78b7c0bb01eb4ff3124214e1",
+  "models/mountainside_t20.gltf": "6ec5a557f61bd5f8e4876339f86dd16d520896b7ec9ebe65e42ddf77df095319",
+  "models/mountainside_t35.gltf": "a1f75bd5917cd04a17e58ff7625e5b442b7d1e1d8d7726585ccc1e3e123e36f5",
+  "models/pipe_rack.gltf": "1fce8a5526e22c08f67dc3cfe951017fe510507571382a64795a6cc909013ffb",
+  "models/process_tanks.gltf": "9643909aee09733ff7b2eb55def0e45bf9bb8390dc712b0b4e7a0b1371282610",
+  "models/pylon.gltf": "1f5d55c51170d77f98945225b578210e151533c6d731eb5f442a0a8bbede706b",
+  "models/radar.gltf": "0b447d7923c1723dfd09d93c94d8a96f2a1cfc2198297d8461c0cd810415c9d3",
+  "models/rocks__namaqualand_rocks_02_a.gltf": "a19138830f9bd740ce0686c16c6dd532883721f3fb433733108010fe5a6216db",
+  "models/rocks__namaqualand_rocks_02_b.gltf": "c73b9a8b3f98940920ae41ae91307465aa2e8748d87f3aba6c2dab5ecdf1913c",
+  "models/silos.gltf": "6a45f62215f7c3a267096bbbd55daeef5d386de337aa4e145d515c3552567e41",
+  "models/smokestack.gltf": "7594807aed379aa90b866828d8f05eb474d47b2c42bafee1fae34c56fbb0932c",
+  "models/stones__namaqualand_stones_01_a.gltf": "8c75a3f64c19173cb9fad9e796d40ba9a48131ffc06332733b158a7f53fe6809",
+  "models/stones__namaqualand_stones_01_b.gltf": "11722aa7402101d7f52e80242b54f6330ae5017bf1390e065b4e73c82fe90e70",
+  "models/street_lamp.gltf": "f8ff697fc612dfda5925cf5e9059488111163b5e1d0fd311284b3152dda78f36",
+  "models/truck.gltf": "a122fdc4f2ea5a3377d318da41727af8a116351a953c225683c7d382c39af47a",
+  "models/utility_box.gltf": "d6040854703697ab5e01a529ae44ac3fab11f9261300538cfbad2a4fbe887cbb",
+  "models/wall_segment.gltf": "c875963450a3d0e29817f4d98df673d55c3a9468840f4a9af90eb7ea94c20e0b",
+  "models/watch_tower.gltf": "a914b5c67d096ebc71833d6bfcb88371b4db9e01d26dd963eec1a1cabf8e13ae",
+  "terrain/base_dry_ground.jpg": "ffb81641548f3be38b9215142a2837552a02709ec9f6f364cf8daf7fd3c17c7f",
+  "terrain/cliff.jpg": "98e2de481bb224de34d5f65f4d1e24a5c469390bada2755de1b10d76bf7c0c0e",
+  "terrain/cliff_mask.png": "b3ae5f29ea97306f7f95d17f41944778d70e13d31dbdabf8157a356b4e64daff",
+  "terrain/concrete.jpg": "7a181fc7273f1d3659ff12536d003ab9b44f8a8ab559f5619a0e5d32fe6759ec",
+  "terrain/concrete_mask.png": "77cd0f613830000ad950f5c2bec105523ee49028a433dad825f5834f55195e2c",
+  "terrain/cracked.jpg": "c5539f04ec46d9cf33aadf6c1e96b67f28297e01b68e2428ba5cca71ab9a265f",
+  "terrain/cracked_mask.png": "8cb3c28fe44b3ff9e40290c0624001772a3525ef997e2cc330aef3ee3628ffc1",
+  "terrain/gravel_sand.jpg": "fd8bcaf713b66880bc2e5615c25274c3bfaf6362f0db023895b2a98b2c79a0b4",
+  "terrain/gravel_sand_mask.png": "4054d2eb1be84e3682bdce3b6ebbb8b522375a79979f4d6052b594fc67a33d40",
+  "terrain/height.png": "94bfb1d2e5c1917cf13913dcda471930f2ab9060b341cec394bec9202df2dd21",
+  "terrain/road.jpg": "29e0943983be57c27769bcac9c2b8607c1068a50ef31474d9e1a0e80a616cf78",
+  "terrain/road_mask.png": "675c4dc924f31f9c95d792317582889ec9a6e68820861eb5c5d7e00ff48a915a",
+  "terrain/rocky.jpg": "228308179a88ed0352a27a524bbff74c8262bb9cf872e53a827ec6d427cfde9e",
+  "terrain/rocky_mask.png": "3d5b5b454c3bc0a4b1926304f562ac7295e46f36e9a5c71db29f197ea92e182e",
+  "terrain/scorch.jpg": "69ddd8dccfb46f5c3b7037cf619efe56206eac1d4eca13596410d1758158d322",
+  "terrain/scorch_mask.png": "9f0e1c35ee542710683136cd425933f213b7ad9a9aa0b8b6ca8e81a331e3275f"
+ }
+}
