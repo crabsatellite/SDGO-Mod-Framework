@@ -55,6 +55,7 @@
 | [对战 AI](docs/pvp-ai.zh-CN.md) <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，TAB 战绩与剩余生命随对局更新；可让真人同队、双方或对面补位、指定数量 |
 | [任务 AI 僚机](docs/coop-wingmen.zh-CN.md) <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai`，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 |
 | [战斗 AI 难度](docs/battle-ai.zh-CN.md) <!-- catalog: `battle_ai`、`battle_ai_server` --> | 在房名中选择 Easy／Medium／Hard 三档对战 AI 难度 |
+| [王牌驾驶员 AI](docs/ace-ai.zh-CN.md) **Beta** <!-- catalog: `ace_ai`、`ace_ai_server` --> | 对战 AI 与我方任务僚机可按服主配置成为有姓名的王牌驾驶员，难度、HP 与普通攻击倍率由服务端统一决定 |
 | [任务行为版本](docs/mission-behavior.zh-CN.md) <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 统一选择任务 AI 与刷怪使用 OC 原版行为或现有行为，客户端与全部 Battle 频道同步 |
 | [AI 机师互动台词（可选）](docs/ai-dialogue.zh-CN.md) <!-- catalog: `ai_dialogue` --> | AI 机师按战况和机体人设说台词、给队友建议；需自填 DeepSeek 密钥，默认关闭 |
 | [每局随机机体](docs/room-random.zh-CN.md) <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机选择出击机体或卡组 |
