@@ -55,7 +55,7 @@ Colour textures (model base colour textures and terrain layer textures) may be P
 | `spawns` | `team_a` and `team_b` with 6 points each, `shared` with 1..12, plus `grid_respawn_a`/`grid_respawn_b` for Grid mode; each point has `position` and `facing` |
 | `sectors` | Named mission sector spawn points (`{name: {spawns: [...]}}`) |
 | `item_patterns` | Item spawn sets; `red` and `blue` need the same number of sets |
-| `presentation` | `preview` (PNG), `minimap` (PNG), `bgm` (an MP3 in the package or `{"native": "BGM\\NNNN.mp3"}`) |
+| `presentation` | `preview` (PNG), `minimap` (PNG, the whole terrain), `bgm` (an MP3 in the package or `{"native": "BGM\\NNNN.mp3"}`). The compiler makes the map image from the minimap like the shipped maps: the play area keeps its aspect inside the square texture and is framed by an orange-yellow boundary line; the mission row's image also outlines every movable area its missions use |
 | `files` | SHA-256 of every file in the package |
 
 ## Mission protocol (`missions/*.json`)

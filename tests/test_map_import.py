@@ -156,6 +156,35 @@ class CompileTests(unittest.TestCase):
                 compiler.map_row(pkg, 143, 'mission', 'Trns\\m143.trn', 'sprs\\m143p.spr',
                                  'Txrs\\m143r.txr', 'BGM\\0001.mp3')
 
+    def test_radar_keeps_the_play_area_aspect_and_draws_the_borders(self):
+        from owner.maps import txr_format
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = mission_spec()
+            spec['area'] = [-500, 1000, 500, -1000]
+            root = write_package(Path(tmp), mission=spec)
+            manifest = json.loads((root / 'map.json').read_text(encoding='utf-8'))
+            manifest['terrain']['play_area'] = {'half_x': 1024, 'half_z': 2048}
+            manifest['missions'] = ['missions/m.json']
+            (root / 'map.json').write_text(json.dumps(manifest), encoding='utf-8')
+            pkg = P.load(root)
+
+            def radar(build, name):
+                raw = build.resources[name]
+                return Image.open(io.BytesIO(txr_format.parse(raw).image.to_bytes())).convert('RGB')
+            shared = {}
+            pvp = compiler.compile_map(pkg, map_no=143, map_id=500, variant='pvp', prefix='m143', shared=shared)
+            self.assertEqual(struct.unpack_from('<4i', pvp.rows[0][2], 0x33B), (64, 0, 128, 256))
+            image = radar(pvp, 'txrs/m143r.txr')
+            self.assertEqual(image.getpixel((10, 128)), (0, 0, 0))                 # letterbox outside the play area
+            self.assertEqual(image.getpixel((64, 128)), compiler.RADAR_BORDER)     # play-area border
+            self.assertNotIn('txrs/m143rx.txr', pvp.resources)
+            mission = compiler.compile_map(pkg, map_no=144, map_id=500, variant='mission', prefix='m143', shared=shared)
+            self.assertIn('Txrs\\m143rx.txr', mission.rows[0][2][0x2D7:0x33B].decode('utf-16-le'))
+            image = radar(mission, 'txrs/m143rx.txr')
+            # area x -500..500 of the play half 1024 -> columns 64 + (524/2048)*127 ~ 96 .. 159
+            self.assertEqual(image.getpixel((96, 128)), compiler.RADAR_BORDER)
+            self.assertNotEqual(image.getpixel((80, 128)), compiler.RADAR_BORDER)
+
     def test_movable_areas_set_every_players_terrain_rect(self):
         with tempfile.TemporaryDirectory() as tmp:
             spec = mission_spec()

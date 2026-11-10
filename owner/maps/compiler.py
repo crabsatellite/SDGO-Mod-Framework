@@ -16,13 +16,14 @@ with the MissionMode flag, because the client never lists a mission row in PvP r
 from __future__ import annotations
 
 import hashlib
+import json
 import io
 import math
 import struct
 from dataclasses import dataclass, field
 from typing import Callable
 
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
 from . import gltf, mod_format, trn_format, txr_format
 from .package import GRID, Package, MapPackageError
@@ -348,7 +349,56 @@ class _ModelCompiler:
 
 
 # --------------------------------------------------------------------------- map row and server rows
-def map_row(package: Package, map_no: int, variant: str, trn: str, preview: str, radar: str, bgm: str) -> bytes:
+RADAR_BORDER = (214, 126, 38)      # the orange-yellow edge the shipped radar images draw around the play area
+
+
+def radar_image(package: Package, minimap: Image.Image, areas=()) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """Radar texture like the shipped ones: the play area keeps its aspect inside the square texture (black
+    outside), framed by an orange-yellow border; `areas` ([left x, top z, right x, bottom z] world rects) get the
+    same border. Returns the image and its play-area rectangle (x, y, width, height) for the map row."""
+    hx, hz = package.play_half_x, package.play_half_z
+    fx, fz = hx / package.half_extent, hz / package.half_extent
+    box = (minimap.width * (1 - fx) / 2, minimap.height * (1 - fz) / 2,
+           minimap.width * (1 + fx) / 2, minimap.height * (1 + fz) / 2)
+    if hx >= hz:
+        w, h = RADAR_SIZE, max(8, int(round(RADAR_SIZE * hz / hx)))
+    else:
+        w, h = max(8, int(round(RADAR_SIZE * hx / hz))), RADAR_SIZE
+    x0, y0 = (RADAR_SIZE - w) // 2, (RADAR_SIZE - h) // 2
+    image = Image.new('RGB', (RADAR_SIZE, RADAR_SIZE), (0, 0, 0))
+    image.paste(minimap.crop(tuple(int(round(v)) for v in box)).resize((w, h), Image.LANCZOS), (x0, y0))
+    draw = ImageDraw.Draw(image)
+
+    def frame(left, top, right, bottom):
+        draw.rectangle((left, top, right, bottom), outline=RADAR_BORDER, width=2)
+
+    frame(x0, y0, x0 + w - 1, y0 + h - 1)
+    for left, top, right, bottom in areas:
+        u = lambda x: x0 + (max(-hx, min(hx, x)) + hx) / (2 * hx) * (w - 1)      # noqa: E731
+        v = lambda z: y0 + (hz - max(-hz, min(hz, z))) / (2 * hz) * (h - 1)      # noqa: E731  row 0 = north
+        frame(int(round(u(left))), int(round(v(top))), int(round(u(right))), int(round(v(bottom))))
+    return image, (x0, y0, w, h)
+
+
+def mission_areas(package: Package) -> list[tuple[float, float, float, float]]:
+    """Every movable area the package's missions use (mission `area`, sector `rect`, phase `enter.area`)."""
+    found = []
+    for name in package.manifest.get('missions') or []:
+        try:
+            spec = json.loads(package.read(name).decode('utf-8'))
+        except (ValueError, KeyError):
+            continue                       # the mission compiler reports a broken mission with its field
+        rects = [spec.get('area')] + [s.get('rect') for s in (spec.get('sectors') or {}).values() if isinstance(s, dict)]
+        rects += [(p.get('enter') or {}).get('area') for p in spec.get('phases') or [] if isinstance(p, dict)]
+        for rect in rects:
+            if (isinstance(rect, list) and len(rect) == 4 and all(isinstance(v, (int, float)) for v in rect)
+                    and tuple(rect) not in found):
+                found.append(tuple(float(v) for v in rect))
+    return found
+
+
+def map_row(package: Package, map_no: int, variant: str, trn: str, preview: str, radar: str, bgm: str,
+            radar_rect: tuple[int, int, int, int] = (0, 0, RADAR_SIZE, RADAR_SIZE)) -> bytes:
     row = bytearray(MAP_ROW_BYTES)
     struct.pack_into('<I', row, 0, MAP_ROW_FIRST_ID + map_no)
     struct.pack_into('<I', row, 5, map_no)
@@ -363,7 +413,7 @@ def map_row(package: Package, map_no: int, variant: str, trn: str, preview: str,
     # Zero sends the entire scene into Bloom and can wash the map out to white.
     struct.pack_into('<f', row, 0x2D3, 0.85)
     _put_wstr(row, 0x2D7, 0x64, radar, 'radar path')
-    struct.pack_into('<4i', row, 0x33B, 0, 0, RADAR_SIZE, RADAR_SIZE)
+    struct.pack_into('<4i', row, 0x33B, *radar_rect)    # play area inside the radar texture (x, y, w, h)
     row[0x34B] = 1
     return bytes(row)
 
@@ -492,11 +542,8 @@ def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'p
         resources[f'txrs/{prefix}p.txr'] = txr_format.build_txr(128, 128, canvas.convert('RGBA').tobytes())
         resources[f'sprs/{prefix}p.spr'] = spr_bytes(_native(f'txrs/{prefix}p.txr'), PREVIEW_SIZE[0], PREVIEW_SIZE[1], (128, 128))
         minimap = _open(package.read(package.minimap), 'presentation.minimap').convert('RGB')
-        fx = package.play_half_x / package.half_extent
-        fz = package.play_half_z / package.half_extent
-        box = (minimap.width * (1 - fx) / 2, minimap.height * (1 - fz) / 2,
-               minimap.width * (1 + fx) / 2, minimap.height * (1 + fz) / 2)
-        radar = minimap.crop(tuple(int(round(v)) for v in box)).resize((RADAR_SIZE, RADAR_SIZE), Image.LANCZOS)
+        radar, shared['radar_rect'] = radar_image(package, minimap)
+        shared['minimap'] = minimap
         resources[f'txrs/{prefix}r.txr'] = txr_format.build_txr(RADAR_SIZE, RADAR_SIZE, radar.convert('RGBA').tobytes())
         if package.bgm_file:
             shared['bgm'] = f'BGM\\{prefix}.mp3'
@@ -508,9 +555,16 @@ def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'p
             shared['loose'] = {}
         shared['presentation'] = True
     out.loose = dict(shared['loose'])
+    radar_name = f'txrs/{prefix}r.txr'
+    areas = mission_areas(package) if variant == 'mission' else []
+    if areas:
+        # the mission row gets its own radar with the border of every movable area its missions use
+        radar_name = f'txrs/{prefix}rx.txr'
+        radar, _ = radar_image(package, shared['minimap'], areas)
+        resources[radar_name] = txr_format.build_txr(RADAR_SIZE, RADAR_SIZE, radar.convert('RGBA').tobytes())
     out.rows.append((MAP_KIND, MAP_ROW_FIRST_ID + map_no,
                      map_row(package, map_no, variant, _native(trn_name), _native(f'sprs/{prefix}p.spr'),
-                             _native(f'txrs/{prefix}r.txr'), shared['bgm'])))
+                             _native(radar_name), shared['bgm'], shared['radar_rect'])))
 
     for name in resources:
         if not name.split('/', 1)[1].startswith(prefix):

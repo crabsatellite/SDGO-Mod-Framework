@@ -55,7 +55,7 @@
 | `spawns` | `team_a`、`team_b` 各 6 个，`shared` 1..12 个，`grid` 模式另需 `grid_respawn_a`/`grid_respawn_b`；每个点 `position` 与 `facing` |
 | `sectors` | 任务分区出生点（`{name: {spawns: [...]}}`），供任务切换区域使用 |
 | `item_patterns` | 道具刷新组，`red` 与 `blue` 组数相同 |
-| `presentation` | `preview`（地图预览 PNG）、`minimap`（小地图 PNG）、`bgm`（包内 MP3 或 `{"native": "BGM\\NNNN.mp3"}`） |
+| `presentation` | `preview`（地图预览 PNG）、`minimap`（小地图 PNG，覆盖整个地形）、`bgm`（包内 MP3 或 `{"native": "BGM\\NNNN.mp3"}`）。编译器按原版地图的做法由小地图生成地图图像：活动区保持原比例放在方形贴图中，四周画出橙黄色边界线；任务行的地图图像还会框出任务用到的每个活动范围 |
 | `files` | 包内每个文件的 SHA-256 |
 
 ## 任务协议（`missions/*.json`）
