@@ -153,6 +153,10 @@ Protocol analysis, troubleshooting and native automated tests for developers.
 
 [Build and developer API](docs/framework.md) · [Contribution and AI disclosure rules](docs/contributing.zh-CN.md) · [Setup and troubleshooting](docs/setup.md)
 
+## Acknowledgements
+
+Operator template reference: [幻羽未来 (Bilibili UID 564285)](https://space.bilibili.com/564285). Thank you for sharing your template.
+
 MIT: [LICENSE](LICENSE). Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 See [content ownership](docs/content-boundaries.md) for framework SQL, owner definitions and private/runtime data boundaries.
