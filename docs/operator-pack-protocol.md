@@ -153,8 +153,9 @@ listing it.
 
 Drop rules use an existing `category_id`, `chance_bps` from 0 through 10000, and `min_amount` /
 `max_amount` from 1 through 65535. Their total chance cannot exceed 10000; the remainder means no drop.
-At most one rule wins per native operator-drop trigger. An optional `pool` must already exist in the
-target catalog.
+At most one rule wins per native operator-drop trigger. The same `category_id` may appear in multiple
+mutually exclusive rules to express common, surprise, and jackpot quantity bands. An optional `pool`
+must already exist in the target catalog.
 
 `storefront` accepts `name`, `label`, positive integer `price`, `GB` or `MB` `currency`, and positive
 integer `validity`. These fields are only draft defaults. Only enabled, managed `product` registrations

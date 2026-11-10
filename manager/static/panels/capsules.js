@@ -1435,9 +1435,9 @@ function initializeActivityEditor(){
   const labeled=(text,input)=>{const label=el('label');label.className='activity-field';label.append(el('span',text),input);return label;};
   function renderPreferences(){
     defaults.replaceChildren(el('summary','本服模板参数（随制作目录保存）'));
-    defaults.append(el('p','留空沿用本服原生参考。这里的价格和目标频率只用于以后生成或套用模板，不会自动改变已有机台；它们属于服主配置，不进入通用工具包。'));
+    defaults.append(el('p','留空沿用本服原生参考。价格、目标机体频率和 S 级合计频率只用于以后生成或套用模板，不会自动改变已有机台；它们属于服主配置，不进入通用工具包。'));
     const table=el('table');table.className='activity-rewards';const head=el('tr');
-    for(const name of ['模板','单次价格','目标频率 %'])head.append(el('th',name));table.append(head);
+    for(const name of ['模板','单次价格','目标机体 %','S 级合计 %'])head.append(el('th',name));table.append(head);
     const inputs=[];
     for(const preset of snapshot.patterns||[]){
       const stored=snapshot.preferences?.patterns?.[preset.id]||{};const row=el('tr');
@@ -1445,9 +1445,12 @@ function initializeActivityEditor(){
       price.setAttribute('aria-label',preset.title+'本服默认价格');
       const percent=el('input');percent.type='number';percent.min='0.01';percent.max='50';percent.step='0.01';
       percent.value=stored.featured_entries==null?'':(stored.featured_entries/100).toFixed(2);percent.placeholder='原生参考';
-      percent.setAttribute('aria-label',preset.title+'本服目标频率');
-      const priceCell=el('td');priceCell.append(price);const frequencyCell=el('td');frequencyCell.append(percent);
-      row.append(el('td',preset.title),priceCell,frequencyCell);table.append(row);inputs.push({id:preset.id,price,percent});
+      percent.setAttribute('aria-label',preset.title+'本服目标机体频率');
+      const sGrade=el('input');sGrade.type='number';sGrade.min='0.01';sGrade.max='50';sGrade.step='0.01';
+      sGrade.value=stored.s_grade_entries==null?'':(stored.s_grade_entries/100).toFixed(2);sGrade.placeholder=preset.id==='token_99'?'高阶模板独立保留':'原生参考';
+      sGrade.disabled=preset.id==='token_99';sGrade.setAttribute('aria-label',preset.title+'本服 S 级合计频率');
+      const priceCell=el('td');priceCell.append(price);const frequencyCell=el('td');frequencyCell.append(percent);const sGradeCell=el('td');sGradeCell.append(sGrade);
+      row.append(el('td',preset.title),priceCell,frequencyCell,sGradeCell);table.append(row);inputs.push({id:preset.id,price,percent,sGrade});
     }
     const save=el('button','保存本服模板参数');save.type='button';
     save.onclick=async()=>{
@@ -1457,8 +1460,11 @@ function initializeActivityEditor(){
         for(const input of inputs){const settings={};
           if(input.price.value!=='')settings.price=Number(input.price.value);
           if(input.percent.value!==''){const entries=Number(input.percent.value)*100;
-            if(Math.abs(entries-Math.round(entries))>0.000001)throw new Error('目标频率最多保留两位小数。');
+            if(Math.abs(entries-Math.round(entries))>0.000001)throw new Error('目标机体频率最多保留两位小数。');
             settings.featured_entries=Math.round(entries);}
+          if(input.sGrade.value!==''){const entries=Number(input.sGrade.value)*100;
+            if(Math.abs(entries-Math.round(entries))>0.000001)throw new Error('S 级合计频率最多保留两位小数。');
+            settings.s_grade_entries=Math.round(entries);}
           if(Object.keys(settings).length)patterns[input.id]=settings;
         }
         const result=await apiPost('/api/providers/capsules/api/projects/activity-preferences',{

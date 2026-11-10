@@ -1,6 +1,6 @@
 import unittest
 
-from owner.units.activity_patterns import build_pattern
+from owner.units.activity_patterns import build_pattern, normalize_preferences
 from owner.units.activity_repository import normalize_config
 
 
@@ -43,6 +43,24 @@ class ActivityPatterns(unittest.TestCase):
     def test_framework_without_owner_settings_uses_host_reference_frequency(self):
         result=self.build('gp_rare')
         self.assertEqual(10,result['target_entries'])
+
+    def test_owner_can_set_exact_aggregate_s_grade_frequency(self):
+        preferences={'schema_version':1,'patterns':{'gp_rare':{
+            'featured_entries':20,'s_grade_entries':150}}}
+        result=self.build('gp_rare',preferences)
+        self.assertEqual(150,result['s_grade_entries'])
+        self.assertEqual(150,sum(row['entries'] for row in result['pool']
+                                 if row['category_id'] in (1119000,1100004)))
+        self.assertEqual(10000,sum(row['entries'] for row in result['pool']))
+        self.assertTrue(all(row['entries']>0 for row in result['pool']))
+
+    def test_aggregate_s_grade_frequency_cannot_hide_premium_pool_or_featured_unit(self):
+        with self.assertRaisesRegex(ValueError,'99 代币高阶模板'):
+            normalize_preferences({'schema_version':1,'patterns':{
+                'token_99':{'s_grade_entries':150}}})
+        with self.assertRaisesRegex(ValueError,'目标机体频率不能高于'):
+            self.build('gp_rare',{'schema_version':1,'patterns':{'gp_rare':{
+                'featured_entries':151,'s_grade_entries':150}}})
 
     def test_99_token_pool_is_only_selected_explicitly(self):
         result=self.build('token_99')

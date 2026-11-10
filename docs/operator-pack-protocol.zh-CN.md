@@ -285,7 +285,8 @@ pilot_exp_percent, mission_parts, extensions
 ```
 
 `chance_bps` 为 0–10000，全部规则合计不能超过 10000，余量代表不掉落。数量为 1–65535 的闭区间。
-一次原生副官掉落触发最多命中一条规则。可选的 `pool` 必须引用目标目录已经登记的随机物品池。
+一次原生副官掉落触发最多命中一条规则。同一 `category_id` 可出现在多条互斥规则中，用不同概率和数量区间表达常见、惊喜与大奖档。
+可选的 `pool` 必须引用目标目录已经登记的随机物品池。
 
 `storefront` 支持 `name`、`label`、`price`、`currency`、`validity`。它只保存商城草稿预填：
 

@@ -238,11 +238,14 @@ remains private owner data; the framework release contains only the tools.
 
 The capsule panel also edits dedicated activity pools. Choose **普通 G 币**
 (ordinary GP), **少量代币** (small token cost), or **99 代币高阶** (premium).
-The **本服模板参数** controls store the owner's target frequency and price in
-the private authoring catalog. Unset values use the configured host's native
-reference frequency and most common matching price. The premium preset is
-explicit and uses the native same-tier mean at 99 tokens. A missing ordinary
-reference never silently selects the premium preset.
+The **本服模板参数** controls store the owner's featured-unit frequency,
+optional aggregate S-rank frequency, and price in the private authoring catalog.
+Unset values use the configured host's native reference frequency and most common
+matching price. Aggregate S-rank targets are compiled exactly into the native
+10,000-slot sequence while retaining every reference reward identity; they are not
+independent per-draw probabilities. The premium preset is explicit, retains its
+separate high-tier pool, and uses the native same-tier mean at 99 tokens. A missing
+ordinary reference never silently selects the premium preset.
 Owner machine data, unit content and preset overrides are not framework defaults.
 
 A machine's poster can be replaced at any time: open the machine and click **更换活动海报** (shown as **上传正式海报** while a
