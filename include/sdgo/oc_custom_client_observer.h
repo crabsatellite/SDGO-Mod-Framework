@@ -102,6 +102,29 @@ struct SdgoOcCustomClientSnapshotV2 {
     uint32_t oc_switch_frames;      // frames with the OC tab requested or open
     uint32_t oc_pending_frames;     // of them, before the OC page took the 经验值转换 slot
     uint32_t native_flash_frames;   // of them, frames showing the native 经验值转换 page, its inventory or its actions
+    // OC special: the local player's special (fatal) attack damage. Each hooked computation of the local
+    // player's own special (weapon AttackStyle 2) is counted; the "last" fields describe the most recent one.
+    uint32_t special_events;        // local special computations seen at the three sites
+    uint32_t special_raised;        // of them, computed with DamageSize + the OC special gain
+    uint32_t special_native;        // of them, left native (not an OC room, no gain, or DamageSize at the cap)
+    uint32_t special_family;        // last: weapon RangeType (1 cinematic melee, 2 cinematic ranged, 3 map, 8 rush)
+    uint32_t special_weapon;        // last: fatal weapon id
+    int32_t special_damage_size;    // last: the weapon's DamageSize (DS)
+    int32_t special_carried;        // last: OC special delta carried by the active unit record
+    int32_t special_gain;           // last: gain applied, min(carried, 7950 - DS); 0 when left native
+    int32_t special_native_value;   // last: native value at the site (melee trunc(DS*r), ranged (115-15c)*DS/100, map additive bonus)
+    int32_t special_value;          // last: value the game continued with
+    float special_random;           // last melee r (0.9..1.15)
+    int32_t special_targets;        // last ranged c (clamped target count)
+    // The local unit's battle attack and defense as the client holds them (server-built stat block, form 0)
+    // next to the unit data and the carried OC deltas, recorded at the local stat setup.
+    uint32_t battle_block_seen;
+    int32_t battle_block_attack;
+    int32_t battle_block_defense;
+    int32_t battle_base_attack;
+    int32_t battle_base_defense;
+    int32_t battle_attack_gain;     // carried OC attack delta (0 outside OC rooms)
+    int32_t battle_defense_gain;
 };
 
 // Actions: 1 refresh; 2 save one more normal point on stat (direct request
