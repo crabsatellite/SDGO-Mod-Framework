@@ -386,7 +386,7 @@ def load(root: Path | str) -> Package:
         _fail('presentation.bgm 必须是包内 mp3 或 {"native": "BGM\\\\NNNN.mp3"}')
 
     return Package(root=root, manifest=m, map_key=key, name=_names(m.get('name'), 'name', 48, 100),
-                   description=(_names(m['description'], 'description', 101, 400) if m.get('description')
+                   description=(_names(m['description'], 'description', 99, 400) if m.get('description')
                                 else {'zh': '', 'en': ''}),
                    modes=[x for x in modes if x != 'mission'], servers=servers, half_extent=half,
                    height_image=height_image, height_min=h_min, height_max=h_max, layers=layers,

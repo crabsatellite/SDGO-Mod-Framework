@@ -106,6 +106,19 @@ def ids():
 
 
 class PackageTests(unittest.TestCase):
+    def test_description_length_reserves_the_bloom_parameter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp))
+            path = root / 'map.json'
+            manifest = json.loads(path.read_text(encoding='utf-8'))
+            manifest['description'] = {'zh': '图' * 99}
+            path.write_text(json.dumps(manifest), encoding='utf-8')
+            self.assertEqual(P.load(root).description['zh'], '图' * 99)
+            manifest['description']['zh'] += '图'
+            path.write_text(json.dumps(manifest), encoding='utf-8')
+            with self.assertRaisesRegex(P.MapPackageError, 'description.zh'):
+                P.load(root)
+
     def test_valid_package_loads_and_digest_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = write_package(Path(tmp))
@@ -127,6 +140,22 @@ class PackageTests(unittest.TestCase):
 
 
 class CompileTests(unittest.TestCase):
+    def test_map_description_preserves_bloom_threshold_and_radar_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = P.load(write_package(Path(tmp)))
+            pkg.description['zh'] = '图' * 99
+            for variant in ('pvp', 'mission'):
+                row = compiler.map_row(pkg, 143, variant, 'Trns\\m143.trn', 'sprs\\m143p.spr',
+                                       'Txrs\\m143r.txr', 'BGM\\0001.mp3')
+                self.assertEqual(len(row), compiler.MAP_ROW_BYTES)
+                self.assertEqual(row[0x20B:0x2D3].decode('utf-16-le'), '图' * 99 + '\0')
+                self.assertAlmostEqual(struct.unpack_from('<f', row, 0x2D3)[0], 0.85)
+                self.assertEqual(row[0x2D7:0x33B].decode('utf-16-le').rstrip('\0'), 'Txrs\\m143r.txr')
+            pkg.description['zh'] += '图'
+            with self.assertRaisesRegex(compiler.MapCompileError, 'description.zh'):
+                compiler.map_row(pkg, 143, 'mission', 'Trns\\m143.trn', 'sprs\\m143p.spr',
+                                 'Txrs\\m143r.txr', 'BGM\\0001.mp3')
+
     def test_pvp_map_compiles_to_one_contiguous_row_and_server_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             pkg = P.load(write_package(Path(tmp)))

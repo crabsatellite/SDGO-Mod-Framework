@@ -38,7 +38,7 @@ A map package is a folder: one `map.json` plus the glTF 2.0 models (`.glb`/`.glt
 | --- | --- |
 | `schema`, `schema_version` | Always `sdgo.map-package`, `1` |
 | `map_key` | Unique map identifier: 3..64 lowercase letters, digits, `.`, `_`, `-` |
-| `name`, `description` | `{"zh": …, "en": …}`; names up to 48 characters |
+| `name`, `description` | `{"zh": …, "en": …}`; names up to 48 characters, Chinese descriptions up to 99 UTF-16 code units |
 | `modes` | PvP modes: `normal`, `deathmatch`, `grid`, `tag`, `captain`, `ai`, `ai_battleship` (may be empty for a mission-only map) |
 | `servers` | Server types: `training`, `beginner`, `expert`, `clan` |
 | `terrain.half_extent` | Terrain half size: 4096, 8192 or 16384 |

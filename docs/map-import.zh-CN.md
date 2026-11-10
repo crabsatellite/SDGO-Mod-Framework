@@ -38,7 +38,7 @@
 | --- | --- |
 | `schema`、`schema_version` | 固定为 `sdgo.map-package`、`1` |
 | `map_key` | 地图唯一标识，3..64 个小写字母、数字、`.`、`_`、`-` |
-| `name`、`description` | `{"zh": …, "en": …}`；名称最多 48 个字符 |
+| `name`、`description` | `{"zh": …, "en": …}`；名称最多 48 个字符，中文说明最多 99 个 UTF-16 代码单元 |
 | `modes` | 对战模式：`normal`、`deathmatch`、`grid`、`tag`、`captain`、`ai`、`ai_battleship`（可为空，只用作任务地图） |
 | `servers` | 服务器类型：`training`、`beginner`、`expert`、`clan` |
 | `terrain.half_extent` | 地形半宽：4096、8192 或 16384 |

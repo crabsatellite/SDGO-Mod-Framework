@@ -331,7 +331,10 @@ def map_row(package: Package, map_no: int, variant: str, trn: str, preview: str,
     _put_wstr(row, 0x135, 0x64, bgm, 'BGM path')
     for i, column in enumerate(FLAG_COLUMNS):
         row[0x1FD + i] = flags(package, variant)[column]
-    _put_wstr(row, 0x20B, 0xCC, package.description['zh'], 'description.zh')
+    _put_wstr(row, 0x20B, 0xC8, package.description['zh'], 'description.zh')
+    # The float following the description is the scene's bright-pass threshold.
+    # Zero sends the entire scene into Bloom and can wash the map out to white.
+    struct.pack_into('<f', row, 0x2D3, 0.85)
     _put_wstr(row, 0x2D7, 0x64, radar, 'radar path')
     struct.pack_into('<4i', row, 0x33B, 0, 0, RADAR_SIZE, RADAR_SIZE)
     row[0x34B] = 1
