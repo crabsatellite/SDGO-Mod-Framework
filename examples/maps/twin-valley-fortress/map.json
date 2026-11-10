@@ -121,13 +121,53 @@
   {
    "position": [
     0.0,
-    -29.1,
+    -20.1,
     2200.0
    ],
    "rotation_y": 0.0,
-   "scale": 0.85,
-   "collision": "auto",
-   "native_model": "mdrs\\2858.mod"
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      -53.5,
+      20.0,
+      0.0
+     ],
+     "half_extents": [
+      8.0,
+      20.0,
+      10.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      53.5,
+      20.0,
+      0.0
+     ],
+     "half_extents": [
+      8.0,
+      20.0,
+      10.0
+     ],
+     "rotation_y": 0
+    },
+    {
+     "center": [
+      0.0,
+      37.75,
+      0.0
+     ],
+     "half_extents": [
+      49.5,
+      2.75,
+      3.7
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/blast_gate.gltf"
   },
   {
    "position": [
@@ -9291,13 +9331,14 @@
   "images/cat_title.png": "e977809842c5f9fae66dc3684843491f6d93d9db5d85ebf42fe9d325fac9601f",
   "images/minimap.png": "fd8fe07dd9923ba9688aba7e1455852708e0d0c5051c90ce8ba806376260e25c",
   "images/preview.png": "2a4391041044f4e87b4cfe2c2566be7735bba2ea9fbc5dfb51c5bab9cd7758cc",
-  "missions/odessa.json": "37e3d75499ad409bdd9f09e98dd7da5ad2ed8ec3a9393b163f1654db1b3372d9",
+  "missions/odessa.json": "a2911c093fd6f72f9d5e0f519fadab3fb93d9f10e8d854d9fcac94fa7656c1a6",
   "models/barracks.gltf": "70493cba0fbb9a440ef2b92c1de8945e75da181ebb50833f5e474289788dcc95",
   "models/barrel_01.gltf": "ec7dbdb749d2b2a25ca1c672cefd3338b94fc1260bc64b0933bca92288c7afc6",
   "models/barrel_03.gltf": "d74b760fd7f93cbf08a15e2732c0863405a4295f094cfce62ec351ef60970b37",
   "models/barrier_01.gltf": "97699a9314fa0b976ce581fbed2bf952ea4f59dacd724c33dee11cc8aa358a32",
   "models/barrier_02.gltf": "ebd16f1a51a631b955a615437bb8b6063a778396d44206dae59c9991b15d4064",
   "models/bastion.gltf": "52589c66de5c671efb46c61583cf98c39f27facca3a23021e062bc0b6939f8dc",
+  "models/blast_gate.gltf": "84dc88dd2bc7a6f04a39d516cd68b2bbd4f6698858886e1992b579c9b5450e40",
   "models/boulder_02.gltf": "96a7606b977648e3a8b280d836af0c7946551e17d7470638c4b36d536e26061e",
   "models/boulder_03.gltf": "8e33fb3187f5e0f4798d51887c1a1623a72a16f8b56ecb5d77247cf6dd0c4672",
   "models/boulder_04.gltf": "38d6c904d2a0dea2f50281d660f159aebb74d189a931e7ff3202564e07482ef5",
@@ -9387,6 +9428,8 @@
   "models/data/a66c5175d2e6c389.jpg": "a66c5175d2e6c389a3b761d6e7157d451541a5f97fae32b63dc4a2fe848fe436",
   "models/data/acc2c22f9c5b0ded.bin": "acc2c22f9c5b0deddee98f1e19657025f94680890d64ae9871aaf5af89b1ae1a",
   "models/data/af8209aebeed1b69.bin": "af8209aebeed1b69e9a1c207307685615d6fb1e91c7481b01d09b15b261c130b",
+  "models/data/b0a0412f26384b06.bin": "b0a0412f26384b063ac40dca2281965984913ee0d1a360f6db9f1854881e7825",
+  "models/data/b3cc80c7208beec8.jpg": "b3cc80c7208beec8c475cf4a66ab70a3a69fac8e825820cfe33092b5d8b77633",
   "models/data/b8755f5600b5cd12.bin": "b8755f5600b5cd12ac28d1319a64e572f1d7a74caebf4b61953e3e8041d73d7b",
   "models/data/baae8e6eee4201a2.bin": "baae8e6eee4201a2fa1582d67ddf81fef6ccb4d6a191c8b1e1a6ab6f9fa86877",
   "models/data/bcace56008c6de4c.bin": "bcace56008c6de4cdcf8925326224c22775df1ba372eec06427ba45eefb79742",

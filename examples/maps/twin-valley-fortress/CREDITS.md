@@ -1,6 +1,6 @@
 # Credits
 
-Twin Valley Fortress is an example map for the SDGO Mod Framework map import. Terrain, rock, prop and material textures come from these CC0 assets of [Poly Haven](https://polyhaven.com) (decimated, baked and re-encoded for the game); the fortress, mine and base buildings were modelled for this example. Native models, music, sounds and NPC templates are referenced by name only and come from the game client and server the map is installed on.
+Twin Valley Fortress is an example map for the SDGO Mod Framework map import. Terrain, rock, prop and material textures come from these CC0 assets of [Poly Haven](https://polyhaven.com) (decimated, baked and re-encoded for the game); the fortress, mine, factory and base buildings were modelled for this example. Native models, music, sounds and NPC templates are referenced by name only and come from the game client and server the map is installed on.
 
 | Asset | License | Source |
 | --- | --- | --- |
