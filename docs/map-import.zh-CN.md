@@ -55,7 +55,7 @@
 | `spawns` | `team_a`、`team_b` 各 6 个，`shared` 1..12 个，`grid` 模式另需 `grid_respawn_a`/`grid_respawn_b`；每个点 `position` 与 `facing` |
 | `sectors` | 任务分区出生点（`{name: {spawns: [...]}}`），供任务切换区域使用 |
 | `item_patterns` | 道具刷新组，`red` 与 `blue` 组数相同 |
-| `presentation` | `preview`（地图预览 PNG）、`minimap`（小地图 PNG，覆盖整个地形）、`bgm`（包内 MP3 或 `{"native": "BGM\\NNNN.mp3"}`）。编译器按原版地图的做法由小地图生成地图图像：活动区保持原比例放在方形贴图中，四周画出橙黄色边界线；任务行的地图图像还会框出任务用到的每个活动范围 |
+| `presentation` | `preview`（地图预览 PNG）、`minimap`（小地图 PNG，覆盖整个地形）、`bgm`（包内 MP3 或 `{"native": "BGM\\NNNN.mp3"}`）。编译器按原版地图的做法由小地图生成地图图像：活动区保持原比例放在方形贴图中，四周画出橙黄色边界线；任务行的地图图像还会框出任务用到的每个活动范围。`boundary_lines`（默认 `true`）在地面上画出边界线，使用原版对战地图的边界色带：对战地图画在活动区边缘，任务地图画在任务用到的每个活动范围边缘（任务没有活动范围时画在活动区边缘） |
 | `files` | 包内每个文件的 SHA-256 |
 
 ## 任务协议（`missions/*.json`）
@@ -69,10 +69,10 @@
 | `briefing.zh` | 任务说明面板，最多 5 行、每行 49 字 |
 | `difficulties` | 每档：`level`、`required_rank`、`time_limit`（秒）、`lives` |
 | `bgm` | 任务音乐（与地图 `presentation.bgm` 写法相同） |
-| `npcs` | 登场单位：`template`（目标服务器已有的 NPC），或 `unit` + `base`（用任意机体套用一个 NPC 模板）；可改 `hp`、`boss`、`name`、`ai`（AI 脚本名，例如对战 AI 的 `VSAI_Infighter_01`） |
+| `npcs` | 登场单位：`template`（目标服务器已有的 NPC），或 `unit` + `base`（用任意机体套用一个 NPC 模板）；可改 `hp`、`boss`、`name`、`ai`（AI 脚本名，例如对战 AI 的 `VSAI_Infighter_01`）。`label` 设置单位头顶显示的名字（例如驾驶员名，最多 49 字、不含半角括号）；`attack`、`special_attack`（0.25–4）分别放大武器和必杀技的伤害（`special_attack` 默认同 `attack`）。这两项会为该 NPC 生成仅客户端使用的机体副本，服务端仍使用原机体和 `hp` |
 | `lines` | 人物对话：`portrait`（客户端已有头像 `sprs\\NNNN.spr`）、`speaker`、`text` |
 | `banners` | 横幅：`image`（512×128 PNG），在过场中以特效显示 |
-| `presentation` | 可选的任务列表图片（PNG），各自替换模板任务的对应图片：`list_banner`（155×68）、`room_icon`（120×83；与原版图标一样，第 0..18 行留给标题字）、`room_poster`（250×120）、`title`（155×22，透明底白字）、`loading`（1024×1024 读取画面） |
+| `presentation` | 可选的任务列表图片（PNG），各自替换模板任务的对应图片：`list_banner`（155×68）、`room_icon`（120×83；与原版图标一样，第 0..18 行留给标题字）、`room_poster`（250×120）、`title`（155×22，透明底白字）、`loading`（1024×1024 读取画面海报）。`loading_screen` 选择进入战斗时的读取画面：`poster` 显示 `loading` 海报（给了 `loading` 时的默认值），`random` 使用游戏自带的随机读取图 |
 | `area` | 开局活动范围：`[左 x, 上 z, 右 x, 下 z]`（北为上）。玩家被限制在范围内，与原版多区域任务使用相同的调用。范围在 `opening` 过场开始时设置，因此需要开场过场；不写时整个 `terrain.play_area` 都可活动 |
 | `sectors` | 区域切换：`warp`（1..8 个传送点）、`facing`、可选 `rect`（新的活动范围，顺序同 `area`） |
 | `cutscenes` | 过场动画，见下表 |
@@ -84,20 +84,20 @@
 | 字段 | 说明 |
 | --- | --- |
 | `key`、`objective` | 阶段标识；目标说明显示在任务目标栏 |
-| `goal` | `kill`：击破指定单位若干台（可多条同时满足）；或 `survive`：坚持若干秒 |
+| `goal` | `kill`：击破指定单位若干台（可多条同时满足）；`kill_any`：击破任意敌人若干台（混编敌群共用一个计数，与原版“击破 N 台”目标相同）；或 `survive`：坚持若干秒 |
 | `fail` | `time_limit`：限时；`lose`：指定友方单位被击破即失败 |
-| `spawns` | 刷怪：`npc`、`positions`、`at`（阶段开始后秒数）、`every`（间隔）、`side`（`enemy`/`ally`）、`min_free` |
+| `spawns` | 刷怪：`npc`、`positions`、`at`（阶段开始后秒数）、`every`（间隔）、`side`（`enemy`/`ally`）、`min_free`。`at` 从开启该阶段的过场结束时算起（第一阶段为 `opening`），过场播放时不会有单位交战；2 秒及以后的刷怪按时间出现，即使之前的敌人已全部击破也不会停刷 |
 | `slots` | 同屏单位上限 `ally` + `enemy` ≤ 10 |
 | `enter` | 进入本阶段时：`cutscene`（过场）、`lines`（对话）、`sector`（带传送的区域切换）、`area`（不传送，只改活动范围）；第一阶段请使用 `opening` 和任务的 `area` |
 | `reward` | 阶段奖励 `points`、`unit_exp` |
 | `next` | 下一阶段（默认按顺序） |
 
-**过场**（`cutscenes{}`）：`length`（1..60 秒），`actors`（演员：`npc`、`at`、`facing`），`camera`（从 `t=0` 开始的关键帧 `pos`/`look`，编译成平滑曲线），以及 `events`：
+**过场**（`cutscenes{}`）：`length`（1..60 秒），`actors`（演员：`npc`、`at`、`facing`；`hold: true` 让演员每帧保持在 `at`，用于悬浮的舰船等，否则游戏会让它落到地面；演员默认属于玩家一方，AI 僚机不会攻击它们，`side: "enemy"` 可设为敌方），`camera`（从 `t=0` 开始的关键帧 `pos`/`look`，编译成平滑曲线，镜头每帧沿曲线移动），以及 `events`：
 
 | 事件 | 说明 |
 | --- | --- |
 | `anim` + `actor` | 播放机体动作（编译时检查该机体模型确有此动作），可设 `loop` |
-| `move_to` + `actor` | 演员移动到指定点 |
+| `move_to` + `actor` | 演员移动到指定点；目标点需高于地面至少 100，路径不能穿过物件 |
 | `banner` | 在镜头前显示横幅，可设 `distance` 或 `at` |
 | `line` | 显示人物对话 |
 | `effect` | 播放客户端已有特效 `{fx, at, scale}` |
@@ -112,7 +112,8 @@
 
 - 需要启用客户端 Mod `map_catalog`，并在客户端和服务端都安装同一版本的发布物；只更新一端会出现地图或任务缺失。
 - 服务端表在服务启动时读取，应用后需重启 World/Battle 服务；客户端包安装后重启客户端。
-- 导入任务在任务房间中以原生任务模式运行，人物对话使用游戏自带的人物对话框（带头像和名字）。
+- 导入任务在任务房间中以原生任务模式运行，人物对话使用游戏自带的人物对话框（带头像和名字）；设置了 `loading` 海报的任务在进入战斗的读取画面显示该海报。
+- NPC 注册属于任务协议：`npcs` 中的单位会成为该任务的服务端 NPC 数据和客户端 NPC 模板，不需要单独的 Mod。
 - 引用的原生模型、头像、特效、音效和 BGM 必须在目标客户端中存在；编译时会检查。
 
 ## 排错
@@ -121,6 +122,7 @@
 - 任务开不起来或单位缺失时，在 Mod 设置中打开「写入游戏原生调试日志」，客户端 `app_log` 会记录找不到的记录编号。
 - 编译报错会指出具体字段（例如刷怪点低于地面、引用了未定义的台词、演员模型没有该动作）。
 - 开启 Bloom（HDR）后地图整体发白：请用 Manager 1.16.16 或更新版本重新编译并安装；旧版编译器把地图行的 Bloom 亮度阈值留成了 0。
-- 检查任务的活动范围：运行 GameTest 用例 `mission.import_flow`，它会在范围变化时和每 10 秒记录本机玩家的 `imported mission local area x=[…] z=[…] on=… pos=(…) inside=…`。玩家位于新范围之外时会被移到范围边缘。
+- 检查任务的活动范围：运行 GameTest 用例 `mission.import_flow`，它会在范围变化时和每 10 秒记录本机玩家的 `imported mission local area x=[…] z=[…] on=… pos=(…) inside=…`。玩家位于新范围之外时会被移到范围边缘。开启回放画面时，该用例还会把玩家在西侧边缘附近停留一次，以便在回放帧中看到地面边界线。
+- 读取画面仍是随机图时，查看 `sdgo.log` 中的 `imported mission …: mission poster loading screen`；若提示目录行不可达，说明任务目录编号有缺口，请重新编译并安装整个工作区。
 - 示例地图下载失败：请确认 Manager 能访问 `raw.githubusercontent.com`；已下载并校验通过的文件会在下次重试时直接复用。
 - 「检查服务端」报告冲突时，说明目标数据库中已有同编号的非导入数据，应用会被拒绝；请确认客户端与服务端来自同一套原始数据。

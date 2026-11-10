@@ -111,7 +111,8 @@ def mission_templates(baseline, server_ini) -> M.Templates:
         speech=records('gdrs/0119.gdt', 506)[3229322], npc_templates=npc_templates, npc_data=npc_data,
         spawn=records('gdrs/0053.gdt', 152)[620001],
         unit_exists=lambda unit: baseline.record('unit', unit) is not None,
-        unit_labels=lambda unit: unit_labels(baseline, unit))
+        unit_labels=lambda unit: unit_labels(baseline, unit), unit_record=lambda unit: baseline.record('unit', unit),
+        weapon_record=lambda weapon: baseline.record('weapon', weapon))
 
 
 def occluders(package, baseline):

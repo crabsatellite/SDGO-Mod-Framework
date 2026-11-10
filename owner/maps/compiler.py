@@ -397,6 +397,52 @@ def mission_areas(package: Package) -> list[tuple[float, float, float, float]]:
     return found
 
 
+# Boundary lines painted on the ground, as the shipped PvP maps do: terrain decals with the client's own
+# boundary band (red outside -> yellow inside) centred on the edge. A decal's size is its transform scale times
+# DECAL_UNIT; the shipped maps use segments of at most 1024 units, a band 1.2 units wide and one texture repeat
+# per 64 units along the line, rotated so the yellow side faces the inside (west 0, south 90, east 180, north 270).
+BOUNDARY_BAND = 'Txrs\\0806.txr'
+DECAL_UNIT = 65.6
+BOUNDARY_WIDTH = 1.2
+BOUNDARY_SEGMENT = 1024.0
+BOUNDARY_REPEAT = 64.0
+
+
+def boundary_lines(rects) -> list[tuple[str, float, float, float, float]]:
+    """Edges of the rects [left x, top z, right x, bottom z] as (axis, fixed, low, high, rotation); collinear
+    edges facing the same way are merged so a shared border is painted once."""
+    edges = []
+    for left, top, right, bottom in rects:
+        edges += [('x', top, left, right, 270.0), ('x', bottom, left, right, 90.0),
+                  ('z', right, bottom, top, 180.0), ('z', left, bottom, top, 0.0)]
+    merged: list[list] = []
+    for axis, fixed, low, high, rotation in sorted(edges):
+        last = merged[-1] if merged else None
+        if last and (last[0], last[1], last[4]) == (axis, fixed, rotation) and low <= last[3]:
+            last[3] = max(last[3], high)
+        else:
+            merged.append([axis, fixed, low, high, rotation])
+    return [tuple(edge) for edge in merged]
+
+
+def boundary_decals(rects) -> list[trn_format.Decal]:
+    decals = []
+    for axis, fixed, low, high, rotation in boundary_lines(rects):
+        count = max(1, math.ceil((high - low) / BOUNDARY_SEGMENT - 1e-6))
+        length = (high - low) / count
+        for k in range(count):
+            centre = low + length * (k + 0.5)
+            if axis == 'x':
+                position, scale = (centre, 0.0, fixed), (length / DECAL_UNIT, 1.0, BOUNDARY_WIDTH)
+            else:
+                position, scale = (fixed, 0.0, centre), (BOUNDARY_WIDTH, 1.0, length / DECAL_UNIT)
+            decals.append(trn_format.Decal(
+                texture=trn_format.wstr(BOUNDARY_BAND), alpha=255, receive_shadow=0, u_wrap=0, v_wrap=1,
+                tex_scale=(1.0, length / BOUNDARY_REPEAT), tex_offset=(0.0, 0.0), tex_rotation=rotation,
+                transform=trn_format.Transform(position=position, scale=scale)))
+    return decals
+
+
 def map_row(package: Package, map_no: int, variant: str, trn: str, preview: str, radar: str, bgm: str,
             radar_rect: tuple[int, int, int, int] = (0, 0, RADAR_SIZE, RADAR_SIZE)) -> bytes:
     row = bytearray(MAP_ROW_BYTES)
@@ -530,6 +576,15 @@ def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'p
                 item_rows.append({'MapID': map_id, 'Team': team_id, 'PatternID': pattern_id, 'Orders': order,
                                   'Idx': index, 'PosX': position[0], 'PosY': position[1], 'PosZ': position[2]})
             builder.add_item_pattern(team, indices)
+
+    # -- boundary lines on the ground: the play area (PvP), or every movable area the missions use
+    if package.boundary_lines:
+        if native_exists is not None and not native_exists(BOUNDARY_BAND):
+            raise MapCompileError(f'目标客户端中不存在边界线贴图：{BOUNDARY_BAND}')
+        rects = mission_areas(package) if variant == 'mission' else []
+        if not rects:
+            rects = [(-package.play_half_x, package.play_half_z, package.play_half_x, -package.play_half_z)]
+        t.decals = boundary_decals(rects)
 
     trn_name = f'trns/{prefix}{"" if variant == "pvp" else "x"}.trn'
     resources[trn_name] = builder.to_bytes()

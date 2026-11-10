@@ -4992,13 +4992,15 @@ int __cdecl CreateMission(const SdgoGameTestContextV1* context) {
             "the real mission create dialog and accepted room retain the sealed exact GameModeID");
     return SDGO_GAME_TEST_PASS;
 }
-// Imported missions: review frames of the real backbuffer (opening, banners, speech, ending) every
-// 2.5 s while the battle scene is active, from the start command to the natural end.
+// Imported missions: review frames of the real backbuffer (loading screen, opening, banners, speech,
+// ending) every 4 s from the accepted start command to the natural end (not in the wait room).
 void CaptureImportedReviewFrame(const SdgoGameTestContextV1* context) {
     static uint64_t lastFrame=0;static uint32_t frames=0;
     if(!missionGameModeId || missionBehaviorProfile || missionRespawns)return;
     const uint64_t now=GetTickCount64();
-    if(actions.OnboardingState().native_app_state!=22 || frames>=240 || now-lastFrame<2500)return;
+    const uint32_t state=actions.OnboardingState().native_app_state;
+    const bool loading=observedMissionStartedAt && state!=18 && state!=6;
+    if((state!=22 && !loading) || frames>=300 || now-lastFrame<4000)return;
     const std::wstring folder=sdgo_test::directory+L"\\import-frames";
     CreateDirectoryW(folder.c_str(),nullptr);
     wchar_t name[32];swprintf_s(name,L"\\frame-%04u.bmp",frames);
@@ -5368,6 +5370,20 @@ int __cdecl ObserveImportedMissionFlow(const SdgoGameTestContextV1* context) {
             char text[200];sprintf_s(text,"imported mission local area x=[%.0f..%.0f] z=[%.0f..%.0f] on=%u pos=(%.0f,%.0f,%.0f) inside=%u",
                 area[0],area[1],area[3],area[2],areaOn,position[0],position[1],position[2],inside?1u:0u);
             context->Observe(text);
+        }
+        // Area edge review: once, after the opening, hold the player 150 units inside the area's west edge
+        // for 6 s so the review frames show the boundary line painted on the ground there.
+        static uint64_t barrierStart=0;static float barrierZ=0;
+        if(reviewFootage && areaOn && area[1]>area[0] && observedMissionStartedAt &&
+           GetTickCount64()-observedMissionStartedAt>=30000 && player.native_app_state==22) {
+            const uint64_t now=GetTickCount64();
+            if(!barrierStart) {
+                barrierStart=now;barrierZ=position[2];
+                char text[160];sprintf_s(text,"imported mission area edge probe at x=%.0f z=%.0f (west edge %.0f)",
+                    area[0]+150.0f,barrierZ,area[0]);
+                context->Observe(text);
+            }
+            if(now-barrierStart<6000)nativePlayerCombat.PlaceLocalPlayer(area[0]+150.0f,barrierZ);
         }
         if(end.sequence<=observedMissionEndBaseline || !end.original_handler_completed) {
             if(context->elapsed_ms-lastProgress>=30000) {

@@ -12,7 +12,11 @@ Mission JSON (all coordinates in the map's world frame, seconds for times)::
      "difficulties": [{"level": 3, "required_rank": 20, "time_limit": 900, "lives": 5}],
      "bgm": {"native": "BGM\\\\0036.mp3"},
      "npcs": {key: {"template": id} | {"template": id, "ai": name, "hp": n, "boss": bool, "name": {...}}
-                   | {"unit": unit_id, "base": template_id, "hp": n, "ai": name, "name": {...}}},
+                   | {"unit": unit_id, "base": template_id, "hp": n, "ai": name, "name": {...}}
+                   (+ optional "label": overhead name, "attack" / "special_attack": weapon damage multipliers)},
+     "area": [left x, top z, right x, bottom z] (the map compiler paints every movable area's edge on the ground),
+     "presentation": {"list_banner", "room_icon", "room_poster", "title", "loading": PNG paths,
+                      "loading_screen": "poster" | "random"},
      "lines": {key: {"portrait": "sprs\\\\NNNN.spr", "speaker": {"zh"}, "text": {"zh"}}},
      "banners": {key: {"image": "images/x.png", "size": [w, h]}},
      "sectors": {key: {"warp": [[x,y,z] per player slot], "facing": [dx, dz], "rect": [x1, z1, x2, z2]}},
@@ -44,7 +48,14 @@ from .package import Package, MapPackageError
 SCHEMA = 'sdgo.map-mission'
 GAME_MODE_KIND, CLEAR_KIND, NPC_TEMPLATE_KIND = 0x2A, 0x2F, 0x29
 CATALOGUE_KIND, ROUTE_KIND, OBJECTIVE_KIND, SPEECH_KIND, SPAWN_KIND = 0x1D, 0x1F, 0x20, 0x36, 0x2E
-SIZES = {GAME_MODE_KIND: 1090, CLEAR_KIND: 391, NPC_TEMPLATE_KIND: 598, CATALOGUE_KIND: 1309, ROUTE_KIND: 34,
+UNIT_KIND, UNIT_RECORD_BYTES = 0x02, 4976
+WEAPON_KIND, WEAPON_RECORD_BYTES = 0x0A, 1871
+UNIT_LABEL_FIRST = 9_600_000      # client-only unit copies that carry an NPC's display name / stronger weapons
+WEAPON_COPY_FIRST = 9_700_000     # client-only weapon copies with an NPC's damage multiplier
+UNIT_WEAPON_SLOTS = (585, 589, 593)   # unit record: weapons 1..3 (u32 ids); +597 is the special attack
+UNIT_SPECIAL_SLOT = 597
+WEAPON_DAMAGE = 108                   # weapon record: DamageSize (u32)
+SIZES = {UNIT_KIND: UNIT_RECORD_BYTES, WEAPON_KIND: WEAPON_RECORD_BYTES, GAME_MODE_KIND: 1090, CLEAR_KIND: 391, NPC_TEMPLATE_KIND: 598, CATALOGUE_KIND: 1309, ROUTE_KIND: 34,
          OBJECTIVE_KIND: 634, SPEECH_KIND: 506, SPAWN_KIND: 152}
 CLEAR_ID_LIMIT = 3238001          # client looks up kind 0x37 text for Clear IDs >= this
 MODE5_ID_LIMIT = 0x313990         # create-room sends mode byte 5 at or below this GameModeID
@@ -55,6 +66,8 @@ MAX_SLOTS = 10
 BANNER_DISTANCE = 450.0   # banner anchor ahead of the camera
 BANNER_CENTERING = 200.0  # calibrated for the cloned text effect: its quad is drawn this far left of the anchor
 FPS = 60
+CAMERA_PATH_STEP = 0.1    # seconds between camera path samples; the runtime interpolates every frame
+MOVE_TARGET_LIFT = 100.0  # cutscene move targets stay this far above the ground
 LUA_NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]{0,39}')
 
 
@@ -89,6 +102,7 @@ class MissionBuild:
     lua: str = ''
     resources: dict[str, bytes] = field(default_factory=dict)
     report: dict = field(default_factory=dict)
+    weapon_copies: dict[tuple[int, float], int] = field(default_factory=dict)   # (source, factor) -> copy id
 
 
 # --------------------------------------------------------------------------- byte helpers
@@ -144,6 +158,8 @@ class Templates:
     spawn: bytes                        # client spawn mirror row (one per MissionNpc row)
     unit_exists: Callable[[int], bool] = lambda unit: True
     unit_labels: Callable[[int], set] | None = None   # unit id -> action labels of its model
+    unit_record: Callable[[int], bytes | None] | None = None   # unit id -> client unit record (for NPC labels)
+    weapon_record: Callable[[int], bytes | None] | None = None  # weapon id -> client weapon record (NPC attack)
 
 
 def _lua_string(text: str) -> str:
@@ -218,7 +234,9 @@ function SDGOMI.init(m, c)
     end
   end
   for name, a in pairs(c.actors) do
-    local npc = m:CreateNpc(a.tpl, a.at, OBJECT_TEAM_BLUE, a.dir)
+    local team = OBJECT_TEAM_RED
+    if a.enemy == 1 then team = OBJECT_TEAM_BLUE end
+    local npc = m:CreateNpc(a.tpl, a.at, team, a.dir)
     if npc ~= nil then npc:SetLuaFunctionName(); s.actors[name] = npc end
   end
   m:ChangeMoveCamera()
@@ -237,10 +255,31 @@ function SDGOMI.run(m, c, e, s)
   elseif e.speech ~= nil then PutOperatorSpeech(e.speech)
   end
 end
+function SDGOMI.camera(m, c, s)
+  local p = c.path
+  if p == nil or p.n < 1 then return end
+  local k = s.cam or 1
+  while k < p.n and p[k + 1][1] <= s.frame do k = k + 1 end
+  s.cam = k
+  local a = p[k]
+  local b = p[k]
+  if k < p.n then b = p[k + 1] end
+  local u = 0
+  if b[1] > a[1] then u = (s.frame - a[1]) / (b[1] - a[1]) end
+  if u < 0 then u = 0 end
+  if u > 1 then u = 1 end
+  local cam = m:GetMoveCamera()
+  cam:SetCameraPos(vector3(a[2] + (b[2] - a[2]) * u, a[3] + (b[3] - a[3]) * u, a[4] + (b[4] - a[4]) * u))
+  cam:SetEyePoint(vector3(a[5] + (b[5] - a[5]) * u, a[6] + (b[6] - a[6]) * u, a[7] + (b[7] - a[7]) * u))
+end
 function SDGOMI.update(m, c)
   local s = SDGOMI[c.id]
   if s == nil then return 456 end
   s.frame = s.frame + 1
+  SDGOMI.camera(m, c, s)
+  for name, a in pairs(c.actors) do
+    if a.hold == 1 and s.actors[name] ~= nil then s.actors[name]:SetNowPos(a.at) end
+  end
   while s.next <= c.n and c.events[s.next].f <= s.frame do
     SDGOMI.run(m, c, c.events[s.next], s)
     s.next = s.next + 1
@@ -279,6 +318,29 @@ end
 '''
 
 
+def _weapon_copy(build: 'MissionBuild', templates: Templates, ids: 'MissionIds', key: str, weapon: int,
+                 factor: float) -> int:
+    """Client-only copy of `weapon` with DamageSize x factor (one copy per source weapon and factor)."""
+    cache = build.weapon_copies
+    if (weapon, factor) in cache:
+        return cache[(weapon, factor)]
+    if templates.weapon_record is None:
+        _fail(f'npcs.{key}.attack 需要读取目标客户端的武器记录')
+    source = templates.weapon_record(weapon)
+    if source is None or len(source) != WEAPON_RECORD_BYTES:
+        _fail(f'npcs.{key}.attack：目标客户端没有武器 {weapon} 的记录')
+    ident = WEAPON_COPY_FIRST + ids.group * 100 + len(cache)
+    if len(cache) >= 100 or templates.weapon_record(ident) is not None:
+        _fail(f'npcs.{key}.attack：武器编号 {ident} 已被占用或超出每个任务 100 个')
+    copy = bytearray(source)
+    _u32(copy, 0, ident)
+    damage = struct.unpack_from('<I', copy, WEAPON_DAMAGE)[0]
+    _u32(copy, WEAPON_DAMAGE, min(100000, int(round(damage * factor))))
+    build.rows.append((WEAPON_KIND, ident, bytes(copy)))
+    cache[(weapon, factor)] = ident
+    return ident
+
+
 def _validate_npcs(spec: dict, templates: Templates) -> dict:
     npcs = {}
     if not isinstance(spec, dict) or not spec:
@@ -297,13 +359,18 @@ def _validate_npcs(spec: dict, templates: Templates) -> dict:
             tpl = row['template']
             if tpl not in templates.npc_templates or tpl not in templates.npc_data:
                 _fail(f'npcs.{key}.template {tpl} 在目标客户端或服务端不存在')
-            derived = any(k in row for k in ('ai', 'hp', 'boss', 'name'))
+            derived = any(k in row for k in ('ai', 'hp', 'boss', 'name', 'label', 'attack', 'special_attack'))
             npcs[key] = {'kind': 'derived' if derived else 'native', 'base': int(tpl), **row}
         else:
             _fail(f'npcs.{key} 需要 template 或 unit')
         for field_name in ('ai',):
             if field_name in row and not LUA_NAME.fullmatch(str(row[field_name])):
                 _fail(f'npcs.{key}.ai 必须是 ASCII 脚本名')
+        for field_name in ('attack', 'special_attack'):
+            value = row.get(field_name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                                      or not 0.25 <= float(value) <= 4.0):
+                _fail(f'npcs.{key}.{field_name} 需要 0.25..4 的倍率')
     return npcs
 
 
@@ -363,7 +430,39 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         _u32(row, 0, ident)
         if npc.get('name'):
             _w(row, 5, 100, _zh(npc['name'], f'npcs.{key}.name', 49), f'npcs.{key}.name')
-        _u32(row, 105, unit)
+        client_unit = unit
+        label = npc.get('label')
+        attack = npc.get('attack')
+        special = npc.get('special_attack', attack)
+        if label is not None or attack is not None or special is not None:
+            # The NPC gets a client-only copy of its unit (the server keeps the real unit and its NpcData HP).
+            # label: the overhead label is the unit's display name up to its first "(".
+            # attack / special_attack: the copy points to weapon copies whose damage is multiplied; normal and
+            # special damage are computed on the client from these weapon rows.
+            if label is not None and (not isinstance(label, str) or not label.strip() or len(label) > 49
+                                      or '(' in label):
+                _fail(f'npcs.{key}.label 需要 1..49 字、不含半角括号')
+            if templates.unit_record is None:
+                _fail(f'npcs.{key} 需要读取目标客户端的机体记录')
+            source = templates.unit_record(unit)
+            if source is None or len(source) != UNIT_RECORD_BYTES:
+                _fail(f'npcs.{key}：目标客户端没有机体 {unit} 的记录')
+            copies = len([r for r in build.rows if r[0] == UNIT_KIND])
+            client_unit = UNIT_LABEL_FIRST + ids.group * 100 + copies
+            if copies >= 100 or templates.unit_record(client_unit) is not None:
+                _fail(f'npcs.{key}：机体编号 {client_unit} 已被占用或超出每个任务 100 个')
+            copy = bytearray(source)
+            _u32(copy, 0, client_unit)
+            if label is not None:
+                _w(copy, 5, 100, label, f'npcs.{key}.label')
+            for slot in UNIT_WEAPON_SLOTS + (UNIT_SPECIAL_SLOT,):
+                factor = special if slot == UNIT_SPECIAL_SLOT else attack
+                weapon = struct.unpack_from('<I', copy, slot)[0]
+                if factor is None or float(factor) == 1.0 or weapon == 0:
+                    continue
+                _u32(copy, slot, _weapon_copy(build, templates, ids, key, weapon, float(factor)))
+            build.rows.append((UNIT_KIND, client_unit, bytes(copy)))
+        _u32(row, 105, client_unit)
         if npc.get('ai'):
             _w(row, 109, 100, npc['ai'], f'npcs.{key}.ai')
         _u32(row, 229, hp)
@@ -410,6 +509,19 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             _fail(f'{what} 超出地形范围')
         return '{%s}' % ','.join(_num(v) for v in (left, top, right, bottom))
 
+    # movable area active in each phase (the mission area, then each phase's enter.sector rect / enter.area):
+    # every spawn of a phase must be inside it, or players cannot reach the units the goal counts
+    phase_areas = []
+    active = tuple(_vec(spec['area'], 'area', 4)) if spec.get('area') is not None else None
+    for p_index, phase in enumerate(phases):
+        enter = phase.get('enter') or {}
+        rect = (sectors.get(enter.get('sector')) or {}).get('rect') if enter.get('sector') else None
+        if rect is not None:
+            active = tuple(_vec(rect, f'sectors.{enter["sector"]}.rect', 4))
+        if enter.get('area') is not None:
+            active = tuple(_vec(enter['area'], f'phases[{p_index}].enter.area', 4))
+        phase_areas.append(active)
+
     start_area = 'nil'
     if spec.get('area') is not None:
         if not spec.get('opening'):
@@ -425,6 +537,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         if not 1.0 <= length <= 60.0:
             _fail(f'cutscenes.{key}.length 需要 1..60 秒')
         actors = {}
+        actor_pos = {}
         for actor, a in (cut.get('actors') or {}).items():
             if not re.fullmatch(r'[a-z][a-z0-9_]{0,15}', actor) or a.get('npc') not in npc_ids:
                 _fail(f'cutscenes.{key}.actors.{actor} 无效')
@@ -433,8 +546,20 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                 from .occlusion import blocked
                 if blocked(occluders, _vec(a.get('at'), 'actor.at')):
                     _fail(f'cutscenes.{key}.actors.{actor} 位于物件内部')
-            actors[actor] = '%s={tpl=%d,at=%s,dir=%s}' % (actor, npc_ids[a['npc']], _v3(_vec(a.get('at'), 'actor.at')),
-                                                          _v3((fx, 0.0, fz)))
+            actor_pos[actor] = _vec(a.get('at'), 'actor.at')
+            # hold: keep the actor at `at` every frame (units fall to the ground after CreateNpc; a hovering
+            # ship such as a mothership would otherwise drop and sink its hull into the terrain)
+            hold = a.get('hold', False)
+            if not isinstance(hold, bool):
+                _fail(f'cutscenes.{key}.actors.{actor}.hold 必须是布尔值')
+            # side: actors are on the players' side by default, so AI wingmen never shoot at them during the
+            # cutscene; "enemy" puts an actor on the enemy team as the shipped single-player cutscenes do
+            side = a.get('side', 'ally')
+            if side not in ('ally', 'enemy'):
+                _fail(f'cutscenes.{key}.actors.{actor}.side 只能是 ally 或 enemy')
+            actors[actor] = '%s={tpl=%d,at=%s,dir=%s,hold=%d,enemy=%d}' % (
+                actor, npc_ids[a['npc']], _v3(_vec(a.get('at'), 'actor.at')), _v3((fx, 0.0, fz)), 1 if hold else 0,
+                1 if side == 'enemy' else 0)
         keys = [(float(k['t']), _vec(k['pos'], 'camera.pos'), _vec(k['look'], 'camera.look'))
                 for k in (cut.get('camera') or [])]
         if not keys or keys[0][0] != 0.0 or any(b[0] <= a[0] for a, b in zip(keys, keys[1:])):
@@ -447,8 +572,12 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                 if problem:
                     _fail(f'cutscenes.{key} 在 t={t:.2f}s：{problem}（镜头 {_v3(pos)}，看向 {_v3(look)}）')
         events = []
-        for (t0, p0, l0), (t1, p1, l1) in zip(samples, samples[1:]):
-            events.append((t0, 'cam=%s,look=%s,sec=%s' % (_v3(p1), _v3(l1), _num(t1 - t0))))
+        # the camera follows a dense path set every frame (as the shipped cutscenes do with SetCameraPos):
+        # chained timed moves restart from the last set position and make the shot jump back
+        path = _catmull(keys, CAMERA_PATH_STEP)
+        path_lua = '{n=%d,%s}' % (len(path), ','.join(
+            '{%d,%s,%s,%s,%s,%s,%s}' % ((max(1, int(round(t * FPS))),) + tuple(_num(v) for v in tuple(p) + tuple(l)))
+            for t, p, l in path))
         cam_at = {round(t, 3): (p, l) for t, p, l in samples}
         for e in cut.get('events') or []:
             t = float(e.get('t', 0))
@@ -467,7 +596,21 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             if 'move_to' in e:
                 if e.get('actor') not in actors:
                     _fail(f'cutscenes.{key} 移动事件无效')
-                events.append((t, "actor='%s',move=%s" % (e['actor'], _v3(_vec(e['move_to'], 'move_to')))))
+                if (cut.get('actors') or {})[e['actor']].get('hold'):
+                    _fail(f'cutscenes.{key}：固定位置（hold）的演员 {e["actor"]} 不能移动')
+                target = _vec(e['move_to'], 'move_to')
+                # a target on the ground pulls the unit's body down to it: keep it a unit's height above, like spawns
+                if target[1] < package_ground(package, target) + MOVE_TARGET_LIFT:
+                    _fail(f'cutscenes.{key} 在 t={t:.2f}s：演员 {e["actor"]} 的移动目标离地不足 {MOVE_TARGET_LIFT:.0f}')
+                if occluders is not None:
+                    from .occlusion import blocked
+                    start = actor_pos[e['actor']]
+                    for i in range(1, 25):
+                        q = tuple(start[k] + (target[k] - start[k]) * i / 24 for k in range(3))
+                        if blocked(occluders, q) or blocked(occluders, (q[0], q[1] + 120, q[2])):
+                            _fail(f'cutscenes.{key} 在 t={t:.2f}s：演员 {e["actor"]} 的移动路径穿过物件')
+                actor_pos[e['actor']] = target
+                events.append((t, "actor='%s',move=%s" % (e['actor'], _v3(target))))
             if 'banner' in e:
                 if e['banner'] not in banner_fx:
                     _fail(f'cutscenes.{key} 引用未定义的横幅 {e["banner"]}')
@@ -515,9 +658,9 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         if not isinstance(hide, bool):
             _fail(f'cutscenes.{key}.hide_players 必须是布尔值')
         area = start_area if key == spec.get('opening') else 'nil'    # the opening applies the starting area
-        lua_parts.append('%s = {id=%s, frames=%d, n=%d, hide=%d, area=%s, cam0=%s, look0=%s, actors={%s}, events={\n  %s\n}}\n' % (
+        lua_parts.append('%s = {id=%s, frames=%d, n=%d, hide=%d, area=%s, cam0=%s, look0=%s, path=%s, actors={%s}, events={\n  %s\n}}\n' % (
             fn, _lua_string(fn), int(round(length * FPS)), len(events), 1 if hide else 0, area, _v3(p0), _v3(l0),
-            ','.join(actors.values()),
+            path_lua, ','.join(actors.values()),
             ',\n  '.join('{f=%d,%s}' % (max(1, int(round(t * FPS))), body) for t, body in events)))
         lua_parts.append('function %s_LuaInit(m) return SDGOMI.init(m, %s) end\n'
                          'function %s_Update(m) return SDGOMI.update(m, %s) end\n'
@@ -653,6 +796,9 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             cut_name, scene = cutscene_names.get(enter.get('cutscene'), ('', 0.0)) if enter.get('cutscene') else ('', 0.0)
             if enter.get('cutscene') and enter['cutscene'] not in cutscene_names:
                 _fail(f'phases[{p_index}].enter.cutscene 未定义')
+            # waves start when the cutscene that opens the phase has ended (the opening for the first phase):
+            # the server starts the phase clock with the cutscene, so units spawned at once fought during it
+            lead = math.ceil(opening[1]) if order == 1 else math.ceil(scene)
             event_fn = event_function(p_index, enter) if d_index == 0 else f'{ids.lua_prefix}_E{p_index}' \
                 if any((enter.get('lines'), enter.get('sector'), enter.get('area') is not None)) else ''
             reward = phase.get('reward') or {}
@@ -660,6 +806,12 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
 
             goal = phase.get('goal') or {}
             goal_rows = []
+            if 'kill_any' in goal:
+                # any enemy, the shipped "destroy N" row (UseWho 2, object 0): one counter for a mixed group
+                count = goal['kill_any']
+                if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 255:
+                    _fail(f'phases[{p_index}].goal.kill_any 需要 1..255')
+                goal_rows.append({'UseWho': 2, 'UseHow': 2, 'UseObjectID': 0, 'UseObjectCount': count, 'UseTime': 0})
             if 'kill' in goal:
                 units_seen = set()
                 for g in goal['kill']:
@@ -671,11 +823,11 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                     units_seen.add(unit)
                     goal_rows.append({'UseWho': 2, 'UseHow': 2, 'UseObjectID': unit, 'UseObjectCount': int(g.get('count', 1)),
                                       'UseTime': 0})
-            elif 'survive' in goal:
+            elif 'survive' in goal and not goal_rows:
                 goal_rows.append({'UseWho': 6, 'UseHow': 4, 'UseObjectID': 0, 'UseObjectCount': 0,
                                   'UseTime': int(goal['survive'])})
-            else:
-                _fail(f'phases[{p_index}].goal 需要 kill 或 survive')
+            elif not goal_rows:
+                _fail(f'phases[{p_index}].goal 需要 kill、kill_any 或 survive')
             if len(goal_rows) > MAX_GOALS:
                 _fail(f'phases[{p_index}] 目标最多 {MAX_GOALS} 条')
             fail_rows = []
@@ -744,7 +896,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                 side = {'enemy': 2, 'ally': 1}.get(spawn.get('side', 'enemy'))
                 if side is None:
                     _fail(f'phases[{p_index}].spawns[{s_index}].side 只能是 enemy 或 ally')
-                at = float(spawn.get('at', 0))
+                at = float(spawn.get('at', 0)) + lead
                 every = float(spawn.get('every', 0))
                 for k, position in enumerate(spawn.get('positions') or []):
                     pos = _vec(position, f'phases[{p_index}].spawns[{s_index}].positions[{k}]')
@@ -755,14 +907,21 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                     ground = package_ground(package, pos)
                     if pos[1] < ground + 20:
                         _fail(f'phases[{p_index}].spawns[{s_index}] 刷怪点低于地面')
+                    area = phase_areas[p_index]
+                    if area is not None and not (area[0] <= pos[0] <= area[2] and area[3] <= pos[2] <= area[1]):
+                        _fail(f'phases[{p_index}].spawns[{s_index}].positions[{k}] 不在本阶段的活动范围内'
+                              f'（x {area[0]:.0f}..{area[2]:.0f}，z {area[3]:.0f}..{area[1]:.0f}）')
                     queue.append((side, at + every * k, s_index, k, npc_ids[spawn['npc']], pos,
                                   int(spawn.get('min_free', 1))))
             queue.sort(key=lambda q: (q[0], q[1], q[2], q[3]))
             for side, t, _, _, npc, pos, min_free in queue:
+                # timed waves use AbsTime (seconds since the phase began), as the shipped reinforcements do:
+                # AfterTime only advances while the spawn chain moves, so a quickly cleared field stalled it
+                after, absolute = (max(1, int(round(t))), 0) if t < 2 else (0, int(round(t)))
                 tables.setdefault('tbl_MissionNpc', []).append({
                     'MissionNpcID': spawn_id, 'MissionID': mode_id, 'MissionDifficult': level, 'MissionPart': order,
-                    'NpcID': npc, 'px': int(round(pos[0])), 'py': int(round(pos[1])), 'pz': int(round(pos[2])), 'AfterTime': max(1, int(round(t))),
-                    'AbsTime': 0, 'ManualID': 0, 'NpcParty': side, 'CreateLimit': max(1, min(MAX_SLOTS, min_free)),
+                    'NpcID': npc, 'px': int(round(pos[0])), 'py': int(round(pos[1])), 'pz': int(round(pos[2])), 'AfterTime': after,
+                    'AbsTime': absolute, 'ManualID': 0, 'NpcParty': side, 'CreateLimit': max(1, min(MAX_SLOTS, min_free)),
                     'ZoneIndex': 0})
                 # client mirror: the room start check walks these rows from GameMode +1054/+1058 and
                 # preloads every NPC model; the walk stops at the first row of another GameMode
@@ -778,13 +937,13 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                 for k in range(3):
                     _f32(mirror, 123 + 4 * k, float(pos[k]))
                 _f32(mirror, 135, 0.0)
-                _i32(mirror, 139, max(1, int(round(t))))
+                _i32(mirror, 139, after)
                 mirror[143:148] = bytes(5)                     # +147 AbsTime
                 _i32(mirror, 148, 0)                           # ManualID (kind 0x32 group) unused
                 build.rows.append((SPAWN_KIND, spawn_id, bytes(mirror)))
                 first_spawn.setdefault(side, spawn_id)
                 spawn_id += 1
-            if not any(q[0] == 2 for q in queue) and 'kill' in goal:
+            if not any(q[0] == 2 for q in queue) and ('kill' in goal or 'kill_any' in goal):
                 _fail(f'phases[{p_index}] 有击破目标却没有敌方刷怪')
         if 2 not in first_spawn:
             _fail('任务至少需要一个敌方刷怪（客户端开战检查要求）')
@@ -831,6 +990,9 @@ def package_ground(package: Package, pos) -> float:
 # Mission catalogue artwork: protocol key -> (catalogue offset, exact size). The sprites are what the mission
 # list, room list and mission room show; `loading` is the loading-screen texture (art in the 4:3 band
 # y 128..896, as in the client's own loading screens). Missing keys keep the template mission's images.
+# `loading_screen` picks the battle loading screen: "poster" shows `loading` (the default when it is given),
+# "random" keeps the client's random loading pictures (the catalogue's loading texture stays empty).
+LOADING_SCREENS = ('poster', 'random')
 CATALOGUE_ART = {
     'list_banner': (109, (155, 68)),
     'room_icon': (209, (120, 83)),
@@ -847,11 +1009,16 @@ def _catalogue_art(package: Package, presentation, prefix: str, build: MissionBu
     from .txr_format import build_txr
     if presentation is None:
         return {}
-    if not isinstance(presentation, dict) or set(presentation) - set(CATALOGUE_ART):
-        _fail('presentation 只能包含 ' + '、'.join(CATALOGUE_ART))
-    paths = {}
+    if not isinstance(presentation, dict) or set(presentation) - set(CATALOGUE_ART) - {'loading_screen'}:
+        _fail('presentation 只能包含 ' + '、'.join((*CATALOGUE_ART, 'loading_screen')))
+    screen = presentation.get('loading_screen', 'poster' if 'loading' in presentation else 'random')
+    if screen not in LOADING_SCREENS:
+        _fail('presentation.loading_screen 只能是 poster 或 random')
+    if screen == 'poster' and 'loading' not in presentation:
+        _fail('presentation.loading_screen = poster 需要 presentation.loading 图片')
+    paths = {CATALOGUE_ART['loading'][0]: ''}       # random unless the poster is written below
     for n, (key, (offset, size)) in enumerate(CATALOGUE_ART.items()):
-        if key not in presentation:
+        if key not in presentation or (key == 'loading' and screen == 'random'):
             continue
         relative = presentation[key]
         if not isinstance(relative, str) or not relative.lower().endswith('.png'):

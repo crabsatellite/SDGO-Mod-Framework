@@ -396,6 +396,99 @@ __declspec(naked) void OperatorModeSite() {
     }
 }
 
+// Mission loading screen. The battle loading screen shows a mission catalogue's poster (catalogue +1209)
+// only for room mode 8; listed missions run in mode 5 and get the client's random pictures. At the
+// loading screen's mode check (ecx = room mode, eax = room data) an imported mission whose catalogue
+// row has a poster reports mode 8 for that one comparison. The client then reads the GameMode row
+// (room +0x9C), takes its group (+106) and walks catalogue rows from 191001 until one has that group
+// (+5), so mode 8 is only reported when that walk reaches the imported row without a gap.
+struct PosterMode {
+    uint32_t mode;
+    uint32_t catalogue;
+    uint32_t group;
+    int state;  // 0 unchecked, 1 usable, -1 not reachable
+};
+std::vector<PosterMode> g_posterModes;
+void* g_loadingModeOriginal = nullptr;
+constexpr uint32_t kCatalogueFirst = 191001;
+constexpr size_t kCatalogueGroup = 5;
+constexpr size_t kCataloguePoster = 1209;
+constexpr size_t kGameModeGroup = 106;
+
+void CollectPosterModes() {
+    for (const auto& mode : g_catalog.records) {
+        if (mode.kind != kGameModeType) continue;
+        const uint32_t group = U32(mode.bytes.data() + kGameModeGroup);
+        for (const auto& row : g_catalog.records) {
+            if (row.kind != kCatalogueType || U32(row.bytes.data() + kCatalogueGroup) != group) continue;
+            if (row.bytes[kCataloguePoster] || row.bytes[kCataloguePoster + 1])
+                g_posterModes.push_back(PosterMode{mode.id, row.id, group, 0});
+            break;
+        }
+    }
+}
+
+bool PosterReachable(const PosterMode& entry) {
+    void* grid = g_data();
+    if (!grid || entry.catalogue < kCatalogueFirst || entry.catalogue - kCatalogueFirst > 4096) return false;
+    const uint8_t* record = nullptr;
+    if (!NativeRecord(grid, entry.mode, kGameModeType, &record) || U32(record + kGameModeGroup) != entry.group)
+        return false;
+    for (uint32_t id = kCatalogueFirst; id <= entry.catalogue; ++id) {
+        if (!NativeRecord(grid, id, kCatalogueType, &record)) return false;
+        if (U32(record + kCatalogueGroup) == entry.group) return id == entry.catalogue;
+    }
+    return false;
+}
+
+uint32_t __stdcall DecideLoadingMode(uint32_t mode, const uint8_t* room) {
+    if ((mode & 0xFFFF) != kListedMissionMode || !room || g_posterModes.empty()) return mode;
+    __try {
+        const uint32_t id = U32(room + kRoomGameModeId);
+        for (auto& entry : g_posterModes) {
+            if (entry.mode != id) continue;
+            if (entry.state == 0) {
+                entry.state = PosterReachable(entry) ? 1 : -1;
+                if (entry.state < 0)
+                    g_api->Log(g_mod, SDGO_LOG_WARN,
+                               "imported mission %lu: catalogue row %lu is not reachable from %lu; random loading screen",
+                               static_cast<unsigned long>(id), static_cast<unsigned long>(entry.catalogue),
+                               static_cast<unsigned long>(kCatalogueFirst));
+            }
+            if (entry.state > 0) {
+                g_api->Log(g_mod, SDGO_LOG_INFO, "imported mission %lu: mission poster loading screen",
+                           static_cast<unsigned long>(id));
+                return kSpeechMissionMode;
+            }
+            break;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return mode;
+}
+
+__declspec(naked) void LoadingModeSite() {
+    __asm {
+        pushfd
+        pushad
+        mov ebx, esp
+        sub esp, 0x210
+        and esp, 0xfffffff0
+        fxsave [esp]
+        fninit
+        cld
+        push dword ptr [ebx + 28]
+        push dword ptr [ebx + 24]
+        call DecideLoadingMode
+        mov [ebx + 24], eax
+        fxrstor [esp]
+        mov esp, ebx
+        popad
+        popfd
+        jmp dword ptr [g_loadingModeOriginal]
+    }
+}
+
 // Optional (setting NativeDebugLog=1): let the game write its own debug log (app_log folder),
 // which names missing records and failed script lookups while an owner tests a mission.
 bool g_nativeLog = false;
@@ -520,6 +613,13 @@ SDGO_MOD_ENTRY {
         !api->HookSite(mod, "map_catalog.operator_mode", reinterpret_cast<void*>(&OperatorModeSite),
                        &g_operatorModeOriginal)) {
         api->Log(mod, SDGO_LOG_WARN, "character speech UI unavailable for imported missions");
+    }
+    CollectPosterModes();
+    if (!g_posterModes.empty() && api->size >= offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) &&
+        api->HookSite &&
+        !api->HookSite(mod, "map_catalog.loading_mode", reinterpret_cast<void*>(&LoadingModeSite),
+                       &g_loadingModeOriginal)) {
+        api->Log(mod, SDGO_LOG_WARN, "mission posters unavailable on the loading screen");
     }
     if (maps && !api->HookCode(mod, "map_catalog.load_map_table", reinterpret_cast<void*>(&LoadMapTable),
                                reinterpret_cast<void**>(&g_loadMapTable))) {

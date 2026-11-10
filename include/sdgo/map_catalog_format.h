@@ -23,6 +23,8 @@ constexpr uint32_t kObjectiveType = 0x20;    // mission objective
 constexpr uint32_t kSpeechType = 0x36;       // operator speech
 constexpr uint32_t kSpawnType = 0x2E;        // mission spawn mirror (walked by the room start check)
 constexpr uint32_t kTriggerType = 0x6B;      // mission trigger objects
+constexpr uint32_t kUnitType = 0x02;         // client-only unit copy (NPC label / weapons)
+constexpr uint32_t kWeaponType = 0x0A;       // client-only weapon copy (NPC damage multiplier)
 
 constexpr size_t kMapBytes = 0x34C;
 constexpr uint32_t kMapFirstId = 100001;
@@ -81,6 +83,8 @@ inline size_t ExpectedBytes(uint32_t kind) {
     case kSpeechType: return 506;
     case kSpawnType: return 152;
     case kTriggerType: return 395;
+    case kUnitType: return 4976;
+    case kWeaponType: return 1871;
     default: return 0;
     }
 }

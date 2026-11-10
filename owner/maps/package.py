@@ -142,6 +142,7 @@ class Package:
     minimap: str
     bgm_native: str = ''
     bgm_file: str = ''
+    boundary_lines: bool = True     # paint the play area / movable area edges on the ground
     files: dict[str, str] = field(default_factory=dict)
 
     def read(self, relative: str) -> bytes:
@@ -384,6 +385,9 @@ def load(root: Path | str) -> Package:
         bgm_file = packaged(bgm, 'presentation.bgm', ('.mp3',))
     else:
         _fail('presentation.bgm 必须是包内 mp3 或 {"native": "BGM\\\\NNNN.mp3"}')
+    boundary_lines = presentation.get('boundary_lines', True)
+    if not isinstance(boundary_lines, bool):
+        _fail('presentation.boundary_lines 必须是布尔值')
 
     return Package(root=root, manifest=m, map_key=key, name=_names(m.get('name'), 'name', 48, 100),
                    description=(_names(m['description'], 'description', 99, 400) if m.get('description')
@@ -396,4 +400,5 @@ def load(root: Path | str) -> Package:
                    fog_color=_colour(fog.get('color', [0.7, 0.75, 0.8]), 'terrain.fog.color'),
                    fog_start=fog_start, fog_end=fog_end, sky=sky, play_half_x=play_x, play_half_z=play_z,
                    ceiling=ceiling, objects=objects, spawns=spawns, sectors=sectors, item_patterns=patterns,
-                   preview=preview, minimap=minimap, bgm_native=bgm_native, bgm_file=bgm_file, files=checked)
+                   preview=preview, minimap=minimap, bgm_native=bgm_native, bgm_file=bgm_file,
+                   boundary_lines=boundary_lines, files=checked)

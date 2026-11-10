@@ -553,6 +553,32 @@ public:
         return Read(unit, kUnitTerrainArea + 0x10, enabled);
     }
 
+    // Test-only: move the local player's scene node to (x, z), height kept (imported mission area
+    // barrier review). The client's own area clamp still applies afterwards.
+    bool PlaceLocalPlayer(float x, float z) const
+    {
+        using namespace battle_ai::native::detail;
+        const uint8_t* manager = nullptr;
+        if (!unitManager_ || !Read(reinterpret_cast<const uint8_t*>(unitManager_), 0, manager) || !manager)
+            return false;
+        uint8_t* unit = nullptr;
+        uint8_t* node = nullptr;
+        if (!ReadPointer(manager, kManagerLocalPlayer, unit) || !ReadPointer(unit, kUnitNode, node))
+            return false;
+        return WriteNodePosition(node, x, z);
+    }
+
+    static bool WriteNodePosition(uint8_t* node, float x, float z)
+    {
+        __try {
+            *reinterpret_cast<float*>(node + kNodePosition) = x;
+            *reinterpret_cast<float*>(node + kNodePosition + 8) = z;
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
     void Finish(
         const SdgoGameTestContextV1* context,
         ScoreboardActions& input)

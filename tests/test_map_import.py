@@ -333,6 +333,193 @@ class CompileTests(unittest.TestCase):
                                   templates=templates())
 
 
+def record_templates():
+    """templates() plus client unit/weapon records for NPC label and attack copies."""
+    unit = bytearray(M.UNIT_RECORD_BYTES)
+    struct.pack_into('<I', unit, 0, 1001)
+    unit[5:5 + 12] = '原机体(X)'.encode('utf-16-le')[:12]
+    for slot, weapon in zip(M.UNIT_WEAPON_SLOTS + (M.UNIT_SPECIAL_SLOT,), (7001, 7002, 0, 7002)):
+        struct.pack_into('<I', unit, slot, weapon)
+    weapons = {}
+    for ident, damage in ((7001, 800), (7002, 5000)):
+        raw = bytearray(M.WEAPON_RECORD_BYTES)
+        struct.pack_into('<I', raw, 0, ident)
+        struct.pack_into('<I', raw, M.WEAPON_DAMAGE, damage)
+        weapons[ident] = bytes(raw)
+    base = templates()
+    return M.Templates(**{**base.__dict__, 'unit_record': lambda u: bytes(unit) if u == 1001 else None,
+                          'weapon_record': weapons.get})
+
+
+def compile_spec(spec, tpl=None):
+    with tempfile.TemporaryDirectory() as tmp:
+        pkg = P.load(write_package(Path(tmp), mission=spec))
+        return M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                 templates=tpl or templates())
+
+
+class MissionFeatureTests(unittest.TestCase):
+    def test_kill_any_goal_and_timed_waves_use_absolute_time(self):
+        spec = mission_spec()
+        spec['phases'][0]['goal'] = {'kill_any': 3}
+        spec['phases'][0]['spawns'][1]['at'] = 6           # targets at 6 s and 8 s (every 2)
+        built = compile_spec(spec)
+        goals = [r for r in built.server['tbl_MissionClear'] if r['EventOrder'] == 1 and r['ClearType'] == 1]
+        self.assertEqual([(r['UseWho'], r['UseHow'], r['UseObjectID'], r['UseObjectCount']) for r in goals],
+                         [(2, 2, 0, 3)])
+        first = sorted((r['NpcParty'], r['AfterTime'], r['AbsTime']) for r in built.server['tbl_MissionNpc']
+                       if r['MissionPart'] == 1)
+        # waves start after the 3 s opening: the ally at 1 s, the targets at 6 and 8 s become absolute times
+        self.assertEqual(first, [(1, 0, 4), (2, 0, 9), (2, 0, 11)])
+        spec.pop('opening')
+        first = sorted((r['NpcParty'], r['AfterTime'], r['AbsTime']) for r in compile_spec(spec).server['tbl_MissionNpc']
+                       if r['MissionPart'] == 1)
+        self.assertEqual(first, [(1, 1, 0), (2, 0, 6), (2, 0, 8)])     # without a cutscene: AfterTime for t < 2
+        spec['opening'] = 'intro'
+        spec['phases'][0]['goal'] = {'kill_any': 0}
+        with self.assertRaisesRegex(M.MissionError, 'kill_any'):
+            compile_spec(spec)
+
+    def test_npc_label_and_attack_use_client_only_copies(self):
+        spec = mission_spec()
+        spec['npcs']['boss'] = {'template': 500, 'hp': 20000, 'boss': True, 'label': '加亚',
+                                'attack': 2.0, 'special_attack': 1.5}
+        spec['phases'][0]['spawns'].append({'npc': 'boss', 'positions': [[0, 150, 900]], 'at': 1})
+        built = compile_spec(spec, record_templates())
+        rows = {(k, i): r for k, i, r in built.rows}
+        units = [i for k, i in rows if k == M.UNIT_KIND]
+        self.assertEqual(units, [M.UNIT_LABEL_FIRST + 40 * 100])
+        copy = rows[(M.UNIT_KIND, units[0])]
+        self.assertEqual(copy[5:105].decode('utf-16-le').split('\0')[0], '加亚')
+        slots = [struct.unpack_from('<I', copy, s)[0] for s in M.UNIT_WEAPON_SLOTS + (M.UNIT_SPECIAL_SLOT,)]
+        damage = {i: struct.unpack_from('<I', r, M.WEAPON_DAMAGE)[0] for (k, i), r in rows.items()
+                  if k == M.WEAPON_KIND}
+        # weapon 7002 is both a normal weapon (x2) and the special (x1.5): two copies; empty slot stays empty
+        self.assertEqual([damage.get(w, w) for w in slots], [1600, 10000, 0, 7500])
+        self.assertEqual(len(damage), 3)
+        template = [r for (k, i), r in rows.items() if k == M.NPC_TEMPLATE_KIND][-1]
+        self.assertEqual(struct.unpack_from('<I', template, 105)[0], units[0])
+        server = [r for r in built.server['tbl_NpcData'] if r['UseUnitHP'] == 20000][0]
+        self.assertEqual((server['UseUnitID'], server['BossFlag']), (1001, 1))     # the server keeps the unit
+        for kind, _, raw in built.rows:
+            self.assertEqual(len(raw), M.SIZES[kind])
+        for bad in ({'attack': 5}, {'attack': True}, {'special_attack': 0.1}, {'label': 'A(B)'}):
+            spec['npcs']['boss'] = {'template': 500, **bad}
+            with self.assertRaises(M.MissionError):
+                compile_spec(spec, record_templates())
+
+    def test_cutscene_camera_is_a_sampled_path(self):
+        built = compile_spec(mission_spec())
+        # 0.1 s samples of the camera keys (frame, position, look), interpolated by the runtime every frame
+        self.assertIn('path={n=31,{1,0,300,-600,0,50,200},{6,3.66,299.09,-596.34,0,50,200}', built.lua)
+        self.assertIn('{180,200,250,-400,0,50,200}}', built.lua)
+        self.assertNotIn('cam=vector3', built.lua)          # no chained MoveCameraPos jumps
+        self.assertIn('SDGOMI.camera(m, c, s)', built.lua)
+
+    def test_held_actor_stays_in_place_every_frame(self):
+        spec = mission_spec()
+        spec['cutscenes']['intro']['actors']['a']['hold'] = True
+        lua = compile_spec(spec).lua
+        self.assertIn('a={tpl=500,at=vector3(0,50,200),dir=vector3(0,0,1),hold=1,enemy=0}', lua)
+        self.assertIn('if a.enemy == 1 then team = OBJECT_TEAM_BLUE end', lua)   # players' side by default
+        self.assertIn('if a.hold == 1 and s.actors[name] ~= nil then s.actors[name]:SetNowPos(a.at) end', lua)
+        spec['cutscenes']['intro']['events'].append({'t': 1.5, 'actor': 'a', 'move_to': [0, 150, 400]})
+        with self.assertRaisesRegex(M.MissionError, 'hold'):
+            compile_spec(spec)
+
+    def test_move_target_below_the_lift_is_refused(self):
+        spec = mission_spec()
+        spec['cutscenes']['intro']['events'].append({'t': 1.5, 'actor': 'a', 'move_to': [0, 20, 400]})
+        with self.assertRaisesRegex(M.MissionError, '移动目标'):
+            compile_spec(spec)
+        spec['cutscenes']['intro']['events'][-1]['move_to'] = [0, 150, 400]
+        self.assertIn('move=vector3(0,150,400)', compile_spec(spec).lua)
+
+    def test_spawns_outside_the_phase_area_are_refused(self):
+        spec = mission_spec()
+        spec['area'] = [-2000, 1500, 2000, -1500]
+        spec['phases'][1]['enter'] = {'area': [-1000, 2000, 1000, 500]}
+        compile_spec(spec)                                    # phase 2 target at z 600 is inside its area
+        spec['phases'][1]['spawns'][0]['positions'] = [[0, 150, 300]]
+        with self.assertRaisesRegex(M.MissionError, r'phases\[1\]\.spawns\[0\]\.positions\[0\] 不在本阶段的活动范围内'):
+            compile_spec(spec)
+
+    def test_boundary_lines_are_painted_on_the_ground(self):
+        from owner.maps import trn_format
+        # a shared west border of two areas is one line; opposite-facing edges on the same z stay apart
+        lines = compiler.boundary_lines([(-2000, 1500, 2000, -1500), (-2000, 3000, 2000, 1500)])
+        self.assertIn(('z', -2000, -1500, 3000, 0.0), lines)
+        self.assertIn(('x', 1500, -2000, 2000, 270.0), lines)
+        self.assertIn(('x', 1500, -2000, 2000, 90.0), lines)
+        self.assertEqual(len(lines), 6)
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = mission_spec()
+            spec['area'] = [-2000, 1500, 2000, -1500]
+            root = write_package(Path(tmp), mission=spec)
+            manifest = json.loads((root / 'map.json').read_text(encoding='utf-8'))
+            manifest['terrain']['play_area'] = {'half_x': 2048, 'half_z': 2048}
+            manifest['missions'] = ['missions/m.json']
+            (root / 'map.json').write_text(json.dumps(manifest), encoding='utf-8')
+            pkg = P.load(root)
+            shared = {}
+            pvp = compiler.compile_map(pkg, map_no=143, map_id=500, variant='pvp', prefix='m143', shared=shared)
+            decals = compiler.verify_trn(pvp.resources['trns/m143.trn']).decals
+            # the play area edge, 4 x 4096 in segments of 1024 like the shipped maps
+            self.assertEqual(len(decals), 16)
+            west = [d for d in decals if d.tex_rotation == 0.0]
+            self.assertEqual(sorted(d.transform.position for d in west),
+                             [(-2048.0, 0.0, z) for z in (-1536.0, -512.0, 512.0, 1536.0)])
+            d = west[0]
+            self.assertEqual(trn_format.wtext(d.texture), compiler.BOUNDARY_BAND)
+            self.assertEqual(compiler.BOUNDARY_BAND, 'Txrs' + chr(92) + '0806.txr')
+            self.assertEqual((d.u_wrap, d.v_wrap, d.receive_shadow), (0, 1, 0))
+            self.assertAlmostEqual(d.transform.scale[2] * compiler.DECAL_UNIT, 1024.0, 3)
+            self.assertAlmostEqual(d.tex_scale[1], 16.0, 5)
+            mission = compiler.compile_map(pkg, map_no=144, map_id=500, variant='mission', prefix='m143', shared=shared)
+            decals = compiler.verify_trn(mission.resources['trns/m143x.trn']).decals
+            # the mission area 4000 x 3000: 4 + 4 segments along x, 3 + 3 along z
+            self.assertEqual(len(decals), 14)
+            self.assertEqual(max(abs(d.transform.position[0]) for d in decals), 2000.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp))
+            data = json.loads((root / 'map.json').read_text(encoding='utf-8'))
+            data['presentation']['boundary_lines'] = False
+            (root / 'map.json').write_text(json.dumps(data), encoding='utf-8')
+            build = compiler.compile_map(P.load(root), map_no=143, map_id=500, variant='pvp', prefix='m143')
+            self.assertEqual(compiler.verify_trn(build.resources['trns/m143.trn']).decals, [])
+            data['presentation']['boundary_lines'] = 'yes'
+            (root / 'map.json').write_text(json.dumps(data), encoding='utf-8')
+            with self.assertRaisesRegex(P.MapPackageError, 'boundary_lines'):
+                P.load(root)
+
+    def test_loading_screen_poster_or_random(self):
+        spec = mission_spec()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp), mission=spec)
+            manifest = json.loads((root / 'map.json').read_text(encoding='utf-8'))
+            raw = png(Image.new('RGBA', (1024, 1024), (20, 60, 200, 255)))
+            (root / 'images/loading.png').write_bytes(raw)
+            manifest['files']['images/loading.png'] = hashlib.sha256(raw).hexdigest()
+            (root / 'map.json').write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
+            pkg = P.load(root)
+
+            def poster(presentation):
+                spec['presentation'] = presentation
+                built = M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                          templates=templates())
+                row = {(k, i): r for k, i, r in built.rows}[(M.CATALOGUE_KIND, 191040)]
+                return row[1209:1309].decode('utf-16-le').split('\0')[0], built.resources
+            path, resources = poster({'loading': 'images/loading.png'})
+            self.assertEqual(path, 'Txrs\\sdgom1a4.txr')
+            self.assertIn('txrs/sdgom1a4.txr', resources)
+            path, resources = poster({'loading': 'images/loading.png', 'loading_screen': 'random'})
+            self.assertEqual(path, '')
+            self.assertNotIn('txrs/sdgom1a4.txr', resources)
+            for bad in ({'loading_screen': 'poster'}, {'loading_screen': 'banner'}):
+                with self.assertRaisesRegex(M.MissionError, 'loading_screen'):
+                    poster(bad)
+
+
 class CheckTests(unittest.TestCase):
     def test_camera_and_placement_checks(self):
         box = ((0.0, 100.0, 0.0), ((1, 0, 0), (0, 1, 0), (0, 0, 1)), (100.0, 100.0, 100.0))

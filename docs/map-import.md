@@ -55,7 +55,7 @@ Colour textures (model base colour textures and terrain layer textures) may be P
 | `spawns` | `team_a` and `team_b` with 6 points each, `shared` with 1..12, plus `grid_respawn_a`/`grid_respawn_b` for Grid mode; each point has `position` and `facing` |
 | `sectors` | Named mission sector spawn points (`{name: {spawns: [...]}}`) |
 | `item_patterns` | Item spawn sets; `red` and `blue` need the same number of sets |
-| `presentation` | `preview` (PNG), `minimap` (PNG, the whole terrain), `bgm` (an MP3 in the package or `{"native": "BGM\\NNNN.mp3"}`). The compiler makes the map image from the minimap like the shipped maps: the play area keeps its aspect inside the square texture and is framed by an orange-yellow boundary line; the mission row's image also outlines every movable area its missions use |
+| `presentation` | `preview` (PNG), `minimap` (PNG, the whole terrain), `bgm` (an MP3 in the package or `{"native": "BGM\\NNNN.mp3"}`). The compiler makes the map image from the minimap like the shipped maps: the play area keeps its aspect inside the square texture and is framed by an orange-yellow boundary line; the mission row's image also outlines every movable area its missions use. `boundary_lines` (default `true`) paints the boundary on the ground with the band the shipped PvP maps use: the play area's edge on the PvP map, and the edge of every movable area on the mission map (the play area's edge when its missions have no areas) |
 | `files` | SHA-256 of every file in the package |
 
 ## Mission protocol (`missions/*.json`)
@@ -69,10 +69,10 @@ Mission files live under `missions/` in the map package and are listed in `files
 | `briefing.zh` | Briefing panel: up to 5 lines of 49 characters |
 | `difficulties` | Per difficulty: `level`, `required_rank`, `time_limit` (seconds), `lives` |
 | `bgm` | Mission music (same form as the map's `presentation.bgm`) |
-| `npcs` | Units: `template` (an NPC the target server already has), or `unit` + `base` (any unit using an NPC template); `hp`, `boss`, `name` and `ai` (an AI script name such as the battle AI's `VSAI_Infighter_01`) can be changed |
+| `npcs` | Units: `template` (an NPC the target server already has), or `unit` + `base` (any unit using an NPC template); `hp`, `boss`, `name` and `ai` (an AI script name such as the battle AI's `VSAI_Infighter_01`) can be changed. `label` sets the name shown above the unit (for example a pilot name, up to 49 characters without `(`); `attack` and `special_attack` (0.25–4) multiply the damage of the unit's weapons and of its special attack (`special_attack` defaults to `attack`). Both give the NPC a client-only copy of its unit; the server keeps the original unit and uses `hp` |
 | `lines` | Character dialogue: `portrait` (a client portrait `sprs\\NNNN.spr`), `speaker`, `text` |
 | `banners` | Banners: `image` (512×128 PNG), shown as an effect in cutscenes |
-| `presentation` | Optional mission list artwork in PNG, each replacing the template mission's image: `list_banner` (155×68), `room_icon` (120×83; like the shipped icons, keep rows 0..18 for the title lettering), `room_poster` (250×120), `title` (155×22, white lettering on a transparent background) and `loading` (1024×1024 loading screen) |
+| `presentation` | Optional mission list artwork in PNG, each replacing the template mission's image: `list_banner` (155×68), `room_icon` (120×83; like the shipped icons, keep rows 0..18 for the title lettering), `room_poster` (250×120), `title` (155×22, white lettering on a transparent background) and `loading` (1024×1024 loading screen poster). `loading_screen` chooses the battle loading screen: `poster` shows `loading` (the default when `loading` is given), `random` keeps the game's random loading pictures |
 | `area` | Movable area at the start: `[left x, top z, right x, bottom z]` (north is top). Players are kept inside it with the same call the shipped multi-area missions use. It is set when the `opening` cutscene starts, so it needs an opening. Without it the whole `terrain.play_area` is movable |
 | `sectors` | Sector change: `warp` (1..8 points), `facing`, optional `rect` (the new movable area, same order as `area`) |
 | `cutscenes` | Cutscenes, see below |
@@ -84,20 +84,20 @@ Mission files live under `missions/` in the map package and are listed in `files
 | Field | Meaning |
 | --- | --- |
 | `key`, `objective` | Phase key; the objective text is shown in the objective bar |
-| `goal` | `kill`: destroy a number of given units (several entries must all be met); or `survive`: hold out for some seconds |
+| `goal` | `kill`: destroy a number of given units (several entries must all be met); `kill_any`: destroy that many enemies of any kind (one counter for a mixed group, like the shipped "destroy N" goals); or `survive`: hold out for some seconds |
 | `fail` | `time_limit`: time limit; `lose`: the mission fails when a given allied unit is destroyed |
-| `spawns` | Waves: `npc`, `positions`, `at` (seconds after the phase starts), `every` (interval), `side` (`enemy`/`ally`), `min_free` |
+| `spawns` | Waves: `npc`, `positions`, `at` (seconds after the phase starts), `every` (interval), `side` (`enemy`/`ally`), `min_free`. `at` counts from the end of the cutscene that opens the phase (the `opening` for the first phase), so nobody fights while a cutscene plays; waves at 2 seconds or later appear at their time even if the earlier enemies were already destroyed |
 | `slots` | On-screen unit limits: `ally` + `enemy` ≤ 10 |
 | `enter` | On entering the phase: `cutscene`, `lines` (dialogue), `sector` (sector change with warp), `area` (new movable area without a warp); use `opening` and the mission `area` for the first phase |
 | `reward` | Phase reward `points`, `unit_exp` |
 | `next` | Next phase (default: the following one) |
 
-**Cutscenes** (`cutscenes{}`): `length` (1..60 seconds), `actors` (`npc`, `at`, `facing`), `camera` (keyframes `pos`/`look` starting at `t=0`, compiled into a smooth curve) and `events`:
+**Cutscenes** (`cutscenes{}`): `length` (1..60 seconds), `actors` (`npc`, `at`, `facing`; `hold: true` keeps the actor at `at` every frame, for hovering ships that the game would otherwise drop onto the ground; actors are on the players' side so AI wingmen do not attack them, `side: "enemy"` puts one on the enemy team), `camera` (keyframes `pos`/`look` starting at `t=0`, compiled into a smooth curve that the camera follows every frame) and `events`:
 
 | Event | Meaning |
 | --- | --- |
 | `anim` + `actor` | Play a unit animation (the compiler checks that the unit's model has it); `loop` optional |
-| `move_to` + `actor` | Move the actor to a point |
+| `move_to` + `actor` | Move the actor to a point at least 100 units above the ground; the path must not pass through objects |
 | `banner` | Show a banner in front of the camera; `distance` or `at` optional |
 | `line` | Show a dialogue line |
 | `effect` | Play an effect the client already has: `{fx, at, scale}` |
@@ -112,7 +112,8 @@ The compiler checks placement and camera work: spawn points, mission spawns, cut
 
 - Enable the client Mod `map_catalog` and install the same publication on both the client and the server; updating only one side leaves maps or missions missing.
 - Servers read these tables at startup: restart the World/Battle services after applying, and restart the client after installing the client package.
-- Imported missions run in mission rooms as native missions; character dialogue uses the game's own character dialogue panel (portrait and name).
+- Imported missions run in mission rooms as native missions; character dialogue uses the game's own character dialogue panel (portrait and name), and a mission with a `loading` poster shows it on the battle loading screen.
+- NPC registration is part of the mission protocol: `npcs` entries become the server's NPC data and the client's NPC templates for that mission; no separate Mod is needed.
 - Referenced client models, portraits, effects, sounds and BGM must exist in the target client; the compiler checks them.
 
 ## Troubleshooting
@@ -121,6 +122,7 @@ The compiler checks placement and camera work: spawn points, mission spawns, cut
 - If a mission does not start or units are missing, turn on "write the game's native debug log" in the Mod settings; the client `app_log` then names the missing record numbers.
 - Compile errors name the exact field (for example a spawn point below the ground, an undefined dialogue line, or an animation the actor's model does not have).
 - If the map looks washed out to white with Bloom (HDR) on, compile and install again with Manager 1.16.16 or later: earlier compilers left the map row's Bloom bright-pass threshold at 0.
-- To check a mission's movable areas, run the GameTest case `mission.import_flow`: it logs `imported mission local area x=[…] z=[…] on=… pos=(…) inside=…` for the client's own player whenever the area changes and every 10 seconds. A player outside a new area is moved to its edge.
+- To check a mission's movable areas, run the GameTest case `mission.import_flow`: it logs `imported mission local area x=[…] z=[…] on=… pos=(…) inside=…` for the client's own player whenever the area changes and every 10 seconds. A player outside a new area is moved to its edge. With review footage on, the case also holds the player near the west edge once so the ground line appears in the review frames.
+- If the loading screen still shows a random picture, check `sdgo.log` for `imported mission …: mission poster loading screen`; a warning that the catalogue row is not reachable means the mission catalogue numbers have a gap (compile and install the whole workspace again).
 - If the example map download fails, check that the Manager can reach `raw.githubusercontent.com`; files already downloaded and verified are reused on the next try.
 - If "Check server" reports conflicts, the target database already has non-import rows with the same numbers and the apply is refused; make sure the client and the server come from the same original data.
