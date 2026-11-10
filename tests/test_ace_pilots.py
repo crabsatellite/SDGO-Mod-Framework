@@ -27,6 +27,22 @@ class AcePilotCatalog(unittest.TestCase):
         self.assertEqual('伊织诚＆岭司',rows[24700]['display_name'])
         self.assertEqual('里卡德·费里尼',rows[24713]['display_name'])
         self.assertEqual('里朋斯·阿尔马克',rows[22073]['display_name'])
+        # Similar-looking variants must keep their actual pilot or a conservative role.
+        self.assertEqual('特列斯·克休里纳达',rows[17038]['display_name'])
+        self.assertEqual('杰克斯·马吉斯',rows[17024]['display_name'])
+        self.assertEqual('托比亚·阿罗纳克斯',rows[21027]['display_name'])
+        self.assertEqual('穆·拉·弗拉达',rows[15039]['display_name'])
+        self.assertEqual('隆德·蜜纳·萨哈克',rows[15041]['display_name'])
+        self.assertEqual('卡莲·约书亚',rows[10046]['display_name'])
+        self.assertEqual('普雷亚·雷腓力',rows[15100]['display_name'])
+        self.assertEqual('神圣军事同盟王牌驾驶员',rows[10047]['display_name'])
+        self.assertEqual('联邦测试驾驶员',rows[10202]['display_name'])
+        self.assertEqual('米哈伊尔·卡明斯基',rows[10206]['display_name'])
+        self.assertEqual('卡嘉莉·尤拉·阿斯哈',rows[15031]['display_name'])
+        self.assertEqual('联邦老兵',rows[11075]['display_name'])
+        for row in catalog['pilots']:
+            self.assertLessEqual(len(row['display_name'].encode('utf-16-le'))//2,64)
+            self.assertNotRegex(row['display_name'],r'[<>]')
         self.assertIn('role',{row['kind'] for row in catalog['pilots']})
         self.assertIn('named',{row['kind'] for row in catalog['pilots']})
         self.assertFalse((ROOT/'mods/ace_ai/owner-pilots.json').exists())
@@ -71,6 +87,10 @@ class AcePilotCatalog(unittest.TestCase):
             {'unit_id':1,'display_name':'甲','kind':'named'},{'unit_id':1,'display_name':'甲','kind':'named'}]})
         with self.assertRaises(ValueError):normalize_catalog({'schema_version':1,'pilots':[{
             'unit_id':1,'display_name':'甲\n乙','kind':'named'}]})
+        with self.assertRaises(ValueError):normalize_catalog({'schema_version':1,'pilots':[{
+            'unit_id':1,'display_name':'<王牌>','kind':'named'}]})
+        with self.assertRaises(ValueError):normalize_catalog({'schema_version':1,'pilots':[{
+            'unit_id':1,'display_name':'😀'*33,'kind':'named'}]})
 
 
 if __name__=='__main__':unittest.main()

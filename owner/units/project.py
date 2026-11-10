@@ -55,6 +55,8 @@ def normalize_metadata(value):
             raise ValueError('王牌驾驶员资料字段无效')
         display_name=plain(pilot.get('display_name',''),'王牌驾驶员显示名',48)
         if not display_name:raise ValueError('王牌驾驶员显示名不能为空')
+        if '<' in display_name or '>' in display_name or len(display_name.encode('utf-16-le'))//2>64:
+            raise ValueError('王牌驾驶员显示名不符合原生名称字段限制')
         kind=pilot.get('kind','named')
         if kind not in ACE_PILOT_KINDS:raise ValueError('王牌驾驶员资料类型无效')
         result['ace_pilot']={'display_name':display_name,'kind':kind}

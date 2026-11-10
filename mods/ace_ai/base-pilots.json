@@ -223,13 +223,13 @@
     },
     {
       "unit_id": 10046,
-      "display_name": "西罗·阿玛达",
+      "display_name": "卡莲·约书亚",
       "kind": "named"
     },
     {
       "unit_id": 10047,
-      "display_name": "胡索·艾文",
-      "kind": "named"
+      "display_name": "神圣军事同盟王牌驾驶员",
+      "kind": "role"
     },
     {
       "unit_id": 10048,
@@ -528,8 +528,8 @@
     },
     {
       "unit_id": 10108,
-      "display_name": "胡索·艾文",
-      "kind": "named"
+      "display_name": "神圣军事同盟王牌驾驶员",
+      "kind": "role"
     },
     {
       "unit_id": 10109,
@@ -688,12 +688,12 @@
     },
     {
       "unit_id": 10202,
-      "display_name": "露雪特·奥德比",
-      "kind": "named"
+      "display_name": "联邦测试驾驶员",
+      "kind": "role"
     },
     {
       "unit_id": 10203,
-      "display_name": "联邦老兵",
+      "display_name": "吉翁王牌驾驶员",
       "kind": "role"
     },
     {
@@ -708,12 +708,12 @@
     },
     {
       "unit_id": 10206,
-      "display_name": "克莉丝汀娜·麦肯吉",
+      "display_name": "米哈伊尔·卡明斯基",
       "kind": "named"
     },
     {
       "unit_id": 10207,
-      "display_name": "克莉丝汀娜·麦肯吉",
+      "display_name": "米哈伊尔·卡明斯基",
       "kind": "named"
     },
     {
@@ -913,12 +913,12 @@
     },
     {
       "unit_id": 10249,
-      "display_name": "联邦老兵",
+      "display_name": "新吉翁王牌驾驶员",
       "kind": "role"
     },
     {
       "unit_id": 10250,
-      "display_name": "联邦老兵",
+      "display_name": "新吉翁王牌驾驶员",
       "kind": "role"
     },
     {
@@ -1303,7 +1303,7 @@
     },
     {
       "unit_id": 11075,
-      "display_name": "吉翁王牌驾驶员",
+      "display_name": "联邦老兵",
       "kind": "role"
     },
     {
@@ -1423,7 +1423,7 @@
     },
     {
       "unit_id": 11099,
-      "display_name": "吉翁王牌驾驶员",
+      "display_name": "联邦老兵",
       "kind": "role"
     },
     {
@@ -2208,13 +2208,13 @@
     },
     {
       "unit_id": 15031,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "卡嘉莉·尤拉·阿斯哈",
+      "kind": "named"
     },
     {
       "unit_id": 15032,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "卡嘉莉·尤拉·阿斯哈",
+      "kind": "named"
     },
     {
       "unit_id": 15034,
@@ -2243,7 +2243,7 @@
     },
     {
       "unit_id": 15039,
-      "display_name": "卡嘉莉·尤拉·阿斯哈",
+      "display_name": "穆·拉·弗拉达",
       "kind": "named"
     },
     {
@@ -2253,7 +2253,7 @@
     },
     {
       "unit_id": 15041,
-      "display_name": "隆德·吉纳·萨哈克",
+      "display_name": "隆德·蜜纳·萨哈克",
       "kind": "named"
     },
     {
@@ -2403,7 +2403,7 @@
     },
     {
       "unit_id": 15072,
-      "display_name": "卡嘉莉·尤拉·阿斯哈",
+      "display_name": "穆·拉·弗拉达",
       "kind": "named"
     },
     {
@@ -2503,13 +2503,13 @@
     },
     {
       "unit_id": 15094,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "露娜玛丽亚·霍克",
+      "kind": "named"
     },
     {
       "unit_id": 15095,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "露娜玛丽亚·霍克",
+      "kind": "named"
     },
     {
       "unit_id": 15096,
@@ -2533,18 +2533,18 @@
     },
     {
       "unit_id": 15100,
-      "display_name": "劳·鲁·克鲁泽",
+      "display_name": "普雷亚·雷腓力",
       "kind": "named"
     },
     {
       "unit_id": 15101,
-      "display_name": "劳·鲁·克鲁泽",
+      "display_name": "普雷亚·雷腓力",
       "kind": "named"
     },
     {
       "unit_id": 15102,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "雷·札·巴雷尔",
+      "kind": "named"
     },
     {
       "unit_id": 15103,
@@ -2588,13 +2588,13 @@
     },
     {
       "unit_id": 15112,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "安德鲁·巴尔特菲尔德",
+      "kind": "named"
     },
     {
       "unit_id": 15113,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "安德鲁·巴尔特菲尔德",
+      "kind": "named"
     },
     {
       "unit_id": 15114,
@@ -2873,13 +2873,13 @@
     },
     {
       "unit_id": 16047,
-      "display_name": "扎夫特精英驾驶员",
-      "kind": "role"
+      "display_name": "史汀·奥克雷",
+      "kind": "named"
     },
     {
       "unit_id": 16048,
-      "display_name": "扎夫特精英驾驶员",
-      "kind": "role"
+      "display_name": "史汀·奥克雷",
+      "kind": "named"
     },
     {
       "unit_id": 16049,
@@ -2888,13 +2888,13 @@
     },
     {
       "unit_id": 16050,
-      "display_name": "扎夫特精英驾驶员",
-      "kind": "role"
+      "display_name": "奥尔·尼达",
+      "kind": "named"
     },
     {
       "unit_id": 16051,
-      "display_name": "扎夫特精英驾驶员",
-      "kind": "role"
+      "display_name": "奥尔·尼达",
+      "kind": "named"
     },
     {
       "unit_id": 16052,
@@ -2913,13 +2913,13 @@
     },
     {
       "unit_id": 16055,
-      "display_name": "扎夫特精英驾驶员",
-      "kind": "role"
+      "display_name": "史黛拉·路歇",
+      "kind": "named"
     },
     {
       "unit_id": 16056,
-      "display_name": "扎夫特精英驾驶员",
-      "kind": "role"
+      "display_name": "史黛拉·路歇",
+      "kind": "named"
     },
     {
       "unit_id": 16057,
@@ -3123,7 +3123,7 @@
     },
     {
       "unit_id": 17038,
-      "display_name": "杰克斯·马吉斯",
+      "display_name": "特列斯·克休里纳达",
       "kind": "named"
     },
     {
@@ -3513,12 +3513,12 @@
     },
     {
       "unit_id": 20001,
-      "display_name": "宇宙世纪王牌驾驶员",
+      "display_name": "联邦老兵",
       "kind": "role"
     },
     {
       "unit_id": 20002,
-      "display_name": "宇宙世纪王牌驾驶员",
+      "display_name": "联邦老兵",
       "kind": "role"
     },
     {
@@ -3763,22 +3763,22 @@
     },
     {
       "unit_id": 21025,
-      "display_name": "金凯杜·那乌",
+      "display_name": "托比亚·阿罗纳克斯",
       "kind": "named"
     },
     {
       "unit_id": 21026,
-      "display_name": "金凯杜·那乌",
+      "display_name": "托比亚·阿罗纳克斯",
       "kind": "named"
     },
     {
       "unit_id": 21027,
-      "display_name": "金凯杜·那乌",
+      "display_name": "托比亚·阿罗纳克斯",
       "kind": "named"
     },
     {
       "unit_id": 21028,
-      "display_name": "金凯杜·那乌",
+      "display_name": "托比亚·阿罗纳克斯",
       "kind": "named"
     },
     {
@@ -5308,7 +5308,7 @@
     },
     {
       "unit_id": 24795,
-      "display_name": "西罗·阿玛达",
+      "display_name": "卡莲·约书亚",
       "kind": "named"
     },
     {
