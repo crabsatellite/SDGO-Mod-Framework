@@ -779,6 +779,17 @@ private:
         if (requestedWeaponSlot_ >= 0) {
             battle_ai::native::Capabilities caps{};
             if (!battle_ai::native::ReadCapabilities(unit, caps)) {
+                // A fresh local player's attack bank may not be coherent until
+                // the original weapon-selection work has actually run. Feed
+                // its mapped selection and dispatch that real queued FSM work
+                // before waiting for the read-only acknowledgement.
+                input.HoldGameplay(kForwardAction, false);
+                input.HoldGameplay(kPrimaryAction, false);
+                input.HoldGameplay(14u + requestedWeaponSlot_, false);
+                input.HoldGameplay(14u + requestedWeaponSlot_, true);
+                weaponInput_(unit, nativeInput, 0);
+                reinterpret_cast<NativeTickFn>(attackVtable[1])(
+                    attack, unit + kUnitControlContext);
                 if (context->tick % 300 == 0)
                     context->Observe("native fire probe waits for a coherent live form and weapon-bank observation");
                 Release(input);
@@ -873,9 +884,11 @@ private:
         input.HoldGameplay(kPrimaryAction, primary);
         // Supply the mapped secondary action to its original consumer.
         // Target choice, aim and all control-state changes stay native.
-        // A melee special captures the locked target in reach.
+        // Reacquire ordinary targets with real down edges; a melee special
+        // retains its native held lock while capturing the target in reach.
         const bool lock =
-            lockOn_ || (specialFire && MeleeFamily(specialFamily_));
+            (lockOn_ && controlledFor % kCycleMs < kPrimaryHeldMs) ||
+            (specialFire && MeleeFamily(specialFamily_));
         input.HoldGameplay(kLockAction, lock);
         if (lock) lockInput_(unit, nativeInput);
         forwardHeld_ = forward;

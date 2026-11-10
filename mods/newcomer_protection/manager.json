@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "newcomer_protection",
+  "title": "新手保护",
+  "category": "gameplay",
+  "hosts": ["battle"],
+  "presentation": "configurable",
+  "provider": "newcomer_protection",
+  "runtime_enabled_setting": "enabled",
+  "description": "为服主选定的玩家增加生命值和普通武器伤害，覆盖任务和对战。默认两项倍率均为 2，必杀属性、生命条数和其他玩家保持原规则。名单仅保存在本服服务端。",
+  "mechanism": "在真人机体构建成功、房间强化和生命预算计算完成后增加最大及当前生命值，复活沿用已生成的最大生命。普通攻击在服务端原生伤害入口按原上限核对后乘倍率，再交给原生护盾、死亡、击破和结算流程；必杀分支不乘倍率。不写库存、机体定义或玩家数据库。",
+  "settings": [
+    {"id":"enabled","key":"Enabled","label":"启用新手保护","type":"boolean","default":false,"file":"config.ini","section":"settings","audience":"user","activation":"restart_required"},
+    {"id":"health_multiplier","key":"HealthMultiplier","label":"生命倍率","type":"number","default":2,"minimum":1,"maximum":10,"file":"config.ini","section":"settings","audience":"user","activation":"restart_required"},
+    {"id":"attack_multiplier","key":"AttackMultiplier","label":"普通武器伤害倍率","type":"number","default":2,"minimum":1,"maximum":10,"file":"config.ini","section":"settings","audience":"user","activation":"restart_required"},
+    {"id":"protected_accounts","key":"ProtectedAccounts","label":"受保护账号编号（在新手保护面板按名字选择）","type":"integer_list","default":"","max_length":2047,"file":"config.ini","section":"settings","audience":"developer","activation":"restart_required"}
+  ]
+}
