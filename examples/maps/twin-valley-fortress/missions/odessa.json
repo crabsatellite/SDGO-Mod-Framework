@@ -391,6 +391,12 @@
    "image": "images/banner_complete.png"
   }
  },
+ "area": [
+  -4600,
+  3000,
+  4600,
+  -6200
+ ],
  "sectors": {
   "north_valley": {
    "warp": [
