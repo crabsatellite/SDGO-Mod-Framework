@@ -32,7 +32,7 @@ MAP_ROW_BYTES = 0x34C
 MAP_ROW_FIRST_ID = 100001
 MAP_NO_LIMIT = 255
 FIRST_IMPORTED_MAP_NO = 143
-TEXTURE_LIMIT = 1024
+TEXTURE_LIMIT = 2048          # D3D9-safe maximum (txr_format.MAX_DIMENSION)
 PREVIEW_SIZE = (120, 83)
 RADAR_SIZE = 256
 LIGHTMAP_SIZE = 512
@@ -106,7 +106,31 @@ def _texture_txr(image: Image.Image) -> bytes:
     width, height = _pow2(rgba.width), _pow2(rgba.height)
     if (width, height) != rgba.size:
         rgba = rgba.resize((width, height), Image.LANCZOS)
+    if width * height >= 256 * 256 and rgba.getchannel('A').getextrema() == (255, 255):
+        # opaque: JPEG like the client's own opaque textures (several times smaller than PNG)
+        return txr_format.build_jpeg_txr(width, height, rgba.tobytes())
     return txr_format.build_txr(width, height, rgba.tobytes())
+
+
+def _layer_weights(coverage: list) -> list:
+    """Layer masks are coverage (each layer is painted over the ones below it). The terrain renderer adds
+    the layers weighted by their per-vertex alpha, and every shipped map keeps those weights summing to
+    255 at each vertex; a larger sum brightens the ground past 1.0, which the HDR bloom then blows out.
+    Returns per-layer weights (a constant 255 or bytes per vertex) that composite like the coverage stack."""
+    count = len(coverage)
+    if count == 1:
+        return [255]
+    vertices = GRID * GRID
+    columns = [bytearray(vertices) for _ in range(count)]
+    for v in range(vertices):
+        remaining = 255
+        for i in range(count - 1, 0, -1):
+            amount = coverage[i][v] if coverage[i] is not None else 1.0
+            weight = min(remaining, int(amount * remaining + 0.5))
+            columns[i][v] = weight
+            remaining -= weight
+        columns[0][v] = remaining
+    return [bytes(c) for c in columns]
 
 
 def _grid_image(image: Image.Image, what: str) -> list[float]:
@@ -374,16 +398,15 @@ def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'p
 
     # -- terrain layers, sky, lightmap (shared between variants)
     if 'layers' not in shared:
-        layer_rows = []
+        coverage = []
+        textures = []
         for i, layer in enumerate(package.layers):
-            texture = models.texture(package.read(layer.texture), f'terrain.layers[{i}].texture')
-            if layer.mask:
-                alpha = bytes(int(v * 255 + 0.5) for v in _grid_image(_open(package.read(layer.mask), f'terrain.layers[{i}].mask'),
-                                                                       f'terrain.layers[{i}].mask'))
-            else:
-                alpha = 255
-            layer_rows.append((texture, alpha, 2 * package.half_extent / layer.tiling))
-        shared['layers'] = layer_rows
+            textures.append(models.texture(package.read(layer.texture), f'terrain.layers[{i}].texture'))
+            coverage.append(_grid_image(_open(package.read(layer.mask), f'terrain.layers[{i}].mask'),
+                                        f'terrain.layers[{i}].mask') if layer.mask else None)
+        weights = _layer_weights(coverage)
+        shared['layers'] = [(texture, alpha, 2 * package.half_extent / layer.tiling)
+                            for texture, alpha, layer in zip(textures, weights, package.layers)]
         sky = _sky_textures(package.sky)
         for part, raw in sky.items():
             resources[f'txrs/{prefix}s{part[0]}.txr'] = raw

@@ -440,6 +440,18 @@ def build_png_txr(width: int, height: int, rgba: bytes, *, require_pow2: bool = 
     return serialize(TxrFile(_parse_png(encode_png(width, height, rgba)), 'png', zoatex_code))
 
 
+def build_jpeg_txr(width: int, height: int, rgba: bytes, *, quality: int = 92, require_pow2: bool = True) -> bytes:
+    """Encode opaque RGBA8 pixels as a `.txr` holding a baseline JPEG (as many shipped opaque textures are).
+    The alpha channel is dropped, so callers use this only for fully opaque images."""
+    import io
+    from PIL import Image
+    _check_rgba(width, height, rgba, require_pow2)
+    rgb = Image.frombytes('RGBA', (width, height), rgba).convert('RGB')
+    out = io.BytesIO()
+    rgb.save(out, format='JPEG', quality=quality, subsampling=0, optimize=True)
+    return serialize(TxrFile(_parse_jpeg(out.getvalue()), 'jpeg', None))
+
+
 def _half(width: int, height: int, rgba: bytes) -> tuple[int, int, bytes]:
     w2, h2 = max(1, width // 2), max(1, height // 2)
     out = bytearray(w2 * h2 * 4)

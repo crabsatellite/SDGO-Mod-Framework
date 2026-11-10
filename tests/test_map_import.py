@@ -187,6 +187,35 @@ class CompileTests(unittest.TestCase):
             self.assertIn('hide=1', built.lua)
             self.assertTrue(all(ord(c) < 128 for c in built.lua))
 
+    def test_catalogue_artwork_replaces_the_template_images(self):
+        spec = mission_spec()
+        spec['presentation'] = {'room_poster': 'images/poster.png', 'loading': 'images/loading.png'}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp), mission=spec)
+            manifest = json.loads((root / 'map.json').read_text(encoding='utf-8'))
+            for name, size in (('images/poster.png', (250, 120)), ('images/loading.png', (1024, 1024))):
+                raw = png(Image.new('RGBA', size, (200, 60, 200, 255)))
+                (root / name).write_bytes(raw)
+                manifest['files'][name] = hashlib.sha256(raw).hexdigest()
+            (root / 'map.json').write_text(json.dumps(manifest, ensure_ascii=False), encoding='utf-8')
+            pkg = P.load(root)
+            built = M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                      templates=templates())
+            catalogue = {(k, i): r for k, i, r in built.rows}[(M.CATALOGUE_KIND, 191040)]
+            text = lambda offset: catalogue[offset:offset + 100].decode('utf-16-le').split('\0')[0]
+            self.assertEqual(text(309), 'sprs\\sdgom1a2.spr')
+            self.assertEqual(text(1209), 'Txrs\\sdgom1a4.txr')
+            self.assertEqual(text(109), '')                       # not given: the template's value stays
+            sprite = built.resources['sprs/sdgom1a2.spr']
+            self.assertEqual(struct.unpack_from('<5I', sprite, 0)[3:], (120, 250))
+            self.assertEqual(sprite[44:44 + 36].decode('utf-16-le').split('\0')[0], 'Txrs\\sdgom1a2.txr')
+            self.assertIn('txrs/sdgom1a4.txr', built.resources)
+            self.assertTrue(all(bundle.allowed_overlay(name) for name in built.resources))
+            spec['presentation'] = {'room_poster': 'images/loading.png'}
+            with self.assertRaises(M.MissionError):
+                M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                  templates=templates())
+
     def test_missing_enemy_wave_is_refused(self):
         spec = mission_spec()
         for phase in spec['phases']:

@@ -762,6 +762,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     _u32(cat, 5, ids.group)
     _w(cat, 9, 100, name, 'name')
     _w(cat, 409, 500, description, 'description')
+    for offset, path in _catalogue_art(package, spec.get('presentation'), ids.lua_prefix.lower(), build).items():
+        _w(cat, offset, 100, path, f'presentation ({offset})')
     build.rows.append((CATALOGUE_KIND, ids.catalogue, bytes(cat)))
 
     for kind, ident, raw in build.rows:
@@ -788,6 +790,56 @@ def package_ground(package: Package, pos) -> float:
     if terrain is None:
         terrain = _GROUND_CACHE[id(package)] = _Terrain(package)
     return terrain.at(pos[0], pos[2])
+
+
+# Mission catalogue artwork: protocol key -> (catalogue offset, exact size). The sprites are what the mission
+# list, room list and mission room show; `loading` is the loading-screen texture (art in the 4:3 band
+# y 128..896, as in the client's own loading screens). Missing keys keep the template mission's images.
+CATALOGUE_ART = {
+    'list_banner': (109, (155, 68)),
+    'room_icon': (209, (120, 83)),
+    'room_poster': (309, (250, 120)),
+    'title': (909, (155, 22)),
+    'loading': (1209, (1024, 1024)),
+}
+
+
+def _catalogue_art(package: Package, presentation, prefix: str, build: MissionBuild) -> dict[int, str]:
+    from PIL import Image
+    import io
+    from .compiler import spr_bytes, _native
+    from .txr_format import build_txr
+    if presentation is None:
+        return {}
+    if not isinstance(presentation, dict) or set(presentation) - set(CATALOGUE_ART):
+        _fail('presentation 只能包含 ' + '、'.join(CATALOGUE_ART))
+    paths = {}
+    for n, (key, (offset, size)) in enumerate(CATALOGUE_ART.items()):
+        if key not in presentation:
+            continue
+        relative = presentation[key]
+        if not isinstance(relative, str) or not relative.lower().endswith('.png'):
+            _fail(f'presentation.{key} 必须是包内 PNG')
+        try:
+            image = Image.open(io.BytesIO(package.read(relative))).convert('RGBA')
+        except MapPackageError:
+            raise
+        except Exception as error:
+            _fail(f'presentation.{key} 无法读取：{error}')
+        if image.size != size:
+            _fail(f'presentation.{key} 必须是 {size[0]}x{size[1]} 像素（当前 {image.width}x{image.height}）')
+        width, height = (1 << (size[0] - 1).bit_length(), 1 << (size[1] - 1).bit_length())
+        canvas = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        canvas.paste(image, (0, 0))
+        texture = f'txrs/{prefix}a{n}.txr'
+        build.resources[texture] = build_txr(width, height, canvas.tobytes())
+        if key == 'loading':
+            paths[offset] = _native(texture)
+        else:
+            sprite = f'sprs/{prefix}a{n}.spr'
+            build.resources[sprite] = spr_bytes(_native(texture), size[0], size[1], (width, height))
+            paths[offset] = _native(sprite)
+    return paths
 
 
 def banner_effect_factory(read_native: Callable[[str], bytes], base_effect: str = 'fxrs/0230.zfx'):

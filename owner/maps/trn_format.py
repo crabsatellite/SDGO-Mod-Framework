@@ -1451,8 +1451,9 @@ class TrnBuilder:
 
     def add_layer(self, texture: str, alpha=255, *, tile_size: float = 256.0,
                   specular=(0.0, 0.0, 0.0, 0.0), specular_power: float = 15.0, uv_transform=None) -> int:
-        """Add a splat layer; `alpha` is 0..255 per vertex (257x257) or a constant. Layer 0 is the base and
-        should cover everything (alpha 255). Returns the layer index."""
+        """Add a splat layer; `alpha` is its 0..255 blend weight per vertex (257x257) or a constant. The
+        renderer adds the layers weighted by these values, so at every vertex the weights of all layers
+        must sum to 255, as in every shipped map. Returns the layer index."""
         t = self.trn
         if len(t.layers) >= MAX_LAYERS:
             raise ValueError('at most %d layers' % MAX_LAYERS)
