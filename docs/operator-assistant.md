@@ -4,7 +4,7 @@
 
 ![Operator management: change a display name and save the configuration draft](operator-manager-demo.webp)
 
-**Template credit:** Thanks to [幻羽未来 (Bilibili UID 564285)](https://space.bilibili.com/564285) for sharing the operator template used as a reference for this project.
+Thanks to [幻羽未来 (Bilibili UID 564285)](https://space.bilibili.com/564285) for sharing the operator template used as a reference for this project.
 
 The **副官与能力** panel in SDGO Mod Manager configures operator names, native/uploaded/package
 portraits, abilities, mutually exclusive item drops, free access or product registration, and shop-draft

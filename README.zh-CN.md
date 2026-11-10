@@ -151,10 +151,6 @@
 
 [构建与开发接口](docs/framework.md) · [贡献与 AI 披露规则](docs/contributing.zh-CN.md) · [配置与排错](docs/setup.zh-CN.md)
 
-## 致谢
-
-副官模板参考：[幻羽未来（B站 UID：564285）](https://space.bilibili.com/564285)。感谢分享。
-
 MIT，见 [LICENSE](LICENSE)。第三方许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 框架、SQL、服主内容和个人数据的归属见[内容边界](docs/content-boundaries.zh-CN.md)。
