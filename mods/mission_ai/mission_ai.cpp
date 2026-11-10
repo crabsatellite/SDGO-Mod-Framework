@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "sdgo/mission_ai_client_observer.h"
+#include "sdgo/ace_ai_observer.h"
 #include "sdgo/mission_ai_stage_warp_observer.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/mission_ai_lifecycle.h"
@@ -149,6 +150,11 @@ namespace
     constexpr size_t kUnitNode = 0x08;
     constexpr size_t kUnitTeam = 0x20;
     constexpr size_t kObjectHp = 0x38;
+    constexpr size_t kObjectMaxHp = 0x3C;
+    constexpr size_t kUnitDeckIndex = 0x2EE4;
+    constexpr size_t kOldStringSize = 0x10;
+    constexpr size_t kOldStringCapacity = 0x14;
+    constexpr size_t kOldStringInlineCapacity = 7;
     constexpr size_t kUnitServerId = 0x2B68;
     constexpr size_t kUnitLocalControl = 0x2B64;
     constexpr size_t kUnitRemote = 0x2B65;
@@ -205,6 +211,8 @@ namespace
     using BattleAiInitializeUnitFn = void(__cdecl*)(uint8_t*, int, uint32_t);
     using BattleAiBeginBattleFn = int(__cdecl*)(uint32_t);
     using AcePilotNameFn = int(__cdecl*)(uint32_t, wchar_t*, uint32_t);
+    using MatchPlaybackContextFn =
+        int(__cdecl*)(SdgoAceAiMissionPlaybackContextV1*);
     using NativeStepFn = void(__thiscall*)(void*);
     using NativeStringCtorFn = void*(__thiscall*)(void*, const wchar_t*, size_t);
     using AppendLineFn = void(__thiscall*)(void*, const void*);
@@ -213,7 +221,11 @@ namespace
     PlayerSlotFn g_playerSlot = nullptr;
     IsPlayerObjectFn g_isPlayerObject = nullptr;
     PlaybackUnitFn g_playbackUnit = nullptr;
+    MatchPlaybackContextFn g_matchPlaybackContext = nullptr;
     thread_local uint32_t g_pendingRespawnObject = 0;
+    thread_local int g_pendingRespawnColour = -1;
+    thread_local SdgoAceAiMissionPlaybackContextV1
+        g_localPlaybackContext{};
     HMODULE g_battleAiModule = nullptr;
     BattleAiInitializeUnitFn g_battleAiInitializeUnit = nullptr;
     BattleAiBeginBattleFn g_battleAiBeginBattle = nullptr;
@@ -228,6 +240,20 @@ namespace
     bool g_missionAcePending = false;
     bool g_missionAceAnnounced = false;
     bool g_missionReadyReleased = false;
+    SdgoAceAiAnnouncementSnapshotV1 g_aceAnnouncementSnapshot{};
+    SRWLOCK g_aceAnnouncementLock = SRWLOCK_INIT;
+    volatile LONG g_aceAnnouncementSequence = 0;
+    volatile LONG g_aceAnnouncementCount = 0;
+    volatile LONG g_playbackSequence = 0;
+    uint32_t g_lastPlaybackObject = 0;
+    uint32_t g_lastPlaybackGeneration = 0;
+    uint32_t g_lastPlaybackPilot = 0;
+    uint32_t g_lastPlaybackMachine = 0;
+    int32_t g_lastPlaybackSlot = -1;
+    uint32_t g_lastPlaybackColour = 0;
+    uint32_t g_lastPlaybackResult = 0;
+    uint8_t g_lastPlaybackNameRefreshed = 0;
+    SRWLOCK g_playbackLock = SRWLOCK_INIT;
 
     std::vector<uint32_t> g_wingmen; // object ids of the AI participants of this mission
     std::vector<uint32_t> g_localWingmen; // only this client's simulated participants
@@ -245,6 +271,9 @@ namespace
         battle_ai::Difficulty baseDifficulty = battle_ai::Difficulty::Medium;
         battle_ai::Difficulty effectiveDifficulty = battle_ai::Difficulty::Medium;
         uint32_t unitDataId = 0;
+        uint32_t recordNpcId = 0;
+        uint32_t profileGeneration = 0;
+        std::wstring acePilotName;
         bool profileInitialized = false;
         bool profileInitial = true;
         bool hasPosition = false;
@@ -318,6 +347,26 @@ namespace
         return g_nextProfileGeneration;
     }
 
+    bool CopyOldWString(const uint8_t* value, wchar_t* output,
+                        size_t outputCount)
+    {
+        if (!value || !output || outputCount == 0) return false;
+        const size_t length =
+            *reinterpret_cast<const uint32_t*>(value + kOldStringSize);
+        const size_t capacity =
+            *reinterpret_cast<const uint32_t*>(value + kOldStringCapacity);
+        if (length > capacity || length >= outputCount || capacity > 0x10000)
+            return false;
+        const wchar_t* text = capacity <= kOldStringInlineCapacity ?
+            reinterpret_cast<const wchar_t*>(value) :
+            *reinterpret_cast<const wchar_t* const*>(value);
+        if (!text) return false;
+        for (size_t index = 0; index < length; ++index)
+            output[index] = text[index];
+        output[length] = L'\0';
+        return true;
+    }
+
     void ResolveBattleAiBridge()
     {
         HMODULE module = GetModuleHandleW(L"battle_ai.dll");
@@ -359,7 +408,8 @@ namespace
 
     bool InitializeBattleAiWingman(uint8_t* unit,
                                    battle_ai::Difficulty difficulty,
-                                   bool initial)
+                                   bool initial,
+                                   uint32_t* generationOut = nullptr)
     {
         ResolveBattleAiBridge();
         if (!unit || !g_battleAiInitializeUnit || !BeginBattleAiProfiles()) return false;
@@ -367,6 +417,7 @@ namespace
         const uint32_t generation = NextProfileGeneration();
         __try {
             g_battleAiInitializeUnit(unit, flags, generation);
+            if (generationOut) *generationOut = generation;
             return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             g_battleAiInitializeUnit = nullptr;
@@ -403,6 +454,7 @@ namespace
         uint8_t* player = g_game.playerSlot(um, wingman.slot);
         if (!player) return false;
         g_game.assign(player + kSlotName, name, wcslen(name));
+        wingman.acePilotName.assign(name);
         wingman.aceNameApplied = true;
         return true;
     }
@@ -437,6 +489,22 @@ namespace
                 *reinterpret_cast<uint32_t*>(service + 0x98) == before + 1;
         } __finally {
             if (constructed) g_lineDtor(record);
+        }
+        if (appended) {
+            SdgoAceAiAnnouncementSnapshotV1 receipt{};
+            receipt.size = sizeof(receipt);
+            receipt.version = SDGO_ACE_AI_OBSERVER_VERSION;
+            receipt.sequence = static_cast<uint32_t>(
+                InterlockedIncrement(&g_aceAnnouncementSequence));
+            receipt.source = SDGO_ACE_AI_ANNOUNCEMENT_MISSION;
+            receipt.feed_count_before = before;
+            receipt.feed_count_after = before + 1;
+            receipt.successful_count = static_cast<uint32_t>(
+                InterlockedIncrement(&g_aceAnnouncementCount));
+            wcsncpy_s(receipt.text, kMessage, _TRUNCATE);
+            AcquireSRWLockExclusive(&g_aceAnnouncementLock);
+            g_aceAnnouncementSnapshot = receipt;
+            ReleaseSRWLockExclusive(&g_aceAnnouncementLock);
         }
         return appended;
     }
@@ -513,6 +581,47 @@ namespace
         return 0;
     }
 
+    bool CurrentPlaybackContext(
+        uint32_t object, SdgoAceAiMissionPlaybackContextV1* context)
+    {
+        if (!context) return false;
+        context->size = sizeof(*context);
+        context->version = SDGO_ACE_AI_OBSERVER_VERSION;
+        if (g_matchPlaybackContext) {
+            __try {
+                if (g_matchPlaybackContext(context) == 1 &&
+                    context->active && context->object_id == object)
+                    return true;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                g_matchPlaybackContext = nullptr;
+            }
+        }
+        if (g_localPlaybackContext.active &&
+            g_localPlaybackContext.object_id == object) {
+            *context = g_localPlaybackContext;
+            return true;
+        }
+        return false;
+    }
+
+    void PublishPlaybackReceipt(
+        const ObservedWingman& wingman,
+        const SdgoAceAiMissionPlaybackContextV1& context)
+    {
+        AcquireSRWLockExclusive(&g_playbackLock);
+        g_lastPlaybackObject = context.object_id;
+        g_lastPlaybackGeneration = wingman.profileGeneration;
+        g_lastPlaybackPilot = wingman.pilotId;
+        g_lastPlaybackMachine = wingman.unitDataId;
+        g_lastPlaybackSlot = wingman.slot;
+        g_lastPlaybackColour = context.colour;
+        g_lastPlaybackResult = context.native_result;
+        g_lastPlaybackNameRefreshed =
+            wingman.ace && wingman.aceNameApplied ? 1 : 0;
+        InterlockedIncrement(&g_playbackSequence);
+        ReleaseSRWLockExclusive(&g_playbackLock);
+    }
+
     void __cdecl MissionRespawnComplete(void* um, uint32_t object)
     {
         __try {
@@ -532,7 +641,11 @@ namespace
                 wingman.profileInitial = false;
                 ApplyAcePilotName(um, wingman);
                 wingman.profileInitialized = InitializeBattleAiWingman(
-                    unit, wingman.effectiveDifficulty, false);
+                    unit, wingman.effectiveDifficulty, false,
+                    &wingman.profileGeneration);
+                SdgoAceAiMissionPlaybackContextV1 context{};
+                if (CurrentPlaybackContext(object, &context))
+                    PublishPlaybackReceipt(wingman, context);
                 return;
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
@@ -553,6 +666,7 @@ namespace
         const int slot = index >= 1000 ? MissionSlotForObject(um, static_cast<uint32_t>(index) + 1) : -1;
         if (slot >= 0) {
             g_pendingRespawnObject = static_cast<uint32_t>(index) + 1;
+            g_pendingRespawnColour = colour;
             g_setSlotColour(um, slot, colour);
             return;
         }
@@ -564,11 +678,25 @@ namespace
         // SetSlotColour runs inside this native call. Discard any stale object
         // left by an interrupted earlier playback before accepting the new one.
         g_pendingRespawnObject = 0;
+        g_pendingRespawnColour = -1;
         const int result = g_playbackUnit(self, packet);
         const uint32_t object = g_pendingRespawnObject;
+        const int colour = g_pendingRespawnColour;
         g_pendingRespawnObject = 0;
-        if (object && g_game.unitManager && *g_game.unitManager)
+        g_pendingRespawnColour = -1;
+        if (object && g_game.unitManager && *g_game.unitManager) {
+            g_localPlaybackContext = {};
+            g_localPlaybackContext.size = sizeof(g_localPlaybackContext);
+            g_localPlaybackContext.version = SDGO_ACE_AI_OBSERVER_VERSION;
+            g_localPlaybackContext.object_id = object;
+            g_localPlaybackContext.colour = colour >= 0 ?
+                static_cast<uint32_t>(colour) : 0xffffffffu;
+            g_localPlaybackContext.native_result =
+                static_cast<uint32_t>(result);
+            g_localPlaybackContext.active = 1;
             MissionRespawnComplete(*g_game.unitManager, object);
+            g_localPlaybackContext.active = 0;
+        }
         return result;
     }
     bool __fastcall IsPlayerObject(void* um, void*, uint32_t object)
@@ -693,6 +821,17 @@ namespace
     {
         g_observedMode = mode;
         g_observedWingmen.clear();
+        g_localPlaybackContext = {};
+        AcquireSRWLockExclusive(&g_playbackLock);
+        g_lastPlaybackObject = 0;
+        g_lastPlaybackGeneration = 0;
+        g_lastPlaybackPilot = 0;
+        g_lastPlaybackMachine = 0;
+        g_lastPlaybackSlot = -1;
+        g_lastPlaybackColour = 0;
+        g_lastPlaybackResult = 0;
+        g_lastPlaybackNameRefreshed = 0;
+        ReleaseSRWLockExclusive(&g_playbackLock);
         ResetBattleCounters();
         InterlockedIncrement(&g_battleGeneration);
         ResetStageWarpObserver(mode);
@@ -1305,11 +1444,13 @@ namespace
             observed.unitDataId = npc ?
                 *reinterpret_cast<const uint32_t*>(npc + 0x69) :
                 *reinterpret_cast<uint32_t*>(unit + kUnitNpcDataId);
+            observed.recordNpcId = npcData;
             g_observedWingmen.push_back(observed);
             ObservedWingman& stored = g_observedWingmen.back();
             ApplyAcePilotName(um, stored);
             stored.profileInitialized = InitializeBattleAiWingman(
-                unit, stored.effectiveDifficulty, true);
+                unit, stored.effectiveDifficulty, true,
+                &stored.profileGeneration);
             if (stored.ace) g_missionAcePending = true;
             g_api->Log(g_mod, SDGO_LOG_INFO, "AI participant %08lX joined as object %lu (NPC %lu, team %d, slot %d, %s)",
                        static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(record)),
@@ -1345,6 +1486,7 @@ namespace
             g_missionAceAnnounced = false;
             g_missionReadyReleased = false;
             g_pendingRespawnObject = 0;
+            g_pendingRespawnColour = -1;
             BeginMissionObservation(mode);
         }
         g_game.originalInit(mode);
@@ -1657,7 +1799,7 @@ namespace
                 if (!wingman.profileInitialized)
                     wingman.profileInitialized = InitializeBattleAiWingman(
                         wingman.spawnedUnit, wingman.effectiveDifficulty,
-                        wingman.profileInitial);
+                        wingman.profileInitial, &wingman.profileGeneration);
             }
         }
         if (g_missionReadyReleased)
@@ -1749,6 +1891,104 @@ namespace
         g_configChunk = chunk;
         return true;
     }
+
+    bool CopyAceMissionSnapshot(SdgoAceAiMissionClientSnapshotV1* output)
+    {
+        if (!output || output->size < sizeof(*output) ||
+            output->version != SDGO_ACE_AI_OBSERVER_VERSION)
+            return false;
+        SdgoAceAiMissionClientSnapshotV1 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        snapshot.battle_generation = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_battleGeneration, 0, 0));
+        AcquireSRWLockShared(&g_playbackLock);
+        snapshot.playback_sequence = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_playbackSequence, 0, 0));
+        snapshot.playback_object_id = g_lastPlaybackObject;
+        snapshot.playback_generation = g_lastPlaybackGeneration;
+        snapshot.playback_pilot_id = g_lastPlaybackPilot;
+        snapshot.playback_machine_id = g_lastPlaybackMachine;
+        snapshot.playback_slot = g_lastPlaybackSlot;
+        snapshot.playback_colour = g_lastPlaybackColour;
+        snapshot.playback_native_result = g_lastPlaybackResult;
+        snapshot.playback_name_refreshed = g_lastPlaybackNameRefreshed;
+        ReleaseSRWLockShared(&g_playbackLock);
+
+        if (!g_observedMode || !g_game.unitManager ||
+            !*g_game.unitManager || !ActiveMission(*g_game.unitManager))
+            return false;
+        void* unitManager = *g_game.unitManager;
+        uint8_t* room =
+            *reinterpret_cast<uint8_t**>(g_observedMode + kModeRoom);
+        uint8_t* records = room ?
+            *reinterpret_cast<uint8_t**>(room + kRoomAiBegin) : nullptr;
+        uint8_t* recordsEnd = room ?
+            *reinterpret_cast<uint8_t**>(room + kRoomAiEnd) : nullptr;
+        const size_t recordCount = records && recordsEnd >= records ?
+            static_cast<size_t>(recordsEnd - records) / kRecordSize : 0;
+        for (const ObservedWingman& wingman : g_observedWingmen) {
+            if (snapshot.unit_count >= 12 || wingman.slot < 0) continue;
+            SdgoAceAiClientUnitV1& copied =
+                snapshot.units[snapshot.unit_count++];
+            copied.pilot_id = wingman.pilotId;
+            copied.native_pilot_id = wingman.ace ?
+                wingman.pilotId & ~battle_ai::ace::kAceMetadataMask :
+                wingman.pilotId;
+            copied.object_id = wingman.objectId;
+            copied.npc_id = wingman.recordNpcId;
+            copied.generation = wingman.profileGeneration;
+            copied.slot = wingman.slot;
+            copied.base_difficulty = static_cast<uint8_t>(
+                battle_ai::ace::Index(wingman.baseDifficulty));
+            copied.effective_difficulty = static_cast<uint8_t>(
+                battle_ai::ace::Index(wingman.effectiveDifficulty));
+            copied.ace = wingman.ace ? 1 : 0;
+
+            uint8_t* unit = wingman.spawnedUnit;
+            if (g_game.findObject) {
+                auto* current = static_cast<uint8_t*>(
+                    g_game.findObject(unitManager, wingman.objectId));
+                if (current) unit = current;
+            }
+            if (unit &&
+                *reinterpret_cast<const uint32_t*>(unit + kUnitObjectId) ==
+                    wingman.objectId &&
+                *reinterpret_cast<const uint32_t*>(unit + kUnitServerId) ==
+                    wingman.pilotId) {
+                copied.active = 1;
+                copied.current_hp =
+                    *reinterpret_cast<const uint32_t*>(unit + kObjectHp);
+                copied.max_hp =
+                    *reinterpret_cast<const uint32_t*>(unit + kObjectMaxHp);
+                const int form =
+                    *reinterpret_cast<const int*>(unit + kUnitDeckIndex);
+                copied.form = form >= 0 && form < 4 ? form : -1;
+                const uint8_t* npc =
+                    *reinterpret_cast<const uint8_t* const*>(
+                        unit + kUnitNpcData);
+                copied.machine_id = npc ?
+                    *reinterpret_cast<const uint32_t*>(npc + 0x69) : 0;
+                copied.team = unit[kUnitTeam];
+            } else {
+                copied.form = -1;
+            }
+            if (records && wingman.recordIndex < recordCount)
+                copied.colour =
+                    records[wingman.recordIndex * kRecordSize + kRecordTeam];
+            if (!wingman.acePilotName.empty())
+                wcsncpy_s(copied.expected_name,
+                          wingman.acePilotName.c_str(), _TRUNCATE);
+            uint8_t* slot = g_game.playerSlot(unitManager, wingman.slot);
+            copied.slot_name_valid = slot && CopyOldWString(
+                slot + kSlotName, copied.slot_name,
+                _countof(copied.slot_name)) ? 1 : 0;
+            copied.name_matches = copied.ace && copied.slot_name_valid &&
+                !wcscmp(copied.slot_name, copied.expected_name) ? 1 : 0;
+        }
+        *output = snapshot;
+        return true;
+    }
 }
 
 static void* g_deadListResume = nullptr;
@@ -1794,6 +2034,37 @@ SdgoMissionAiClientGetSnapshotV1(
 {
     __try {
         return CopyObserverSnapshot(snapshot) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMissionAiGetAceSnapshotV1(
+    SdgoAceAiMissionClientSnapshotV1* snapshot)
+{
+    __try {
+        return CopyAceMissionSnapshot(snapshot) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMissionAiGetAnnouncementSnapshotV1(
+    SdgoAceAiAnnouncementSnapshotV1* output)
+{
+    __try {
+        if (!output || output->size < sizeof(*output) ||
+            output->version != SDGO_ACE_AI_OBSERVER_VERSION)
+            return 0;
+        AcquireSRWLockShared(&g_aceAnnouncementLock);
+        const SdgoAceAiAnnouncementSnapshotV1 snapshot =
+            g_aceAnnouncementSnapshot;
+        ReleaseSRWLockShared(&g_aceAnnouncementLock);
+        if (!snapshot.sequence) return 0;
+        *output = snapshot;
+        return 1;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
     }
@@ -1876,7 +2147,10 @@ SDGO_MOD_ENTRY
                 GetProcAddress(
                     match,
                     SDGO_MATCH_AI_MISSION_TICK_EXPORT));
-        if (!share || !g_matchAiMissionTick ||
+        g_matchPlaybackContext =
+            reinterpret_cast<MatchPlaybackContextFn>(GetProcAddress(
+                match, SDGO_ACE_AI_MATCH_PLAYBACK_CONTEXT_EXPORT));
+        if (!share || !g_matchAiMissionTick || !g_matchPlaybackContext ||
             !share(reinterpret_cast<const SdgoMissionClientLifecycleV1*>(&lifecycle))) {
             api->Log(mod, SDGO_LOG_ERROR, "matching match_ai lifecycle bridge is required; update both Mods");
             return 0;

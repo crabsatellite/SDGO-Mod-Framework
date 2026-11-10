@@ -43,6 +43,7 @@
 #include "sdgo/room_titles_lookup.h"
 #include "sdgo/ai_scoring.h"
 #include "sdgo/pvp_ai_observer.h"
+#include "sdgo/ace_ai_observer.h"
 
 #include "sdgo/ai_catalog_provider.h"
 #include "sdgo/room_commands.h"
@@ -764,6 +765,7 @@ namespace
         uint32_t acePilotIds[kSlots];
         battle_ai::ace::Outcome aceOutcomes[kSlots];
         items::BotKey bots[kSlots];
+        SdgoAceAiDamageDecisionV1 aceDamage{};
     };
 
     CRITICAL_SECTION g_itemsLock;
@@ -772,6 +774,37 @@ namespace
     RoomItems g_itemRooms[kTrackedRooms] = {};
     uint32_t g_roomGeneration = 0;
     volatile LONG g_damageReceipt = 0;
+    volatile LONG g_aceDamageSequence = 0;
+
+    using CompleteMissionAceDamageFn = int(__cdecl*)(
+        uint8_t*, uint32_t, uint8_t*, uint32_t, uint32_t, uint32_t,
+        uint32_t);
+    thread_local HMODULE g_coopAceDamageModule = nullptr;
+    thread_local CompleteMissionAceDamageFn g_completeMissionAceDamage = nullptr;
+
+    void CompleteMissionAceDamage(
+        uint8_t* room, uint32_t attackerSlot, uint8_t* attackerPilot,
+        uint32_t proposedDamage, uint32_t adjustedDamage,
+        uint32_t attackType, uint32_t nativeResult)
+    {
+        HMODULE module = GetModuleHandleW(L"coop_ai.dll");
+        if (module != g_coopAceDamageModule) {
+            g_coopAceDamageModule = module;
+            g_completeMissionAceDamage = nullptr;
+        }
+        if (module && !g_completeMissionAceDamage)
+            g_completeMissionAceDamage =
+                reinterpret_cast<CompleteMissionAceDamageFn>(GetProcAddress(
+                    module, "SdgoCoopAiCompleteAceDamageV1"));
+        if (!g_completeMissionAceDamage) return;
+        __try {
+            g_completeMissionAceDamage(
+                room, attackerSlot, attackerPilot, proposedDamage,
+                adjustedDamage, attackType, nativeResult);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_completeMissionAceDamage = nullptr;
+        }
+    }
 
     void* PilotRoomMap()
     {
@@ -1027,6 +1060,130 @@ namespace
         uint8_t* pilot = room + kPilots + slot * kPilotStride;
         uint8_t* unit = pilot + kPilotUnits + pilot[kPilotForm] * kUnitStride;
         return *reinterpret_cast<uint32_t*>(unit + kUnitMachineId);
+    }
+
+    bool CopyPvpAceSnapshot(SdgoAceAiServerSnapshotV1* output)
+    {
+        if (!output || output->size < sizeof(*output) ||
+            output->version != SDGO_ACE_AI_OBSERVER_VERSION ||
+            !output->room_cookie)
+            return false;
+
+        uint8_t* const room = reinterpret_cast<uint8_t*>(
+            static_cast<uintptr_t>(output->room_cookie));
+        RoomItems tracked{};
+        bool found = false;
+        EnterCriticalSection(&g_itemsLock);
+        for (const RoomItems& state : g_itemRooms) {
+            if (state.active && state.room == room) {
+                tracked = state;
+                found = true;
+                break;
+            }
+        }
+        LeaveCriticalSection(&g_itemsLock);
+        if (!found || !tracked.generation || !IsPvpMode(room[kRoomMode]) ||
+            *reinterpret_cast<uint32_t*>(room + kRoomIndex) != tracked.roomIndex)
+            return false;
+
+        SdgoAceAiServerSnapshotV1 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        snapshot.room_cookie = output->room_cookie;
+        snapshot.mode = room[kRoomMode];
+        snapshot.generation = tracked.generation;
+        snapshot.damage = tracked.aceDamage;
+        for (int slot = 0; slot < kSlots; ++slot) {
+            const uint32_t pilotId = tracked.acePilotIds[slot];
+            if (!pilotId || SlotPilotId(room, slot) != pilotId ||
+                snapshot.unit_count >= kSlots)
+                continue;
+            uint8_t* const pilot = room + kPilots + slot * kPilotStride;
+            if (*reinterpret_cast<uint32_t*>(pilot) != pilotId ||
+                pilot[kPilotForm] >= kDeckUnits)
+                continue;
+            const int form = pilot[kPilotForm];
+            uint8_t* const unit =
+                pilot + kPilotUnits + form * kUnitStride;
+            const uint32_t npcId = *reinterpret_cast<uint32_t*>(unit);
+            if (!npcId) continue;
+            const battle_ai::ace::Outcome& outcome =
+                tracked.aceOutcomes[slot];
+            SdgoAceAiServerUnitV1& copied =
+                snapshot.units[snapshot.unit_count++];
+            copied.pilot_id = pilotId;
+            copied.native_pilot_id = *reinterpret_cast<uint32_t*>(pilot);
+            copied.npc_id = npcId;
+            copied.machine_id =
+                *reinterpret_cast<uint32_t*>(unit + kUnitMachineId);
+            copied.generation = tracked.generation;
+            copied.current_hp =
+                *reinterpret_cast<uint32_t*>(unit + kUnitHp);
+            copied.max_hp =
+                *reinterpret_cast<uint32_t*>(unit + kUnitMaxHp);
+            copied.hp_percent = static_cast<uint32_t>(outcome.hpPercent);
+            copied.attack_percent =
+                static_cast<uint32_t>(outcome.attackPercent);
+            copied.slot = slot;
+            copied.form = form;
+            copied.base_difficulty = static_cast<uint8_t>(
+                battle_ai::ace::Index(outcome.base));
+            copied.effective_difficulty = static_cast<uint8_t>(
+                battle_ai::ace::Index(outcome.effective));
+            copied.ace = outcome.ace ? 1 : 0;
+            copied.team = SlotTeam(room, slot);
+            copied.colour = room[
+                kSlotInfo + slot * kSlotInfoStride + kSlotInfoColour];
+            copied.active = copied.current_hp ? 1 : 0;
+        }
+
+        EnterCriticalSection(&g_itemsLock);
+        RoomItems* const current =
+            FindRoomItems(room, tracked.roomIndex);
+        const bool unchanged = current &&
+            current->generation == tracked.generation;
+        LeaveCriticalSection(&g_itemsLock);
+        if (!unchanged) return false;
+        *output = snapshot;
+        return true;
+    }
+
+    void RecordPvpAceDamage(
+        uint8_t* room, int slot, uint32_t attackerPilotId,
+        uint32_t nativePilotId, const battle_ai::ace::Outcome& outcome,
+        uint32_t proposedDamage, uint32_t adjustedDamage,
+        uint32_t attackType, uint32_t nativeResult)
+    {
+        if (!room || slot < 0 || slot >= kSlots) return;
+        const uint32_t roomIndex =
+            *reinterpret_cast<uint32_t*>(room + kRoomIndex);
+        const uint32_t slotPilotId = SlotPilotId(room, slot);
+        EnterCriticalSection(&g_itemsLock);
+        RoomItems* const state = FindRoomItems(room, roomIndex);
+        if (state && state->acePilotIds[slot] == attackerPilotId &&
+            slotPilotId == attackerPilotId) {
+            LONG sequence = InterlockedIncrement(&g_aceDamageSequence);
+            if (!sequence) sequence =
+                InterlockedIncrement(&g_aceDamageSequence);
+            SdgoAceAiDamageDecisionV1 receipt{};
+            receipt.sequence = static_cast<uint32_t>(sequence);
+            receipt.room_cookie = static_cast<uint32_t>(
+                reinterpret_cast<uintptr_t>(room));
+            receipt.generation = state->generation;
+            receipt.attacker_pilot_id = attackerPilotId;
+            receipt.native_pilot_id = nativePilotId;
+            receipt.attack_type = attackType;
+            receipt.proposed_damage = proposedDamage;
+            receipt.adjusted_damage = adjustedDamage;
+            receipt.native_result = nativeResult;
+            receipt.attack_percent = static_cast<uint32_t>(
+                outcome.attackPercent);
+            receipt.source = SDGO_ACE_AI_SERVER_PVP;
+            receipt.ace = outcome.ace ? 1 : 0;
+            receipt.policy_matched = 1;
+            state->aceDamage = receipt;
+        }
+        LeaveCriticalSection(&g_itemsLock);
     }
 
     void ApplyAceStats(uint8_t* room, int slot)
@@ -2013,6 +2170,8 @@ namespace
         uint8_t calculationFlag, uint32_t extra, uint8_t part,
         uint32_t attackType)
     {
+        const uint32_t originalProposedDamage = proposedDamage;
+        bool missionDecision = false;
         int targetSlot = -1;
         uint32_t hpBefore = 0;
         uint8_t* targetUnit = nullptr;
@@ -2030,23 +2189,39 @@ namespace
                     proposedDamage = mission->accepted_damage(
                         room, attackerSlot, attackerPilot, proposedDamage,
                         attackType);
+                    missionDecision = true;
                 } __except (EXCEPTION_EXECUTE_HANDLER) {
                 }
             }
         }
-        if (room && attackerPilot && attackType == 0) {
-            const uint32_t attackerId = *reinterpret_cast<uint32_t*>(attackerPilot);
-            const int aceSlot = FindPilotSlot(room, attackerId);
-            battle_ai::ace::Outcome outcome{};
-            int percent = 100;
-            if (CopyAceOutcome(room, aceSlot, attackerId, &outcome) && outcome.ace)
-                percent = outcome.attackPercent;
-            proposedDamage = battle_ai::ace::Scale(proposedDamage, percent);
+        bool pvpPolicyMatched = false;
+        int aceSlot = -1;
+        uint32_t attackerId = 0;
+        uint32_t nativePilotId = 0;
+        battle_ai::ace::Outcome outcome{};
+        if (room && attackerPilot) {
+            attackerId = *reinterpret_cast<uint32_t*>(attackerPilot);
+            nativePilotId = attackerId;
+            aceSlot = FindPilotSlot(room, attackerId);
+            pvpPolicyMatched =
+                CopyAceOutcome(room, aceSlot, attackerId, &outcome);
+            if (pvpPolicyMatched && outcome.ace && attackType == 0)
+                proposedDamage = battle_ai::ace::Scale(
+                    proposedDamage, outcome.attackPercent);
         }
+        const uint32_t adjustedDamage = proposedDamage;
         uint32_t result =
             g_damage(room, now, attackerSlot, attackerPilot, weapon, targetState,
-                     targetPilotId, proposedDamage, stun, calculationFlag,
+                     targetPilotId, adjustedDamage, stun, calculationFlag,
                      extra, part, attackType);
+        if (missionDecision)
+            CompleteMissionAceDamage(
+                room, attackerSlot, attackerPilot, originalProposedDamage,
+                adjustedDamage, attackType, result);
+        if (pvpPolicyMatched)
+            RecordPvpAceDamage(
+                room, aceSlot, attackerId, nativePilotId, outcome,
+                originalProposedDamage, adjustedDamage, attackType, result);
         if (targetUnit) {
             uint32_t hpAfter =
                 *reinterpret_cast<uint32_t*>(targetUnit + kUnitHp);
@@ -2275,6 +2450,16 @@ namespace
     {
         out = reinterpret_cast<Fn>(g_api->Symbol(g_mod, symbol));
         return out != nullptr;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoPvpAiGetAceSnapshotV1(SdgoAceAiServerSnapshotV1* output)
+{
+    __try {
+        return CopyPvpAceSnapshot(output) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
     }
 }
 

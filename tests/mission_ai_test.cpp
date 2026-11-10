@@ -29,6 +29,7 @@ int aceNameCalls = 0;
 bool appendSuccess = true;
 int lineCtors = 0, lineDtors = 0, appendCalls = 0;
 std::wstring appendedText;
+SdgoAceAiMissionPlaybackContextV1 playbackContext{};
 
 uint8_t* __cdecl App() { return app.data(); }
 bool __cdecl Network() { return true; }
@@ -66,6 +67,15 @@ void __fastcall Assign(void* target, void*, const wchar_t* text, size_t length) 
     for (int slot = 0; slot < 12; ++slot) {
         if (target == playerSlots[slot].data() + kSlotName) {
             slotNames[slot].assign(text, length);
+            auto* value = static_cast<uint8_t*>(target);
+            std::memset(value, 0, 0x18);
+            CHECK(length <= kOldStringInlineCapacity);
+            if (length <= kOldStringInlineCapacity)
+                std::memcpy(value, text, length * sizeof(wchar_t));
+            Put<uint32_t>(value, kOldStringSize,
+                          static_cast<uint32_t>(length));
+            Put<uint32_t>(value, kOldStringCapacity,
+                          static_cast<uint32_t>(kOldStringInlineCapacity));
             return;
         }
     }
@@ -81,6 +91,14 @@ void* __fastcall Find(void*, void*, uint32_t object) {
 void __fastcall Init(uint8_t*, void*) { ++initialized; }
 void __fastcall Update(void*, void*) {}
 int __cdecl MatchTick(uint8_t*) { return 1; }
+int __cdecl MatchPlaybackContext(
+    SdgoAceAiMissionPlaybackContextV1* output) {
+    if (!output || output->size < sizeof(*output) ||
+        output->version != SDGO_ACE_AI_OBSERVER_VERSION ||
+        !playbackContext.active) return 0;
+    *output = playbackContext;
+    return 1;
+}
 int __cdecl BeginProfiles(uint32_t generation) {
     beginGenerations.push_back(generation); profileEvents.push_back("begin"); return 1;
 }
@@ -158,6 +176,9 @@ void Reset(int h, int a, bool master) {
     g_gameApp = &App;
     g_originalUpdate = reinterpret_cast<MissionUpdateFn>(&Update);
     g_matchAiMissionTick = nullptr;
+    g_matchPlaybackContext = nullptr;
+    playbackContext = {};
+    g_localPlaybackContext = {};
     g_battleAiModule = nullptr; g_battleAiBeginBattle = &BeginProfiles; g_battleAiInitializeUnit = &InitProfile;
     g_aceAiModule = nullptr; g_acePilotName = &AceName;
     g_lineCtor = reinterpret_cast<NativeStepFn>(&LineCtor);
@@ -166,6 +187,10 @@ void Reset(int h, int a, bool master) {
     g_appendLine = reinterpret_cast<AppendLineFn>(&Append);
     g_nextProfileGeneration = 0; g_profileBattleBegun = false;
     g_missionAcePending = false; g_missionAceAnnounced = false; g_missionReadyReleased = false;
+    g_aceAnnouncementSnapshot = {};
+    InterlockedExchange(&g_aceAnnouncementSequence, 0);
+    InterlockedExchange(&g_aceAnnouncementCount, 0);
+    InterlockedExchange(&g_playbackSequence, 0);
     g_pendingRespawnObject = 0; g_observedWingmen.clear(); g_observedMode = nullptr;
     g_wingmen.clear(); g_localWingmen.clear(); g_disabled = false;
 }
@@ -239,11 +264,53 @@ int main() {
     const uint32_t pilot = g_observedWingmen[0].pilotId;
     CHECK(MissionObjectForPilot(um, pilot) == 1001);
     slotNames[1] = L"机体一";
+    Put<uint32_t>(units[0].data(), kObjectHp, 960u);
+    Put<uint32_t>(units[0].data(), kObjectMaxHp, 1200u);
+    Put<int>(units[0].data(), kUnitDeckIndex, 0);
+    playbackContext = {sizeof(playbackContext),
+        SDGO_ACE_AI_OBSERVER_VERSION, 1001u, 2u, 17u, 1u};
+    g_matchPlaybackContext = &MatchPlaybackContext;
     MissionRespawnComplete(um, 1001);
+    playbackContext.active = 0;
     CHECK(slotNames[1] == L"王牌甲" && aceNameCalls == 2);
     CHECK(profileCalls.size() == 2);
     CHECK(profileCalls[1].flags == static_cast<int>(battle_ai::Difficulty::Hard));
     CHECK(profileCalls[1].generation != profileCalls[0].generation);
+    SdgoAceAiMissionClientSnapshotV1 aceSnapshot{
+        sizeof(aceSnapshot), SDGO_ACE_AI_OBSERVER_VERSION};
+    CHECK(SdgoMissionAiGetAceSnapshotV1(&aceSnapshot) == 1);
+    CHECK(aceSnapshot.unit_count == 1 &&
+          aceSnapshot.units[0].pilot_id == pilot &&
+          aceSnapshot.units[0].native_pilot_id == 0x80000010u &&
+          aceSnapshot.units[0].object_id == 1001u &&
+          aceSnapshot.units[0].npc_id == 5001u &&
+          aceSnapshot.units[0].machine_id == 70001u &&
+          aceSnapshot.units[0].generation == profileCalls[1].generation &&
+          aceSnapshot.units[0].current_hp == 960u &&
+          aceSnapshot.units[0].max_hp == 1200u &&
+          aceSnapshot.units[0].slot == 1 &&
+          aceSnapshot.units[0].form == 0 &&
+          aceSnapshot.units[0].base_difficulty == 1 &&
+          aceSnapshot.units[0].effective_difficulty == 2 &&
+          aceSnapshot.units[0].ace == 1 &&
+          aceSnapshot.units[0].team == 1 &&
+          aceSnapshot.units[0].colour == 1 &&
+          aceSnapshot.units[0].active == 1 &&
+          aceSnapshot.units[0].slot_name_valid == 1 &&
+          aceSnapshot.units[0].name_matches == 1 &&
+          !wcscmp(aceSnapshot.units[0].expected_name, L"王牌甲") &&
+          !wcscmp(aceSnapshot.units[0].slot_name, L"王牌甲"));
+    CHECK(aceSnapshot.playback_sequence == 1 &&
+          aceSnapshot.playback_object_id == 1001u &&
+          aceSnapshot.playback_generation == profileCalls[1].generation &&
+          aceSnapshot.playback_pilot_id == pilot &&
+          aceSnapshot.playback_machine_id == 70001u &&
+          aceSnapshot.playback_slot == 1 &&
+          aceSnapshot.playback_colour == 2u &&
+          aceSnapshot.playback_native_result == 17u &&
+          aceSnapshot.playback_name_refreshed == 1);
+    aceSnapshot.size = sizeof(aceSnapshot) - 1;
+    CHECK(SdgoMissionAiGetAceSnapshotV1(&aceSnapshot) == 0);
     Put(units[0].data(), kObjectHp, uint32_t{0});
     g_disabled = true;
     MissionUpdate(mode.data(), nullptr);
@@ -272,6 +339,10 @@ int main() {
     Reset(1, 1, true); SetAceRecord(0); MissionInit(mode.data(), nullptr);
     CHECK(g_missionAcePending && !g_missionAceAnnounced);
     CHECK(MissionReady(mode.data()) == 0 && appendCalls == 0); // state 2
+    SdgoAceAiAnnouncementSnapshotV1 missionAnnouncement{
+        sizeof(missionAnnouncement), SDGO_ACE_AI_OBSERVER_VERSION};
+    CHECK(SdgoMissionAiGetAnnouncementSnapshotV1(
+              &missionAnnouncement) == 0);
     Put(service.data(), 0x3C, uint32_t{3});
     g_matchAiMissionTick = &MatchTick; g_disabled = true;
     MissionUpdate(mode.data(), nullptr);
@@ -286,6 +357,18 @@ int main() {
     CHECK(appendedText == L"我方出现了王牌驾驶员！");
     CHECK(g_missionAceAnnounced && !g_missionAcePending && appendCalls == 2);
     CHECK(lineCtors == 2 && lineDtors == 2);
+    missionAnnouncement = {
+        sizeof(missionAnnouncement), SDGO_ACE_AI_OBSERVER_VERSION};
+    CHECK(SdgoMissionAiGetAnnouncementSnapshotV1(
+              &missionAnnouncement) == 1);
+    CHECK(missionAnnouncement.sequence == 1 &&
+          missionAnnouncement.source == SDGO_ACE_AI_ANNOUNCEMENT_MISSION &&
+          missionAnnouncement.colour == 0 &&
+          missionAnnouncement.feed_count_before == 0 &&
+          missionAnnouncement.feed_count_after == 1 &&
+          missionAnnouncement.successful_count == 1 &&
+          !wcscmp(missionAnnouncement.text,
+                  L"我方出现了王牌驾驶员！"));
     CHECK(MissionReady(mode.data()) == 1 && appendCalls == 2);
 
     SCENARIO("every local mission audience receives the same fixed message once per new battle");

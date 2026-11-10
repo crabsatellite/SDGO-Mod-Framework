@@ -174,6 +174,9 @@ void Reset(int mode = 1) {
     g_itemController = {};
     std::memset(g_itemRooms, 0, sizeof(g_itemRooms));
     g_roomGeneration = 0;
+    InterlockedExchange(&g_aceDamageSequence, 0);
+    g_coopAceDamageModule = nullptr;
+    g_completeMissionAceDamage = nullptr;
     nextId = kAiPilotBit | 100;
     g_settings.logRoom = 0;
     g_random = 1234567;
@@ -323,6 +326,49 @@ int wmain(int argc,wchar_t** argv) {
     CHECK((SlotPilotId(room.data(), 6) & battle_ai::ace::kAcePilotBit) == 0);
     ApplyAceStats(room.data(), 6);
     CHECK(Get<uint32_t>(Unit(6), kUnitMaxHp) == 15000);
+    std::memset(weapon, 0, sizeof(weapon));
+    CHECK(AcceptedDamage(room.data(), nullptr, 3, 6, Pilot(6), weapon, 0,
+                         10, 500, 0, 0, 0, 0, 0) == 500);
+    SdgoAceAiServerSnapshotV1 pvpSnapshot{};
+    pvpSnapshot.size = sizeof(pvpSnapshot);
+    pvpSnapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+    pvpSnapshot.room_cookie = static_cast<uint32_t>(
+        reinterpret_cast<uintptr_t>(room.data()));
+    CHECK(SdgoPvpAiGetAceSnapshotV1(&pvpSnapshot) == 1);
+    CHECK(pvpSnapshot.mode == 1 && pvpSnapshot.generation != 0 &&
+          pvpSnapshot.unit_count == 1);
+    CHECK(pvpSnapshot.units[0].pilot_id == SlotPilotId(room.data(), 6) &&
+          pvpSnapshot.units[0].native_pilot_id ==
+              ai_test::Get<uint32_t>(Pilot(6), 0) &&
+          pvpSnapshot.units[0].npc_id == 100 &&
+          pvpSnapshot.units[0].machine_id == MachineForNpc(100) &&
+          pvpSnapshot.units[0].slot == 6 && pvpSnapshot.units[0].form == 0 &&
+          pvpSnapshot.units[0].base_difficulty == 2 &&
+          pvpSnapshot.units[0].effective_difficulty == 2 &&
+          pvpSnapshot.units[0].ace == 0 &&
+          pvpSnapshot.units[0].hp_percent == 100 &&
+          pvpSnapshot.units[0].attack_percent == 100 &&
+          pvpSnapshot.units[0].active == 1);
+    CHECK(pvpSnapshot.damage.sequence != 0 &&
+          pvpSnapshot.damage.source == SDGO_ACE_AI_SERVER_PVP &&
+          pvpSnapshot.damage.ace == 0 &&
+          pvpSnapshot.damage.policy_matched == 1 &&
+          pvpSnapshot.damage.proposed_damage == 500 &&
+          pvpSnapshot.damage.adjusted_damage == 500 &&
+          pvpSnapshot.damage.native_result == 500 &&
+          pvpSnapshot.damage.attack_percent == 100);
+    const uint32_t ordinaryReceipt = pvpSnapshot.damage.sequence;
+    pvpSnapshot.size = sizeof(pvpSnapshot) - 1;
+    CHECK(SdgoPvpAiGetAceSnapshotV1(&pvpSnapshot) == 0);
+    pvpSnapshot.size = sizeof(pvpSnapshot);
+    pvpSnapshot.version = SDGO_ACE_AI_OBSERVER_VERSION + 1;
+    CHECK(SdgoPvpAiGetAceSnapshotV1(&pvpSnapshot) == 0);
+    pvpSnapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+    pvpSnapshot.room_cookie = 0x1234;
+    CHECK(SdgoPvpAiGetAceSnapshotV1(&pvpSnapshot) == 0);
+    CHECK(SdgoPvpAiGetAceSnapshotV1(
+              reinterpret_cast<SdgoAceAiServerSnapshotV1*>(1)) == 0);
+    CHECK(ordinaryReceipt != 0);
     Reset();
     Title("!ai hard");
     for (size_t i = 0; i < std::size(g_itemRooms); ++i) {
@@ -399,9 +445,50 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(AcceptedDamage(room.data(), nullptr, 7, 6, Pilot(6), weapon, 0,
                          10, 1000, 0, 0, 0, 0, 0) == 1500);
     CHECK(proposedDamageSeen == 1500 && attackTypeSeen == 0);
+    pvpSnapshot = {};
+    pvpSnapshot.size = sizeof(pvpSnapshot);
+    pvpSnapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+    pvpSnapshot.room_cookie = static_cast<uint32_t>(
+        reinterpret_cast<uintptr_t>(room.data()));
+    CHECK(SdgoPvpAiGetAceSnapshotV1(&pvpSnapshot) == 1);
+    CHECK(pvpSnapshot.damage.source == SDGO_ACE_AI_SERVER_PVP &&
+          pvpSnapshot.damage.ace == 1 &&
+          pvpSnapshot.damage.policy_matched == 1 &&
+          pvpSnapshot.damage.attack_type == 0 &&
+          pvpSnapshot.damage.proposed_damage == 1000 &&
+          pvpSnapshot.damage.adjusted_damage == 1500 &&
+          pvpSnapshot.damage.native_result == 1500 &&
+          pvpSnapshot.damage.attack_percent == 150);
+    const uint32_t ordinaryAceReceipt = pvpSnapshot.damage.sequence;
     CHECK(AcceptedDamage(room.data(), nullptr, 8, 6, Pilot(6), weapon, 0,
                          10, 1000, 0, 0, 0, 0, 1) == 1000);
     CHECK(proposedDamageSeen == 1000 && attackTypeSeen == 1);
+    pvpSnapshot = {};
+    pvpSnapshot.size = sizeof(pvpSnapshot);
+    pvpSnapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+    pvpSnapshot.room_cookie = static_cast<uint32_t>(
+        reinterpret_cast<uintptr_t>(room.data()));
+    Pilot(6)[kPilotForm] = 1;
+    CHECK(SdgoPvpAiGetAceSnapshotV1(&pvpSnapshot) == 1);
+    CHECK(pvpSnapshot.damage.sequence > ordinaryAceReceipt &&
+          pvpSnapshot.damage.attack_type == 1 &&
+          pvpSnapshot.damage.proposed_damage == 1000 &&
+          pvpSnapshot.damage.adjusted_damage == 1000 &&
+          pvpSnapshot.damage.native_result == 1000 &&
+          pvpSnapshot.damage.attack_percent == 150);
+    CHECK(pvpSnapshot.unit_count == 1 &&
+          pvpSnapshot.units[0].form == 1 &&
+          pvpSnapshot.units[0].npc_id ==
+              ai_test::Get<uint32_t>(Unit(6, 1), 0) &&
+          pvpSnapshot.units[0].machine_id ==
+              ai_test::Get<uint32_t>(Unit(6, 1), kUnitMachineId) &&
+          pvpSnapshot.units[0].npc_id != pvpSnapshot.units[0].machine_id &&
+          pvpSnapshot.units[0].current_hp == 18000 &&
+          pvpSnapshot.units[0].max_hp == 18000 &&
+          pvpSnapshot.units[0].hp_percent == 120 &&
+          pvpSnapshot.units[0].attack_percent == 150 &&
+          pvpSnapshot.units[0].ace == 1);
+    Pilot(6)[kPilotForm] = 0;
     Put<uint32_t>(Unit(6), kUnitHp, 0);
     RespawnAiPilots(room.data(), 100);
     CHECK(SlotPilotId(room.data(), 6) == hardAceId);
@@ -412,6 +499,21 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(respawned.ace && respawned.hpPercent == 120 && respawned.attackPercent == 150);
     ApplyAceStats(room.data(), 6);
     CHECK(Get<uint32_t>(Unit(6), kUnitMaxHp) == 18000);
+    pvpSnapshot = {};
+    pvpSnapshot.size = sizeof(pvpSnapshot);
+    pvpSnapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+    pvpSnapshot.room_cookie = static_cast<uint32_t>(
+        reinterpret_cast<uintptr_t>(room.data()));
+    CHECK(SdgoPvpAiGetAceSnapshotV1(&pvpSnapshot) == 1 &&
+          pvpSnapshot.units[0].current_hp == 9000 &&
+          pvpSnapshot.units[0].active == 1);
+    EndRoomItems(room.data());
+    pvpSnapshot = {};
+    pvpSnapshot.size = sizeof(pvpSnapshot);
+    pvpSnapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+    pvpSnapshot.room_cookie = static_cast<uint32_t>(
+        reinterpret_cast<uintptr_t>(room.data()));
+    CHECK(SdgoPvpAiGetAceSnapshotV1(&pvpSnapshot) == 0);
 
     SCENARIO("optional post-build server bridge is absent-safe and covers initial and deck builds");
     namespace fs=std::filesystem;

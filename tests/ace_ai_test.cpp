@@ -55,6 +55,9 @@ void Reset() {
     raiseStage = 0;
     appendSuccess = false;
     appendedText.clear();
+    g_announcement = {};
+    InterlockedExchange(&g_announcementSequence, 0);
+    InterlockedExchange(&g_announcementCount, 0);
     g_active = true;
     g_app = &App;
     g_lineCtor = reinterpret_cast<StepFn>(&LineCtor);
@@ -69,6 +72,9 @@ int main() {
     SCENARIO("native feed append must be observed before provider reports success");
     Reset();
     CHECK(SdgoAceAiAnnounceTeamV1(mode.data(), 1) == 0);
+    SdgoAceAiAnnouncementSnapshotV1 announcement{
+        sizeof(announcement), SDGO_ACE_AI_OBSERVER_VERSION};
+    CHECK(SdgoAceAiGetAnnouncementSnapshotV1(&announcement) == 0);
     CHECK(appendCalls == 1 && lineCtors == 1 && lineDtors == 1);
     CHECK(ai_test::Get<uint32_t>(service.data(), 0x98) == 0);
     CHECK(appendedText == L"红队出现了王牌驾驶员！");
@@ -76,6 +82,19 @@ int main() {
     CHECK(SdgoAceAiAnnounceTeamV1(mode.data(), 1) == 1);
     CHECK(appendCalls == 2 && lineCtors == 2 && lineDtors == 2);
     CHECK(ai_test::Get<uint32_t>(service.data(), 0x98) == 1);
+    announcement = {sizeof(announcement), SDGO_ACE_AI_OBSERVER_VERSION};
+    CHECK(SdgoAceAiGetAnnouncementSnapshotV1(&announcement) == 1);
+    CHECK(announcement.sequence == 1 &&
+          announcement.source == SDGO_ACE_AI_ANNOUNCEMENT_PVP &&
+          announcement.colour == 1 && announcement.feed_count_before == 0 &&
+          announcement.feed_count_after == 1 &&
+          announcement.successful_count == 1 &&
+          !wcscmp(announcement.text, L"红队出现了王牌驾驶员！"));
+    announcement.size = sizeof(announcement) - 1;
+    CHECK(SdgoAceAiGetAnnouncementSnapshotV1(&announcement) == 0);
+    announcement.size = sizeof(announcement);
+    announcement.version = SDGO_ACE_AI_OBSERVER_VERSION + 1;
+    CHECK(SdgoAceAiGetAnnouncementSnapshotV1(&announcement) == 0);
 
     SCENARIO("displayed colour selects the fixed blue notice");
     Reset(); appendSuccess = true;

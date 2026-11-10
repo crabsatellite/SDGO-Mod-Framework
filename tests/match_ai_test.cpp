@@ -108,7 +108,17 @@ uint8_t* __fastcall Slot(void*, void*, int slot) {
     CHECK(slot >= 0 && slot < 12);
     return slot >= 0 && slot < 12 ? slots[slot].data() : nullptr;
 }
-void __fastcall Assign(void*, void*, const wchar_t*, size_t) {}
+void __fastcall Assign(void* target, void*, const wchar_t* text, size_t length) {
+    auto* value = static_cast<uint8_t*>(target);
+    std::memset(value, 0, 0x18);
+    CHECK(length <= kObserverOldStringInlineCapacity);
+    if (length <= kObserverOldStringInlineCapacity)
+        std::memcpy(value, text, length * sizeof(wchar_t));
+    Put<uint32_t>(value, kObserverOldStringSize,
+                  static_cast<uint32_t>(length));
+    Put<uint32_t>(value, kObserverOldStringCapacity,
+                  static_cast<uint32_t>(kObserverOldStringInlineCapacity));
+}
 void __fastcall AddAi(void*, void*, uint8_t*) {}
 void __fastcall Calculate(void*, void*) { ++calculated; }
 void __fastcall Count(void*, void*, int count) { playerCount = count; }
@@ -434,6 +444,8 @@ bool missionReadySawRelease = false;
 int missionRespawnCalls = 0;
 void* missionRespawnUm = nullptr;
 uint32_t missionRespawnObject = 0;
+SdgoAceAiMissionPlaybackContextV1 missionPlaybackSeen{};
+int missionPlaybackQueryResult = 0;
 uint32_t __cdecl MissionObjectForPilot(void*, uint32_t pilot) {
     return pilot == (kAiPilotBit | 77u) ? 1001u : 0u;
 }
@@ -445,6 +457,10 @@ void __cdecl MissionRespawnComplete(void* managerValue, uint32_t object) {
     ++missionRespawnCalls;
     missionRespawnUm = managerValue;
     missionRespawnObject = object;
+    missionPlaybackSeen = {
+        sizeof(missionPlaybackSeen), SDGO_ACE_AI_OBSERVER_VERSION};
+    missionPlaybackQueryResult =
+        SdgoMatchAiGetMissionPlaybackContextV1(&missionPlaybackSeen);
 }
 int __cdecl MissionReady(uint8_t* readyMode) {
     ++missionReadyCalls;
@@ -548,6 +564,9 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     g_botTable.clear(); g_botMode = nullptr; g_cameraAim = {}; g_soloAiMode = nullptr;
     g_missionLifecycle = nullptr;
     g_missionRespawnPending.clear();
+    g_missionPlaybackContext = {};
+    missionPlaybackSeen = {};
+    missionPlaybackQueryResult = 0;
     g_missionReadyMode = nullptr;
     g_missionReadyComplete = false;
     missionReadyCalls = 0;
@@ -692,6 +711,16 @@ int main() {
     CHECK(PlaybackUnit(nullptr, nullptr, nullptr) == 17);
     CHECK(g_missionRespawnPending.empty() && missionRespawnCalls == 1 &&
           missionRespawnUm == um && missionRespawnObject == 1001u);
+    CHECK(missionPlaybackQueryResult == 1 &&
+          missionPlaybackSeen.active == 1 &&
+          missionPlaybackSeen.object_id == 1001u &&
+          missionPlaybackSeen.colour == 2u &&
+          missionPlaybackSeen.native_result == 17u);
+    SdgoAceAiMissionPlaybackContextV1 inactivePlayback{
+        sizeof(inactivePlayback), SDGO_ACE_AI_OBSERVER_VERSION};
+    CHECK(SdgoMatchAiGetMissionPlaybackContextV1(&inactivePlayback) == 0);
+    inactivePlayback.size = sizeof(inactivePlayback) - 1;
+    CHECK(SdgoMatchAiGetMissionPlaybackContextV1(&inactivePlayback) == 0);
     missionReadySucceedsAfter = 2;
     nativeReadyState = 3;
     GameReady(service.data(), nullptr);
@@ -808,6 +837,54 @@ int main() {
     Spawn(0, 1, 11, 3); CHECK(g_botTable.size() == 1 && playerCount == 12);
     Reset(); Records(1, 2); network = false; SpawnAiPlayers(mode.data(), "offline"); CHECK(created == 0);
     Reset(); Records(1, 0); SpawnAiPlayers(mode.data(), "none"); CHECK(g_botTable.empty());
+
+    SCENARIO("Ace client snapshot reads native selected form, canonical machine and actual slot record");
+    Spawn(0, 1, 1, 1);
+    auto& aceBot = g_botTable[0];
+    const uint32_t nativePilot = aceBot.pilotId;
+    const uint32_t acePilot = nativePilot |
+        battle_ai::ace::kAcePilotBit |
+        (static_cast<uint32_t>(battle_ai::Difficulty::Hard) << 28);
+    aceBot.pilotId = acePilot;
+    aceBot.ace = true;
+    aceBot.effectiveDifficulty = battle_ai::Difficulty::Hard;
+    aceBot.generation = 77;
+    aceBot.acePilotName = L"王牌甲";
+    Put<uint32_t>(aceBot.unit, kUnitServerId, acePilot);
+    Put<int>(aceBot.unit, kUnitDeckIndex, 0);
+    Put<uint32_t>(aceBot.unit, 0x38, 960u);
+    Put<uint32_t>(aceBot.unit, 0x3C, 1200u);
+    auto* aceRecord = Get<uint8_t*>(slots[aceBot.slot].data(), kSlotRecord);
+    Put<uint32_t>(aceRecord, kRecordServerId, acePilot);
+    aceRecord[kRecordTeam] = 1;
+    aceRecord[kRecordColour] = 2;
+    Assign(slots[aceBot.slot].data() + kSlotName, nullptr,
+           L"王牌甲", 3);
+    SdgoAceAiPvpClientSnapshotV1 aceSnapshot{
+        sizeof(aceSnapshot), SDGO_ACE_AI_OBSERVER_VERSION};
+    CHECK(SdgoMatchAiGetAceSnapshotV1(&aceSnapshot) == 1);
+    CHECK(aceSnapshot.unit_count == 1 &&
+          aceSnapshot.units[0].pilot_id == acePilot &&
+          aceSnapshot.units[0].native_pilot_id == nativePilot &&
+          aceSnapshot.units[0].object_id == aceBot.objectId &&
+          aceSnapshot.units[0].npc_id == aceBot.deckNpc[0] &&
+          aceSnapshot.units[0].machine_id == 2000u &&
+          aceSnapshot.units[0].generation == 77u &&
+          aceSnapshot.units[0].current_hp == 960u &&
+          aceSnapshot.units[0].max_hp == 1200u &&
+          aceSnapshot.units[0].slot == aceBot.slot &&
+          aceSnapshot.units[0].form == 0 &&
+          aceSnapshot.units[0].effective_difficulty == 2 &&
+          aceSnapshot.units[0].ace == 1 &&
+          aceSnapshot.units[0].team == 1 &&
+          aceSnapshot.units[0].colour == 2 &&
+          aceSnapshot.units[0].active == 1 &&
+          aceSnapshot.units[0].slot_name_valid == 1 &&
+          aceSnapshot.units[0].name_matches == 1 &&
+          !wcscmp(aceSnapshot.units[0].expected_name, L"王牌甲") &&
+          !wcscmp(aceSnapshot.units[0].slot_name, L"王牌甲"));
+    aceSnapshot.size = sizeof(aceSnapshot) - 1;
+    CHECK(SdgoMatchAiGetAceSnapshotV1(&aceSnapshot) == 0);
 
     SCENARIO("seven enemies cycle native map start points without changing UM slots or colours");
     for(int points:{1,2,4,6})for(bool remote:{false,true}) {

@@ -96,6 +96,7 @@ extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterMissionV1(
 #include "sdgo/ai_scoring.h"
 #include "sdgo/mission_ai_forced_pad_observer.h"
 #include "sdgo/pvp_ai_client_observer.h"
+#include "sdgo/ace_ai_observer.h"
 #include "forced_pad_observer.h"
 #include "transform_notice.h"
 #include "gate_status_observer.h"
@@ -313,8 +314,13 @@ namespace
     UnitMessageFn g_originalUnitNetworkMessage=nullptr,g_unitCombatEvent=nullptr;
     struct TransformConfirmation {bool active=false;uint32_t pilot=0,object=0,target=0;};
     thread_local TransformConfirmation g_transformConfirmation{};
-    struct MissionRespawnPending { void* unitManager = nullptr; uint32_t objectId = 0; };
+    struct MissionRespawnPending {
+        void* unitManager = nullptr;
+        uint32_t objectId = 0;
+        int colour = -1;
+    };
     thread_local std::vector<MissionRespawnPending> g_missionRespawnPending;
+    thread_local SdgoAceAiMissionPlaybackContextV1 g_missionPlaybackContext{};
     uint8_t* g_missionReadyMode = nullptr;
     bool g_missionReadyComplete = false;
     HMODULE g_battleAiModule = nullptr;
@@ -3036,11 +3042,21 @@ namespace
             const MissionRespawnPending pending = g_missionRespawnPending.front();
             g_missionRespawnPending.erase(g_missionRespawnPending.begin());
             if (const auto* mission = MissionClientLifecycleV2()) {
+                g_missionPlaybackContext = {};
+                g_missionPlaybackContext.size = sizeof(g_missionPlaybackContext);
+                g_missionPlaybackContext.version = SDGO_ACE_AI_OBSERVER_VERSION;
+                g_missionPlaybackContext.object_id = pending.objectId;
+                g_missionPlaybackContext.colour = pending.colour >= 0 ?
+                    static_cast<uint32_t>(pending.colour) : 0xffffffffu;
+                g_missionPlaybackContext.native_result =
+                    static_cast<uint32_t>(result);
+                g_missionPlaybackContext.active = 1;
                 __try {
                     mission->respawn_complete(
                         pending.unitManager, pending.objectId);
                 } __except (EXCEPTION_EXECUTE_HANDLER) {
                 }
+                g_missionPlaybackContext.active = 0;
             }
         }
         return result;
@@ -3054,7 +3070,7 @@ namespace
                 g_missionLifecycle->slot_for_object(um, objectId) : -1;
             if (missionSlot >= 0) {
                 if (MissionClientLifecycleV2())
-                    g_missionRespawnPending.push_back({um, objectId});
+                    g_missionRespawnPending.push_back({um, objectId, colour});
                 g_originalSetSlotColour(um, missionSlot, colour);
                 return;
             }

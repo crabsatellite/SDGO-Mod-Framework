@@ -35,6 +35,7 @@
 #include "sdgo/room_commands.h"
 #include "sdgo/ai_catalog_provider.h"
 #include "sdgo/mission_ai_lifecycle.h"
+#include "sdgo/ace_ai_observer.h"
 #include "../battle_ai/ace_policy.h"
 #include "../battle_ai/difficulty.h"
 
@@ -131,12 +132,28 @@ namespace
         uint32_t generation = 0;
         std::array<uint32_t, kSlots> pilots{};
         std::array<MissionAceSlot, kSlots> ace{};
+        SdgoAceAiDamageDecisionV1 damage{};
     };
     SRWLOCK g_livesLock = SRWLOCK_INIT;
     std::map<uint8_t*, MissionLives> g_lives;
     battle_ai::ace::Settings g_aceSettings{};
     bool g_reloadAceSettingsAtBattleEntry = true;
     uint32_t g_nextBattleGeneration = 0;
+    volatile LONG g_aceDamageSequence = 0;
+    struct MissionDamagePending {
+        bool valid = false;
+        uint8_t* room = nullptr;
+        uint8_t* attackerPilot = nullptr;
+        uint32_t attackerSlot = 0;
+        uint32_t generation = 0;
+        uint32_t pilotId = 0;
+        uint32_t nativePilotId = 0;
+        uint32_t proposedDamage = 0;
+        uint32_t adjustedDamage = 0;
+        uint32_t attackType = 0;
+        battle_ai::ace::Outcome outcome{};
+    };
+    thread_local MissionDamagePending g_pendingAceDamage{};
     // Only our own native respawn call may bypass the mission quota. Never
     // change death statistics, mission data, room mode or human life counts.
     thread_local uint8_t* g_infinitePilot = nullptr;
@@ -155,6 +172,132 @@ namespace
     {
         if (++g_nextBattleGeneration == 0) ++g_nextBattleGeneration;
         return g_nextBattleGeneration;
+    }
+
+    bool CopyMissionAceSnapshot(SdgoAceAiServerSnapshotV1* output)
+    {
+        if (!output || output->size < sizeof(*output) ||
+            output->version != SDGO_ACE_AI_OBSERVER_VERSION ||
+            !output->room_cookie)
+            return false;
+        uint8_t* const room = reinterpret_cast<uint8_t*>(
+            static_cast<uintptr_t>(output->room_cookie));
+        MissionLives lives{};
+        if (!CopyLives(room, &lives) || !lives.generation ||
+            !IsMissionMode(room[kRoomMode]))
+            return false;
+
+        SdgoAceAiServerSnapshotV1 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        snapshot.room_cookie = output->room_cookie;
+        snapshot.mode = room[kRoomMode];
+        snapshot.generation = lives.generation;
+        snapshot.damage = lives.damage;
+        for (int slot = 0; slot < kSlots; ++slot) {
+            const uint32_t pilotId = lives.pilots[slot];
+            if (!pilotId || SlotPilotId(room, slot) != pilotId ||
+                snapshot.unit_count >= kSlots)
+                continue;
+            uint8_t* const pilot = room + kPilots + slot * kPilotStride;
+            if (*reinterpret_cast<uint32_t*>(pilot) != pilotId ||
+                pilot[kPilotForm] >= kMaxUnitForms)
+                continue;
+            const int form = pilot[kPilotForm];
+            uint8_t* const unit =
+                pilot + kPilotUnits + form * kUnitStride;
+            const uint32_t npcId = *reinterpret_cast<uint32_t*>(unit);
+            if (!npcId) continue;
+            const MissionAceSlot& ace = lives.ace[slot];
+            SdgoAceAiServerUnitV1& copied =
+                snapshot.units[snapshot.unit_count++];
+            copied.pilot_id = pilotId;
+            copied.native_pilot_id = *reinterpret_cast<uint32_t*>(pilot);
+            copied.npc_id = npcId;
+            copied.machine_id =
+                *reinterpret_cast<uint32_t*>(unit + kUnitDataId);
+            copied.generation = lives.generation;
+            copied.current_hp =
+                *reinterpret_cast<uint32_t*>(unit + kUnitHp);
+            copied.max_hp =
+                *reinterpret_cast<uint32_t*>(unit + kUnitMaxHp);
+            copied.hp_percent = static_cast<uint32_t>(
+                ace.outcome.hpPercent);
+            copied.attack_percent = static_cast<uint32_t>(
+                ace.outcome.attackPercent);
+            copied.slot = slot;
+            copied.form = form;
+            copied.base_difficulty = static_cast<uint8_t>(
+                battle_ai::ace::Index(ace.outcome.base));
+            copied.effective_difficulty = static_cast<uint8_t>(
+                battle_ai::ace::Index(ace.outcome.effective));
+            copied.ace = ace.outcome.ace ? 1 : 0;
+            copied.team = pilot[0x04];
+            copied.colour = room[
+                kSlotInfo + slot * kSlotInfoStride + kSlotInfoTeamB];
+            copied.active = copied.current_hp ? 1 : 0;
+        }
+
+        AcquireSRWLockShared(&g_livesLock);
+        const auto current = g_lives.find(room);
+        const bool unchanged = current != g_lives.end() &&
+            current->second.generation == lives.generation;
+        ReleaseSRWLockShared(&g_livesLock);
+        if (!unchanged) return false;
+        *output = snapshot;
+        return true;
+    }
+
+    bool CompleteMissionAceDamage(
+        uint8_t* room, uint32_t attackerSlot, uint8_t* attackerPilot,
+        uint32_t proposedDamage, uint32_t adjustedDamage,
+        uint32_t attackType, uint32_t nativeResult)
+    {
+        const MissionDamagePending pending = g_pendingAceDamage;
+        g_pendingAceDamage = {};
+        if (!pending.valid || pending.room != room ||
+            pending.attackerSlot != attackerSlot ||
+            pending.attackerPilot != attackerPilot ||
+            pending.proposedDamage != proposedDamage ||
+            pending.adjustedDamage != adjustedDamage ||
+            pending.attackType != attackType)
+            return false;
+
+        if (!room || attackerSlot >= kSlots ||
+            SlotPilotId(room, static_cast<int>(attackerSlot)) !=
+                pending.pilotId)
+            return false;
+        bool published = false;
+        AcquireSRWLockExclusive(&g_livesLock);
+        const auto current = g_lives.find(room);
+        if (current != g_lives.end() &&
+            current->second.generation == pending.generation &&
+            current->second.pilots[attackerSlot] == pending.pilotId &&
+            current->second.ace[attackerSlot].pilotId == pending.pilotId) {
+            LONG sequence = InterlockedIncrement(&g_aceDamageSequence);
+            if (!sequence) sequence =
+                InterlockedIncrement(&g_aceDamageSequence);
+            SdgoAceAiDamageDecisionV1 receipt{};
+            receipt.sequence = static_cast<uint32_t>(sequence);
+            receipt.room_cookie = static_cast<uint32_t>(
+                reinterpret_cast<uintptr_t>(room));
+            receipt.generation = pending.generation;
+            receipt.attacker_pilot_id = pending.pilotId;
+            receipt.native_pilot_id = pending.nativePilotId;
+            receipt.attack_type = attackType;
+            receipt.proposed_damage = proposedDamage;
+            receipt.adjusted_damage = adjustedDamage;
+            receipt.native_result = nativeResult;
+            receipt.attack_percent = static_cast<uint32_t>(
+                pending.outcome.attackPercent);
+            receipt.source = SDGO_ACE_AI_SERVER_MISSION;
+            receipt.ace = pending.outcome.ace ? 1 : 0;
+            receipt.policy_matched = 1;
+            current->second.damage = receipt;
+            published = true;
+        }
+        ReleaseSRWLockExclusive(&g_livesLock);
+        return published;
     }
 
     battle_ai::ace::Outcome OrdinaryOutcome(battle_ai::Difficulty base)
@@ -246,22 +389,43 @@ namespace
         uint8_t* room, uint32_t attackerSlot, uint8_t* attackerPilot,
         uint32_t proposedDamage, uint32_t attackType)
     {
-        if (!room || !attackerPilot || attackerSlot >= kSlots || attackType != 0 ||
+        g_pendingAceDamage = {};
+        if (!room || !attackerPilot || attackerSlot >= kSlots ||
             !IsMissionMode(room[kRoomMode])) return proposedDamage;
         MissionLives lives;
         if (!CopyLives(room, &lives)) return proposedDamage;
         const uint32_t id = lives.pilots[attackerSlot];
         const MissionAceSlot& ace = lives.ace[attackerSlot];
-        uint8_t* const expectedPilot = room + kPilots + attackerSlot * kPilotStride;
-        uint8_t* const info = room + kSlotInfo + attackerSlot * kSlotInfoStride;
+        uint8_t* const expectedPilot =
+            room + kPilots + attackerSlot * kPilotStride;
+        uint8_t* const info =
+            room + kSlotInfo + attackerSlot * kSlotInfoStride;
         if (!id || attackerPilot != expectedPilot || ace.pilotId != id ||
             SlotPilotId(room, static_cast<int>(attackerSlot)) != id ||
             *reinterpret_cast<uint32_t*>(expectedPilot) != id ||
-            expectedPilot[0x04] != kHumanTeam || expectedPilot[0x39] != kHumanTeam ||
-            info[kSlotInfoTeamA] != kHumanTeam || info[kSlotInfoTeamB] != kHumanTeam ||
-            !ace.outcome.ace)
+            expectedPilot[0x04] != kHumanTeam ||
+            expectedPilot[0x39] != kHumanTeam ||
+            info[kSlotInfoTeamA] != kHumanTeam ||
+            info[kSlotInfoTeamB] != kHumanTeam)
             return proposedDamage;
-        return battle_ai::ace::Scale(proposedDamage, ace.outcome.attackPercent);
+        const uint32_t adjustedDamage =
+            ace.outcome.ace && attackType == 0 ?
+                battle_ai::ace::Scale(
+                    proposedDamage, ace.outcome.attackPercent) :
+                proposedDamage;
+        g_pendingAceDamage.valid = true;
+        g_pendingAceDamage.room = room;
+        g_pendingAceDamage.attackerPilot = attackerPilot;
+        g_pendingAceDamage.attackerSlot = attackerSlot;
+        g_pendingAceDamage.generation = lives.generation;
+        g_pendingAceDamage.pilotId = id;
+        g_pendingAceDamage.nativePilotId =
+            *reinterpret_cast<uint32_t*>(expectedPilot);
+        g_pendingAceDamage.proposedDamage = proposedDamage;
+        g_pendingAceDamage.adjustedDamage = adjustedDamage;
+        g_pendingAceDamage.attackType = attackType;
+        g_pendingAceDamage.outcome = ace.outcome;
+        return adjustedDamage;
     }
 
     // -1: another room keeps its native scan; 0: humans exhausted; 1: a human
@@ -359,11 +523,17 @@ namespace
         uint8_t calculationFlag, uint32_t extra, uint8_t part,
         uint32_t attackType)
     {
+        const uint32_t originalProposedDamage = proposedDamage;
         proposedDamage = MissionAcceptedDamage(
             room, attackerSlot, attackerPilot, proposedDamage, attackType);
-        return g_damage(room, now, attackerSlot, attackerPilot, weapon, targetState,
-                        targetPilotId, proposedDamage, stun, calculationFlag,
-                        extra, part, attackType);
+        const uint32_t result = g_damage(
+            room, now, attackerSlot, attackerPilot, weapon, targetState,
+            targetPilotId, proposedDamage, stun, calculationFlag, extra, part,
+            attackType);
+        CompleteMissionAceDamage(
+            room, attackerSlot, attackerPilot, originalProposedDamage,
+            proposedDamage, attackType, result);
+        return result;
     }
 
     struct Settings
@@ -783,6 +953,32 @@ namespace
     {
         out = reinterpret_cast<Fn>(g_api->Symbol(g_mod, symbol));
         return out != nullptr;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoCoopAiGetAceSnapshotV1(SdgoAceAiServerSnapshotV1* output)
+{
+    __try {
+        return CopyMissionAceSnapshot(output) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoCoopAiCompleteAceDamageV1(
+    uint8_t* room, uint32_t attackerSlot, uint8_t* attackerPilot,
+    uint32_t proposedDamage, uint32_t adjustedDamage,
+    uint32_t attackType, uint32_t nativeResult)
+{
+    __try {
+        return CompleteMissionAceDamage(
+            room, attackerSlot, attackerPilot, proposedDamage,
+            adjustedDamage, attackType, nativeResult) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_pendingAceDamage = {};
+        return 0;
     }
 }
 

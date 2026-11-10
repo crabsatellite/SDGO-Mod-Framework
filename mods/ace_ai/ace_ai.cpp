@@ -3,6 +3,7 @@
 #include <cstring>
 #include <string>
 #include "sdgo/sdgo_api.h"
+#include "sdgo/ace_ai_observer.h"
 #include "pilot_catalog.h"
 
 namespace {
@@ -19,6 +20,29 @@ StepFn g_lineCtor = nullptr;
 StepFn g_lineDtor = nullptr;
 StringCtorFn g_stringCtor = nullptr;
 AppendLineFn g_appendLine = nullptr;
+SdgoAceAiAnnouncementSnapshotV1 g_announcement{};
+SRWLOCK g_announcementLock = SRWLOCK_INIT;
+volatile LONG g_announcementSequence = 0;
+volatile LONG g_announcementCount = 0;
+
+void PublishAnnouncement(uint32_t colour, uint32_t before, uint32_t after,
+                         const wchar_t* text) {
+    SdgoAceAiAnnouncementSnapshotV1 receipt{};
+    receipt.size = sizeof(receipt);
+    receipt.version = SDGO_ACE_AI_OBSERVER_VERSION;
+    receipt.sequence = static_cast<uint32_t>(
+        InterlockedIncrement(&g_announcementSequence));
+    receipt.source = SDGO_ACE_AI_ANNOUNCEMENT_PVP;
+    receipt.colour = colour;
+    receipt.feed_count_before = before;
+    receipt.feed_count_after = after;
+    receipt.successful_count = static_cast<uint32_t>(
+        InterlockedIncrement(&g_announcementCount));
+    wcsncpy_s(receipt.text, text, _TRUNCATE);
+    AcquireSRWLockExclusive(&g_announcementLock);
+    g_announcement = receipt;
+    ReleaseSRWLockExclusive(&g_announcementLock);
+}
 
 template<class T> bool Bind(T& value, const char* symbol) {
     value = reinterpret_cast<T>(g_api->Symbol(g_mod, symbol));
@@ -56,6 +80,7 @@ bool AppendAnnouncement(uint8_t* mode, uint32_t colour) {
     } __finally {
         if (constructed) g_lineDtor(record);
     }
+    if (appended) PublishAnnouncement(colour, before, before + 1, line);
     return appended;
 }
 }
@@ -78,6 +103,18 @@ extern "C" __declspec(dllexport) int __cdecl SdgoAceAiAnnounceTeamV1(
     uint8_t* mode, uint32_t colour) {
     __try { return AppendAnnouncement(mode, colour) ? 1 : 0; }
     __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoAceAiGetAnnouncementSnapshotV1(SdgoAceAiAnnouncementSnapshotV1* output) {
+    if (!output || output->size < sizeof(*output) ||
+        output->version != SDGO_ACE_AI_OBSERVER_VERSION) return 0;
+    AcquireSRWLockShared(&g_announcementLock);
+    const SdgoAceAiAnnouncementSnapshotV1 snapshot = g_announcement;
+    ReleaseSRWLockShared(&g_announcementLock);
+    if (!snapshot.sequence) return 0;
+    *output = snapshot;
+    return 1;
 }
 
 SDGO_MOD_ENTRY
