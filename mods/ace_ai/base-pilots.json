@@ -393,8 +393,8 @@
     },
     {
       "unit_id": 10081,
-      "display_name": "联邦老兵",
-      "kind": "role"
+      "display_name": "塞西莉·菲亚查德",
+      "kind": "named"
     },
     {
       "unit_id": 10082,
@@ -673,8 +673,8 @@
     },
     {
       "unit_id": 10140,
-      "display_name": "联邦老兵",
-      "kind": "role"
+      "display_name": "多兹鲁·扎比",
+      "kind": "named"
     },
     {
       "unit_id": 10200,
@@ -718,13 +718,13 @@
     },
     {
       "unit_id": 10208,
-      "display_name": "联邦老兵",
-      "kind": "role"
+      "display_name": "德梅齐埃尔·索嫩",
+      "kind": "named"
     },
     {
       "unit_id": 10209,
-      "display_name": "联邦老兵",
-      "kind": "role"
+      "display_name": "德梅齐埃尔·索嫩",
+      "kind": "named"
     },
     {
       "unit_id": 10210,
@@ -813,13 +813,13 @@
     },
     {
       "unit_id": 10229,
-      "display_name": "联邦老兵",
-      "kind": "role"
+      "display_name": "克罗尼克·亚瑟",
+      "kind": "named"
     },
     {
       "unit_id": 10230,
-      "display_name": "联邦老兵",
-      "kind": "role"
+      "display_name": "克罗尼克·亚瑟",
+      "kind": "named"
     },
     {
       "unit_id": 10231,
@@ -913,13 +913,13 @@
     },
     {
       "unit_id": 10249,
-      "display_name": "新吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "弗尔·伏朗托",
+      "kind": "named"
     },
     {
       "unit_id": 10250,
-      "display_name": "新吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "弗尔·伏朗托",
+      "kind": "named"
     },
     {
       "unit_id": 10251,
@@ -963,8 +963,8 @@
     },
     {
       "unit_id": 11002,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "爱娜·萨哈林",
+      "kind": "named"
     },
     {
       "unit_id": 11003,
@@ -978,8 +978,8 @@
     },
     {
       "unit_id": 11005,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "多兹鲁·扎比",
+      "kind": "named"
     },
     {
       "unit_id": 11006,
@@ -998,8 +998,8 @@
     },
     {
       "unit_id": 11009,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "米哈伊尔·卡明斯基",
+      "kind": "named"
     },
     {
       "unit_id": 11010,
@@ -1033,8 +1033,8 @@
     },
     {
       "unit_id": 11016,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "尼姆巴斯·修塔森",
+      "kind": "named"
     },
     {
       "unit_id": 11017,
@@ -1043,23 +1043,23 @@
     },
     {
       "unit_id": 11018,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "夏亚·阿兹纳布尔",
+      "kind": "named"
     },
     {
       "unit_id": 11019,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "夏亚·阿兹纳布尔",
+      "kind": "named"
     },
     {
       "unit_id": 11020,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "阿纳贝尔·卡多",
+      "kind": "named"
     },
     {
       "unit_id": 11021,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "马·克贝",
+      "kind": "named"
     },
     {
       "unit_id": 11022,
@@ -1088,8 +1088,8 @@
     },
     {
       "unit_id": 11027,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "米哈伊尔·卡明斯基",
+      "kind": "named"
     },
     {
       "unit_id": 11028,
@@ -1143,8 +1143,8 @@
     },
     {
       "unit_id": 11039,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "拉拉·辛",
+      "kind": "named"
     },
     {
       "unit_id": 11040,
@@ -1153,8 +1153,8 @@
     },
     {
       "unit_id": 11041,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "凯利·雷兹纳",
+      "kind": "named"
     },
     {
       "unit_id": 11043,
@@ -1168,8 +1168,8 @@
     },
     {
       "unit_id": 11045,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "阿纳贝尔·卡多",
+      "kind": "named"
     },
     {
       "unit_id": 11046,
@@ -1223,8 +1223,8 @@
     },
     {
       "unit_id": 11057,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "夏亚·阿兹纳布尔",
+      "kind": "named"
     },
     {
       "unit_id": 11059,
@@ -1238,8 +1238,8 @@
     },
     {
       "unit_id": 11061,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "爱娜·萨哈林",
+      "kind": "named"
     },
     {
       "unit_id": 11062,
@@ -1273,13 +1273,13 @@
     },
     {
       "unit_id": 11069,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "阿纳贝尔·卡多",
+      "kind": "named"
     },
     {
       "unit_id": 11070,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "阿纳贝尔·卡多",
+      "kind": "named"
     },
     {
       "unit_id": 11071,
@@ -1413,13 +1413,13 @@
     },
     {
       "unit_id": 11097,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "罗妮·贾维",
+      "kind": "named"
     },
     {
       "unit_id": 11098,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "罗妮·贾维",
+      "kind": "named"
     },
     {
       "unit_id": 11099,
@@ -1698,13 +1698,13 @@
     },
     {
       "unit_id": 13009,
-      "display_name": "提坦斯王牌驾驶员",
-      "kind": "role"
+      "display_name": "布兰·布鲁塔克",
+      "kind": "named"
     },
     {
       "unit_id": 13010,
-      "display_name": "提坦斯王牌驾驶员",
-      "kind": "role"
+      "display_name": "布兰·布鲁塔克",
+      "kind": "named"
     },
     {
       "unit_id": 13011,
@@ -1743,8 +1743,8 @@
     },
     {
       "unit_id": 13018,
-      "display_name": "提坦斯王牌驾驶员",
-      "kind": "role"
+      "display_name": "莱拉·米拉·莱拉",
+      "kind": "named"
     },
     {
       "unit_id": 13019,
@@ -1763,13 +1763,13 @@
     },
     {
       "unit_id": 13022,
-      "display_name": "提坦斯王牌驾驶员",
-      "kind": "role"
+      "display_name": "帕普提马斯·西洛克",
+      "kind": "named"
     },
     {
       "unit_id": 13023,
-      "display_name": "提坦斯王牌驾驶员",
-      "kind": "role"
+      "display_name": "帕普提马斯·西洛克",
+      "kind": "named"
     },
     {
       "unit_id": 13024,
@@ -1803,8 +1803,8 @@
     },
     {
       "unit_id": 13030,
-      "display_name": "提坦斯王牌驾驶员",
-      "kind": "role"
+      "display_name": "莱拉·米拉·莱拉",
+      "kind": "named"
     },
     {
       "unit_id": 13031,
@@ -1833,8 +1833,8 @@
     },
     {
       "unit_id": 13036,
-      "display_name": "提坦斯王牌驾驶员",
-      "kind": "role"
+      "display_name": "杰利特·梅萨",
+      "kind": "named"
     },
     {
       "unit_id": 13037,
@@ -1933,13 +1933,13 @@
     },
     {
       "unit_id": 14007,
-      "display_name": "新吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "伊莉亚·帕佐姆",
+      "kind": "named"
     },
     {
       "unit_id": 14008,
-      "display_name": "新吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "伊莉亚·帕佐姆",
+      "kind": "named"
     },
     {
       "unit_id": 14009,
@@ -2008,8 +2008,8 @@
     },
     {
       "unit_id": 14022,
-      "display_name": "新吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "嘉拉·松",
+      "kind": "named"
     },
     {
       "unit_id": 14023,
@@ -2018,13 +2018,13 @@
     },
     {
       "unit_id": 14024,
-      "display_name": "新吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "马士文·塞罗",
+      "kind": "named"
     },
     {
       "unit_id": 14025,
-      "display_name": "新吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "马士文·塞罗",
+      "kind": "named"
     },
     {
       "unit_id": 14026,
@@ -2063,13 +2063,13 @@
     },
     {
       "unit_id": 14033,
-      "display_name": "新吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "嘉拉·松",
+      "kind": "named"
     },
     {
       "unit_id": 14034,
-      "display_name": "新吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "嘉拉·松",
+      "kind": "named"
     },
     {
       "unit_id": 15001,
@@ -2143,13 +2143,13 @@
     },
     {
       "unit_id": 15015,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "欧尔加·萨布纳克",
+      "kind": "named"
     },
     {
       "unit_id": 15016,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "欧尔加·萨布纳克",
+      "kind": "named"
     },
     {
       "unit_id": 15017,
@@ -2168,28 +2168,28 @@
     },
     {
       "unit_id": 15021,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "罗·裘尔",
+      "kind": "named"
     },
     {
       "unit_id": 15022,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "克罗特·布埃尔",
+      "kind": "named"
     },
     {
       "unit_id": 15023,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "克罗特·布埃尔",
+      "kind": "named"
     },
     {
       "unit_id": 15024,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "普雷亚·雷腓力",
+      "kind": "named"
     },
     {
       "unit_id": 15025,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "普雷亚·雷腓力",
+      "kind": "named"
     },
     {
       "unit_id": 15026,
@@ -2203,8 +2203,8 @@
     },
     {
       "unit_id": 15029,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "夏尼·安德拉斯",
+      "kind": "named"
     },
     {
       "unit_id": 15031,
@@ -2248,8 +2248,8 @@
     },
     {
       "unit_id": 15040,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "丛云劾",
+      "kind": "named"
     },
     {
       "unit_id": 15041,
@@ -2278,8 +2278,8 @@
     },
     {
       "unit_id": 15047,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "爱德华·哈里逊",
+      "kind": "named"
     },
     {
       "unit_id": 15048,
@@ -2318,8 +2318,8 @@
     },
     {
       "unit_id": 15055,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "丛云劾",
+      "kind": "named"
     },
     {
       "unit_id": 15056,
@@ -2363,18 +2363,18 @@
     },
     {
       "unit_id": 15064,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "卢卡斯·奥唐纳",
+      "kind": "named"
     },
     {
       "unit_id": 15065,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "卢卡斯·奥唐纳",
+      "kind": "named"
     },
     {
       "unit_id": 15066,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "卢卡斯·奥唐纳",
+      "kind": "named"
     },
     {
       "unit_id": 15067,
@@ -2413,18 +2413,18 @@
     },
     {
       "unit_id": 15074,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "卡纳德·帕尔斯",
+      "kind": "named"
     },
     {
       "unit_id": 15075,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "卡纳德·帕尔斯",
+      "kind": "named"
     },
     {
       "unit_id": 15076,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "尼奥·罗阿诺克",
+      "kind": "named"
     },
     {
       "unit_id": 15077,
@@ -2573,8 +2573,8 @@
     },
     {
       "unit_id": 15109,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "爱德华·哈里逊",
+      "kind": "named"
     },
     {
       "unit_id": 15110,
@@ -2633,13 +2633,13 @@
     },
     {
       "unit_id": 15121,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "安德鲁·巴尔特菲尔德",
+      "kind": "named"
     },
     {
       "unit_id": 15122,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "安德鲁·巴尔特菲尔德",
+      "kind": "named"
     },
     {
       "unit_id": 16001,
@@ -2763,13 +2763,13 @@
     },
     {
       "unit_id": 16025,
-      "display_name": "扎夫特精英驾驶员",
-      "kind": "role"
+      "display_name": "阿斯兰·萨拉",
+      "kind": "named"
     },
     {
       "unit_id": 16026,
-      "display_name": "扎夫特精英驾驶员",
-      "kind": "role"
+      "display_name": "阿斯兰·萨拉",
+      "kind": "named"
     },
     {
       "unit_id": 16027,
@@ -2853,8 +2853,8 @@
     },
     {
       "unit_id": 16043,
-      "display_name": "扎夫特精英驾驶员",
-      "kind": "role"
+      "display_name": "米格尔·艾曼",
+      "kind": "named"
     },
     {
       "unit_id": 16044,
@@ -3208,8 +3208,8 @@
     },
     {
       "unit_id": 17055,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "乔治·迪·桑德",
+      "kind": "named"
     },
     {
       "unit_id": 17056,
@@ -3248,13 +3248,13 @@
     },
     {
       "unit_id": 17063,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "乔治·迪·桑德",
+      "kind": "named"
     },
     {
       "unit_id": 17064,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "乔治·迪·桑德",
+      "kind": "named"
     },
     {
       "unit_id": 17065,
@@ -3283,13 +3283,13 @@
     },
     {
       "unit_id": 17070,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "修巴兹·布鲁德",
+      "kind": "named"
     },
     {
       "unit_id": 17071,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "东方不败",
+      "kind": "named"
     },
     {
       "unit_id": 17072,
@@ -3323,13 +3323,13 @@
     },
     {
       "unit_id": 17078,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "修巴兹·布鲁德",
+      "kind": "named"
     },
     {
       "unit_id": 17079,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "修巴兹·布鲁德",
+      "kind": "named"
     },
     {
       "unit_id": 17080,
@@ -3808,13 +3808,13 @@
     },
     {
       "unit_id": 21034,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "卡罗佐·罗纳",
+      "kind": "named"
     },
     {
       "unit_id": 21035,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "卡罗佐·罗纳",
+      "kind": "named"
     },
     {
       "unit_id": 22001,
@@ -3878,8 +3878,8 @@
     },
     {
       "unit_id": 22013,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "刹那·F·清英",
+      "kind": "named"
     },
     {
       "unit_id": 22014,
@@ -3938,8 +3938,8 @@
     },
     {
       "unit_id": 22027,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "索玛·皮里斯",
+      "kind": "named"
     },
     {
       "unit_id": 22028,
@@ -3958,13 +3958,13 @@
     },
     {
       "unit_id": 22032,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "亚历杭德罗·科纳",
+      "kind": "named"
     },
     {
       "unit_id": 22034,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "亚历杭德罗·科纳",
+      "kind": "named"
     },
     {
       "unit_id": 22035,
@@ -3983,8 +3983,8 @@
     },
     {
       "unit_id": 22038,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "里朋斯·阿尔马克",
+      "kind": "named"
     },
     {
       "unit_id": 22039,
@@ -4043,8 +4043,8 @@
     },
     {
       "unit_id": 22050,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "刹那·F·清英",
+      "kind": "named"
     },
     {
       "unit_id": 22051,
@@ -4133,8 +4133,8 @@
     },
     {
       "unit_id": 22068,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "格拉汉姆·艾卡",
+      "kind": "named"
     },
     {
       "unit_id": 22069,
@@ -4148,8 +4148,8 @@
     },
     {
       "unit_id": 22071,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "希林·凯尔",
+      "kind": "named"
     },
     {
       "unit_id": 22072,
@@ -4233,13 +4233,13 @@
     },
     {
       "unit_id": 22088,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "阿纽·雷特纳",
+      "kind": "named"
     },
     {
       "unit_id": 22089,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "拉瑟·艾翁",
+      "kind": "named"
     },
     {
       "unit_id": 22090,
@@ -4383,8 +4383,8 @@
     },
     {
       "unit_id": 22118,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "洛克昂·史特拉托斯",
+      "kind": "named"
     },
     {
       "unit_id": 22119,
@@ -4423,23 +4423,23 @@
     },
     {
       "unit_id": 22127,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "刹那·F·清英",
+      "kind": "named"
     },
     {
       "unit_id": 22128,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "刹那·F·清英",
+      "kind": "named"
     },
     {
       "unit_id": 22129,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "笛卡尔·沙曼",
+      "kind": "named"
     },
     {
       "unit_id": 22130,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "笛卡尔·沙曼",
+      "kind": "named"
     },
     {
       "unit_id": 22131,
@@ -4463,13 +4463,13 @@
     },
     {
       "unit_id": 22135,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "刹那·F·清英",
+      "kind": "named"
     },
     {
       "unit_id": 22136,
-      "display_name": "联合国军精英驾驶员",
-      "kind": "role"
+      "display_name": "刹那·F·清英",
+      "kind": "named"
     },
     {
       "unit_id": 22137,
@@ -4588,13 +4588,13 @@
     },
     {
       "unit_id": 23010,
-      "display_name": "新联邦老兵",
-      "kind": "role"
+      "display_name": "卡洛德·兰",
+      "kind": "named"
     },
     {
       "unit_id": 23011,
-      "display_name": "新联邦老兵",
-      "kind": "role"
+      "display_name": "卡洛德·兰",
+      "kind": "named"
     },
     {
       "unit_id": 23012,
@@ -4608,13 +4608,13 @@
     },
     {
       "unit_id": 23014,
-      "display_name": "新联邦老兵",
-      "kind": "role"
+      "display_name": "威兹·苏",
+      "kind": "named"
     },
     {
       "unit_id": 23015,
-      "display_name": "新联邦老兵",
-      "kind": "role"
+      "display_name": "威兹·苏",
+      "kind": "named"
     },
     {
       "unit_id": 23016,
@@ -4828,13 +4828,13 @@
     },
     {
       "unit_id": 24203,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "哈利·奥德",
+      "kind": "named"
     },
     {
       "unit_id": 24204,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "波·艾吉",
+      "kind": "named"
     },
     {
       "unit_id": 24205,
@@ -5088,13 +5088,13 @@
     },
     {
       "unit_id": 24707,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "结城达也",
+      "kind": "named"
     },
     {
       "unit_id": 24708,
-      "display_name": "吉翁王牌驾驶员",
-      "kind": "role"
+      "display_name": "结城达也",
+      "kind": "named"
     },
     {
       "unit_id": 24709,
@@ -5158,13 +5158,13 @@
     },
     {
       "unit_id": 24723,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "矢坂真生",
+      "kind": "named"
     },
     {
       "unit_id": 24724,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "矢坂真生",
+      "kind": "named"
     },
     {
       "unit_id": 24725,
@@ -5213,18 +5213,18 @@
     },
     {
       "unit_id": 24734,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "里卡德·费里尼",
+      "kind": "named"
     },
     {
       "unit_id": 24740,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "夏亚·阿兹纳布尔",
+      "kind": "named"
     },
     {
       "unit_id": 24741,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "夏亚·阿兹纳布尔",
+      "kind": "named"
     },
     {
       "unit_id": 24742,
@@ -5263,13 +5263,13 @@
     },
     {
       "unit_id": 24753,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "龙·鲁兹",
+      "kind": "named"
     },
     {
       "unit_id": 24754,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "龙·鲁兹",
+      "kind": "named"
     },
     {
       "unit_id": 24785,
@@ -5283,13 +5283,13 @@
     },
     {
       "unit_id": 24787,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "基尼亚斯·萨哈林",
+      "kind": "named"
     },
     {
       "unit_id": 24788,
-      "display_name": "资深王牌驾驶员",
-      "kind": "role"
+      "display_name": "基尼亚斯·萨哈林",
+      "kind": "named"
     },
     {
       "unit_id": 24789,
