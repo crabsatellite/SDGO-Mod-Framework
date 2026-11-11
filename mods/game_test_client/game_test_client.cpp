@@ -5853,8 +5853,9 @@ int __cdecl ObserveThenCapture(const SdgoGameTestContextV1* context) {
         if(result!=SDGO_GAME_TEST_PASS)return result;
         nativeComplete=true;
     }
-    const unsigned target=current=="pages.unit_index.pose_ready" ? 3u:2u;
-    const uint64_t interval=current.find("pages.unit_index.pose_")==0 ? 350:800;
+    const bool battleClip=current=="pvp.ai_spawn" || current=="mission.combat";
+    const unsigned target=battleClip ? 24u:(current=="pages.unit_index.pose_ready" ? 3u:2u);
+    const uint64_t interval=battleClip ? 200:(current.find("pages.unit_index.pose_")==0 ? 350:800);
     if(frame==target)return SDGO_GAME_TEST_PASS;
     if(frame && context->elapsed_ms-capturedAt<interval)return SDGO_GAME_TEST_WAIT;
     if(!requested) {
@@ -5887,7 +5888,8 @@ void WrapNativeCaptures() {
     // a screenshot of an initialization state.
     for(auto& test:capturedCases)
         if(std::strncmp(test.id,"pages.",6)==0||
-           (std::strncmp(test.id,"pvp.",4)==0&&std::strstr(test.id,".ai_spawn")))test.poll=&ObserveThenCapture;
+           (std::strncmp(test.id,"pvp.",4)==0&&std::strstr(test.id,".ai_spawn")) ||
+           std::strcmp(test.id,"mission.combat")==0)test.poll=&ObserveThenCapture;
     provider.cases=capturedCases.data();
 }
 
