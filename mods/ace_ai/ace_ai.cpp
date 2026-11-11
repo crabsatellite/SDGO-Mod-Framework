@@ -38,6 +38,7 @@ uint32_t g_nameplateGeneration = 0;
 using InitUnitDataFn = void(__thiscall*)(uint8_t*,const void*,uint32_t);
 InitUnitDataFn g_originalInitUnitData = nullptr;
 SdgoAiStartUnitV1Fn g_startUnit = nullptr;
+uint32_t g_nativeMaximumCorrections = 0;
 
 bool NameplateMatches(const NameplateBinding& binding, const uint8_t* unit) {
     __try {
@@ -72,7 +73,12 @@ void RestoreAdvertisedMaximum(uint8_t* unit) {
             // InitUnitData restores a machine's original maximum on internal form
             // changes. The server-start value is authoritative; current HP is not
             // part of that packet and must remain exactly as the native path left it.
+            const uint32_t previous=*reinterpret_cast<uint32_t*>(unit+0x3C);
             *reinterpret_cast<uint32_t*>(unit+0x3C)=request.max_hp;
+            if(previous!=request.max_hp && ++g_nativeMaximumCorrections<=16 && g_api && g_api->Log)
+                g_api->Log(g_mod,SDGO_LOG_INFO,
+                    "native Ace form maximum restored: pilot=%08lX form=%ld old=%lu server=%lu",
+                    binding.pilot,form,previous,request.max_hp);
             return;
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
