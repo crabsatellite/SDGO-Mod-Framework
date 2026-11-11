@@ -44,12 +44,12 @@ namespace Sdgo.Shop
             Catalog=File.Exists(CatalogFile)?Model.Read<Catalog>(CatalogFile):Catalog.Empty();Model.Validate(Catalog);savedHash=Model.FileHash(CatalogFile);CaptureProducts();
         }
         public void Dispose() {lease.Dispose();}
-        public void Connect()
+        public void Connect(bool persistSettings=true)
         {
             Snapshot=null;Applied=new List<Applied>();
             IRepository repo=Demo?(IRepository)demoRepository:new SqlRepository(Settings.WorldDirectory);
             var snapshot=repo.Read();var applied=repo.ReadApplied(Catalog.catalog_id);Snapshot=snapshot;Applied=applied;
-            if(!Demo) Model.Save(Path.Combine(DirectoryPath,"owner-settings.json"),Settings);
+            if(!Demo&&persistSettings) Model.Save(Path.Combine(DirectoryPath,"owner-settings.json"),Settings);
         }
         public void RefreshApplied()
         {
@@ -176,7 +176,9 @@ namespace Sdgo.Shop
                 throw new InvalidOperationException("所选客户端没有安装显示补丁，请重新选择客户端，或清空客户端设置。");
             if(Demo)
             {
-                Applied=Catalog.products.Where(p=>!p.retired).Select(p=>new Applied {Id=p.product_id,Sku=p.item_id,Category=p.category_id,Price=p.price,Validity=p.validity,Currency=p.currency,Visible=p.enabled,Label=p.label,Name=p.name}).ToList();demoRepository.Applied=Applied;SaveDraft();return;
+                Applied=Catalog.products.Where(p=>!p.retired).Select(p=>new Applied {Id=p.product_id,Sku=p.item_id,Category=p.category_id,Price=p.price,Validity=p.validity,Currency=p.currency,Visible=p.enabled,Label=p.label,Name=p.name}).ToList();demoRepository.Applied=Applied;
+                Snapshot.ActiveProducts=Applied.Where(a=>a.Visible).Select(a=>new ActiveProduct {ProductId=a.Id,OptionId=a.Id,Category=a.Category,Validity=a.Validity}).ToList();
+                SaveDraft();return;
             }
             string helper=Path.Combine(ModDirectory,"shop_catalog_apply.exe");
             if(!File.Exists(helper)) throw new InvalidOperationException("所选 WorldServer 尚未安装商城 Mod，请先安装服务器组件。");
@@ -202,7 +204,7 @@ namespace Sdgo.Shop
                 if(displayDir!=null) Model.Atomic(Path.Combine(displayDir,"display.ini"),File.ReadAllBytes(Path.Combine(run,"runtime-display.ini")));
             }
             catch(Exception e) {throw new InvalidOperationException("服务器商品已应用，但本地配置/标签保存未完成。请保留并恢复记录目录："+run+"\r\n"+e.Message);}
-            RefreshApplied();
+            Connect(false);
         }
         public void Import(string file)
         {

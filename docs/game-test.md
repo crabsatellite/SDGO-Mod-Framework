@@ -402,6 +402,13 @@ For an imported unit, the Python `prepare` / `reuse_prepared` API accepts
 uses the original encyclopedia list, detail, alternate/base-form and close
 callbacks. It does not repeat storage claims or start a battle. Add
 `"portraits": True` to capture the model's actual wait/selection animations.
+For acquisition-text acceptance, GameTest client `0.1.34` also accepts
+`unit_scenario={"schema": 1, "presentation_target": <unit ID>, "detail_only": True}`
+with `pages_only=True` and an existing `play_unit_uid`. This sealed scope follows
+the normal login, onboarding, active-unit, encyclopedia-list, detail and close
+flow while excluding unrelated inventory and form transitions. Acceptance must
+come from that normal entry path; manually loaded or forced diagnostic layouts
+can localize a failure but cannot prove the current player-facing UI.
 An optional `"acquisition": {"kind": 1, "machine_id": ..., "unit_id": ...}`
 checks a fixed capsule candidate; kind `3` checks a custom candidate. These
 callbacks open the real model preview without buying or changing a selection.

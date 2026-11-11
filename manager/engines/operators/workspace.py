@@ -6,7 +6,9 @@ from pathlib import Path
 import struct
 import zipfile
 import functools
-from . import assets, model, server, presets, legacy_pack, native_resources, runtime
+from . import assets, model, server, presets, legacy_pack, native_resources, runtime, acquisition, install_package
+from ... import storage
+from owner.units import acquisition_sources as acquisition_protocol
 
 
 def _installed_upload(root, identity):
@@ -178,6 +180,138 @@ class Workspace:
         result["uploaded_avatar"] = {"kind": "upload", "sha256": sha}
         return result
 
+    def applied_acquisition_sources(self, catalog=None):
+        """Return only database-readback-consistent acquisition claims.
+
+        This callable upgrade path does not build or inspect the client DLL, so
+        an accepted content package can obtain current source data independently
+        from the programme binary bundled by package().
+        """
+        catalog = self.read() if catalog is None else catalog
+        model.validate(catalog)
+        source_value = acquisition.empty()
+        if self.server_ini is None:
+            return source_value
+        source_path = self.root / acquisition.SNAPSHOT_NAME
+        if source_path.is_file():
+            try:
+                applied = acquisition.read_with_catalog(source_path)
+                status = server.catalog_status(applied['catalog'], self.server_ini)
+                if (status['database_applied'] and
+                        status['applied_revision'] == applied['revision']):
+                    return acquisition.public_snapshot(applied)
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            # A malformed or stale applied snapshot must not fall back to a
+            # possibly different current draft.
+            return source_value
+        # Upgrade path for catalogs applied before the acquisition snapshot
+        # existed. Require exact current revision and enabled-set readback.
+        try:
+            status = server.catalog_status(catalog, self.server_ini)
+            current_revision = model.revision(catalog)
+            if (status['database_applied'] and
+                    status['applied_revision'] == current_revision):
+                return acquisition.compile_sources(catalog)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return source_value
+
+    def _publish_applied_acquisition_sources(self, catalog):
+        try:
+            source_value = acquisition.compile_sources(catalog)
+            source_json = storage.json_bytes(source_value)
+            source_binary = acquisition_protocol.encode_sources(
+                source_value, acquisition_protocol.OPERATOR_PROVIDER)
+            files = {
+                self.root / acquisition.SNAPSHOT_NAME: storage.json_bytes(
+                    acquisition.snapshot(catalog)),
+            }
+            client_installed = False
+            manifest_path = None
+            sidecars = {
+                'acquisition-sources.json': source_json,
+                'acquisition-sources.bin': source_binary,
+            }
+            client_root = getattr(getattr(self, 'assets', None), 'root', None)
+            if client_root is not None:
+                folder = Path(client_root) / 'sdgo/mods/operator_catalog'
+                if folder.is_symlink():
+                    raise ValueError('客户端副官获得方式目录不能使用链接')
+                if folder.is_dir():
+                    for name, raw in sidecars.items():
+                        files[folder / name] = raw
+                    manifest_path = folder / 'manifest.json'
+                    client_installed = True
+
+            previous = {}
+            written = []
+            with storage.LOCK:
+                if manifest_path is not None:
+                    if manifest_path.is_symlink():
+                        raise ValueError('客户端副官资源所有权清单不能使用链接')
+                    if manifest_path.exists():
+                        if not manifest_path.is_file():
+                            raise ValueError('客户端副官资源所有权清单不是普通文件')
+                        ownership = install_package._inner_manifest(
+                            storage.read_bytes(manifest_path))
+                        tracked = set(ownership['files']).intersection(sidecars)
+                        if tracked and tracked != set(sidecars):
+                            raise ValueError('客户端副官资源所有权清单未成对登记获得方式文件')
+                        if tracked:
+                            for name in sidecars:
+                                path = manifest_path.parent / name
+                                if path.is_symlink() or not path.is_file():
+                                    raise ValueError(
+                                        '客户端副官资源所有权文件缺失或不是普通文件：' + name)
+                                raw = storage.read_bytes(path)
+                                metadata = ownership['files'][name]
+                                if (len(raw) != metadata['bytes'] or
+                                        hashlib.sha256(raw).hexdigest() != metadata['sha256']):
+                                    raise ValueError(
+                                        '客户端副官资源所有权文件已被修改：' + name)
+                            refreshed = copy.deepcopy(ownership)
+                            for name, raw in sidecars.items():
+                                refreshed['files'][name] = {
+                                    'bytes': len(raw),
+                                    'sha256': hashlib.sha256(raw).hexdigest(),
+                                }
+                            files[manifest_path] = storage.json_bytes(refreshed)
+
+                for path in files:
+                    if path.is_symlink():
+                        raise ValueError('客户端副官获得方式文件不能使用链接')
+                    if path.exists() and not path.is_file():
+                        raise ValueError('客户端副官获得方式路径不是普通文件：' + str(path))
+                    previous[path] = storage.read_bytes(path) if path.is_file() else None
+                try:
+                    for path, raw in files.items():
+                        storage.atomic(path, raw)
+                        written.append(path)
+                except Exception as error:
+                    rollback = []
+                    for path in reversed(written):
+                        try:
+                            if previous[path] is None:
+                                storage.remove(path)
+                            else:
+                                storage.atomic(path, previous[path])
+                        except Exception as rollback_error:
+                            rollback.append(str(rollback_error))
+                    message = '副官获得方式文件更新失败：' + str(error)
+                    if rollback:
+                        message += '；回滚未完成：' + '；'.join(rollback)
+                    raise ValueError(message) from None
+            return {
+                'revision': source_value['revision'],
+                'client_installed': client_installed,
+                'restart_required': client_installed,
+            }
+        except Exception as error:
+            raise ValueError(
+                '副官数据库应用已完成，但客户端获得方式发布失败：' + str(error)
+            ) from None
+
     def package(self):
         catalog = self.read()
         if not self.module_binary or not self.module_binary.is_file():
@@ -245,6 +379,11 @@ class Workspace:
         for field in ('drop_pools','default_pack_version','imported_packs'):
             if field in catalog:public_definitions[field]=copy.deepcopy(catalog[field])
         files[prefix+'definitions.json']=(json.dumps(public_definitions,ensure_ascii=False,indent=2)+'\n').encode()
+        source_value = self.applied_acquisition_sources(catalog)
+        files[prefix+'acquisition-sources.json']=(json.dumps(
+            source_value,ensure_ascii=False,indent=2)+'\n').encode('utf-8')
+        files[prefix+'acquisition-sources.bin']=acquisition_protocol.encode_sources(
+            source_value, acquisition_protocol.OPERATOR_PROVIDER)
         import configparser
         metadata=configparser.ConfigParser(interpolation=None)
         metadata.read_string(files[prefix+"mod.ini"].decode("utf-8-sig"))
@@ -423,6 +562,11 @@ class Workspace:
         ):
             plan = self._runtime_plan(catalog)
             evidence = runtime.installed_runtime_evidence(plan)
-        return server.apply_catalog(
+        result = server.apply_catalog(
             catalog, self.server_ini, runtime_evidence=evidence
         )
+        publication = self._publish_applied_acquisition_sources(catalog)
+        result['acquisition_source_revision'] = publication['revision']
+        result['acquisition_sources_client_installed'] = publication['client_installed']
+        result['acquisition_sources_restart_required'] = publication['restart_required']
+        return result

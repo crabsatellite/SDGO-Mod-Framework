@@ -51,6 +51,8 @@ class BlueprintCompiler(unittest.TestCase):
                     self.assertEqual(hashlib.sha256(z.read(fragment)).hexdigest(),manifest['files'][fragment])
                     raw=z.read('client/sdgo/mods/unit_catalog/catalog.bin')
                     output=json.loads(z.read('client/sdgo/mods/unit_catalog/definitions.json'))
+                    availability=json.loads(z.read('client/sdgo/mods/unit_catalog/blueprint-availability.json'))
+                    availability_binary=z.read('client/sdgo/mods/unit_catalog/blueprint-availability.bin')
                     server=json.loads(Path(result['server_plan']).read_text(encoding='utf-8'))
                 records={};cursor=32
                 for i in range(struct.unpack_from('<I',raw,16)[0]):
@@ -73,6 +75,11 @@ class BlueprintCompiler(unittest.TestCase):
                 self.assertEqual(90001,struct.unpack_from('<I',records[(33,209000)],229)[0])
                 self.assertEqual(209000,struct.unpack_from('<I',records[(34,1599000)],105)[0])
                 self.assertEqual(209000,struct.unpack_from('<I',records[(85,0x375BE2)],10)[0])
+                self.assertEqual({'state':1,'item_category_id':1599000,'unit_id':90001},
+                                 availability['blueprints']['209000'])
+                availability_header=struct.unpack_from('<8s6I',availability_binary)
+                self.assertEqual((b'SDGOBP1\0',1,32,1,12),availability_header[:5])
+                self.assertEqual(struct.unpack_from('<I',raw,24)[0],availability_header[6])
                 self.assertEqual('Private author content',output['registrations'][0]['metadata']['description'])
                 self.assertEqual(209000,server['families'][0]['blueprints'][0]['id'])
                 self.assertFalse(result.get('player_tables_changed',False))
@@ -90,6 +97,59 @@ class BlueprintCompiler(unittest.TestCase):
                 with zipfile.ZipFile(updated['client_zip']) as z:
                     self.assertEqual(raw,z.read('client/sdgo/mods/unit_catalog/catalog.bin'))
                 self.assertNotEqual(result['revision'],updated['revision'])
+            finally:engine.close()
+
+    def test_changed_and_disabled_primary_rewrites_index_and_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);engine=Workspace(root/'workspace',baseline=BlueprintBaseline(),repository=Repository(),publisher=publisher)
+            try:
+                inspected=complete(engine,engine.inspect('unit.zip',archive(),engine.public()['revision']))
+                family=copy.deepcopy(engine.read()['drafts'][inspected['draft']['id']])
+                first=declaration();first.pop('recipe_sprite',None);first['encyclopedia_primary']=True
+                second=declaration();second.pop('recipe_sprite',None);second.update(
+                    id=209001,name='第二设计图',internal_name='Second Plan',item_category_id=1599001,
+                    encyclopedia_primary=False)
+                family['blueprints']=[first,second];family['status']='confirmed';family['published']=copy.deepcopy(family)
+                state=engine.read();state['drafts'][family['id']]=family
+                images={role:png() for role in ('unit_primary','shop','custom','capsule_fixed','index_owned','index_missing','blueprint_preview','blueprint_card')}
+                def compile_into(name,current):
+                    target=root/name;target.mkdir()
+                    with patch.object(compiler,'_adapter_files',return_value=(b'MZ'+bytes(510),b'[mod]\nenabled=0\nfiles=\n',b'symbols',b'installer')), \
+                         patch('owner.units.presentation.publication_images',return_value=images), \
+                         patch('owner.units.presentation.contract',return_value={'schema':3}):
+                        result=compiler.publish(engine,current,family['id'],target)
+                    with zipfile.ZipFile(result['client_zip']) as archive_file:
+                        raw=archive_file.read('client/sdgo/mods/unit_catalog/catalog.bin')
+                        authority=json.loads(archive_file.read('client/sdgo/mods/unit_catalog/blueprint-availability.json'))
+                    rows={};cursor=32
+                    for _ in range(struct.unpack_from('<I',raw,16)[0]):
+                        kind,identity,size,*_=struct.unpack_from('<6I',raw,cursor);cursor+=24
+                        rows[(kind,identity)]=raw[cursor:cursor+size];cursor+=size
+                    return struct.unpack_from('<I',rows[(85,0x375BE2)],10)[0],authority
+                primary,authority=compile_into('first',state)
+                self.assertEqual(209000,primary)
+                self.assertEqual((1,1),(authority['blueprints']['209000']['state'],authority['blueprints']['209001']['state']))
+
+                parent_disabled=copy.deepcopy(state)
+                parent_disabled['drafts'][family['id']]['status']='disabled'
+                primary,authority=compile_into('parent-disabled',parent_disabled)
+                self.assertEqual(209000,primary)
+                self.assertEqual((2,2),(authority['blueprints']['209000']['state'],authority['blueprints']['209001']['state']))
+
+                changed=copy.deepcopy(state)
+                recipes=changed['drafts'][family['id']]['published']['blueprints']
+                recipes[0].update(enabled=False,encyclopedia_primary=False)
+                recipes[1]['encyclopedia_primary']=True
+                primary,authority=compile_into('changed',changed)
+                self.assertEqual(209001,primary)
+                self.assertEqual((2,1),(authority['blueprints']['209000']['state'],authority['blueprints']['209001']['state']))
+
+                disabled=copy.deepcopy(changed)
+                disabled['drafts'][family['id']]['published']['blueprints'][1].update(
+                    enabled=False,encyclopedia_primary=False)
+                primary,authority=compile_into('disabled',disabled)
+                self.assertEqual(0,primary)
+                self.assertEqual((2,2),(authority['blueprints']['209000']['state'],authority['blueprints']['209001']['state']))
             finally:engine.close()
 
     def test_type13_remains_rejected_by_native_container(self):

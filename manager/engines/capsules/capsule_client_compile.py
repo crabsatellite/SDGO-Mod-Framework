@@ -15,7 +15,7 @@ from .capsule_ui_layout import patch_capsule_price_defaults
 
 
 TABLE_BASES = {"0033": 155001, "0101": 135001, "0154": 3519001, "0155": 3520001}
-COMPILER_VERSION = 15
+COMPILER_VERSION = 16
 
 
 def resident_activity_ownership(client):

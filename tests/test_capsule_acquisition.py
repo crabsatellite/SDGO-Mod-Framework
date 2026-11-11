@@ -59,20 +59,72 @@ class CapsuleAcquisitionTests(unittest.TestCase):
         self.assertEqual(meta['entries'][0]['text'], '活动扭蛋机160号')
         self.assertEqual(hints.encode({'activity_machines': []}, rows)[1]['entries'], [])
 
-    def test_native_ordinary_sources_are_not_duplicated_as_events_and_legacy_names_are_used(self):
+    def test_native_ordinary_sources_are_not_duplicated_and_custom_numbers_are_explicit(self):
         catalog = {'activity_machines': [activity(), activity(1990001, name='Season event')],
                    'fixed_machines': [
                        {'id': 101, 'enabled': True, 'currency': 'GP', 'slots': [{'unit_id': 30001, 'weight': 1000}]},
                        {'id': 201, 'enabled': True, 'currency': 'TOKEN', 'slots': [{'unit_id': 30001, 'weight': 1000}]},
                        {'id': 301, 'enabled': False, 'currency': 'GP', 'slots': [{'unit_id': 30001}]}],
-                   'custom_machines': [{'id': 2, 'enabled': True, 'candidates': [{'unit_id': 30001, 'basic_weight': 1}]}]}
+                   'custom_machines': [{'id': 2, 'enabled': True,
+                       'candidates': [{'unit_id': 30001, 'basic_weight': 1}]}]}
         _, meta = hints.encode(catalog, [item(1119001, 30001)])
-        text = meta['entries'][0]['text']
-        for expected in ('活动扭蛋机154号', 'Season event'):
-            self.assertIn(expected, text)
-        self.assertNotIn('1990001', text)
-        for label in ('普通扭蛋机', '代币扭蛋机', '自定义扭蛋机'):
-            self.assertNotIn(label, text)
+        entry = meta['entries'][0]
+        for expected in ('活动扭蛋机154号', 'Season event', '自定义扭蛋机2号'):
+            self.assertIn(expected, entry['text'])
+        self.assertNotIn('1990001', entry['text'])
+        for label in ('普通扭蛋机', '代币扭蛋机'):
+            self.assertNotIn(label, entry['text'])
+        custom = next(source for source in entry['sources'] if source['kind'] == 'custom')
+        self.assertEqual((custom['machine_id'], custom['display_number']), (2, 2))
+        self.assertNotIn('自定义扭蛋机', entry['legacy_text'])
+
+    def test_custom_add_remove_disable_and_renumber_rebuild_sources(self):
+        def custom(mid, *units, **changes):
+            return {'id': mid, 'name': f'Custom {mid}', 'enabled': True,
+                    'candidates': [{'unit_id': unit, 'basic_weight': 1} for unit in units],
+                    **changes}
+
+        catalog = {'custom_machines': [custom(1, 30001), custom(2, 30001, 30002)]}
+        raw, meta = hints.encode(catalog, [])
+        self.assertEqual(meta['entries'][0]['text'], '自定义扭蛋机1–2号')
+        self.assertEqual(meta['entries'][1]['text'], '自定义扭蛋机2号')
+        self.assertEqual([entry['legacy_text'] for entry in meta['entries']], ['', ''])
+        self.assertEqual(hints.encode({'custom_machines': list(reversed(catalog['custom_machines']))}, [])[0], raw)
+        _, changed = hints.encode({'custom_machines': [custom(7, 30001)]}, [])
+        self.assertEqual(changed['entries'][0]['text'], '自定义扭蛋机7号')
+        self.assertEqual(hints.encode({'custom_machines': [custom(7, 30001, enabled=False)]}, [])[1]['entries'], [])
+        self.assertEqual(hints.encode({'custom_machines': [custom(7, 30001, retired=True)]}, [])[1]['entries'], [])
+
+    def test_real_runtime_custom_only_source_uses_shared_display_without_legacy_patch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_bundle(root)
+            catalog = {'custom_machines': [{'id': 7, 'enabled': True,
+                'candidates': [{'unit_id': 30001, 'basic_weight': 1}]}]}
+            raw, meta = hints.encode(catalog, [])
+            self.assertEqual(meta['entries'][0]['text'], '自定义扭蛋机7号')
+            self.assertEqual(meta['entries'][0]['legacy_text'], '')
+            (root / hints.FILE).write_bytes(raw)
+            with (root / 'runtime.ini').open('a') as stream:
+                stream.write('\n[capsule_acquisition]\nfile=' + hints.FILE +
+                             '\nsha256=' + hashlib.sha256(raw).hexdigest() + '\n')
+            result = subprocess.run([str(harness()), str(root)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('CAPSULE_ACQUISITION 1', result.stdout)
+            self.assertIn('ACQUISITION_SOURCES 1', result.stdout)
+
+    def test_complete_display_text_is_retained_beyond_the_legacy_record_limit(self):
+        machines = [activity(1990000 + index, name=f'Season source {index:02d}')
+                    for index in range(1, 21)]
+        raw, meta = hints.encode({'activity_machines': machines}, [item(1119001, 30001)])
+        entry = meta['entries'][0]
+        self.assertGreater(hints._characters(entry['text']), 100)
+        self.assertLess(hints._characters(entry['brief']), 100)
+        display_chars, full_chars, brief_chars = struct.unpack_from('<III', raw, 20)
+        self.assertEqual(display_chars, hints._characters(entry['text']))
+        self.assertEqual(full_chars, hints._characters(entry['legacy_text']))
+        self.assertEqual(brief_chars, hints._characters(entry['brief']))
+        self.assertLess(full_chars, 100)
 
     def test_imported_item_protocol_is_verified_and_supplies_unit_rewards(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -103,6 +155,23 @@ class CapsuleAcquisitionTests(unittest.TestCase):
             result = subprocess.run([str(harness()), str(root)], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('SHA-256 mismatch', result.stdout)
+
+
+    def test_real_runtime_decoder_exposes_long_text_but_uses_the_legacy_brief_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_bundle(root)
+            machines = [activity(1990000 + index, name=f'Season source {index:02d}')
+                        for index in range(1, 21)]
+            raw, meta = hints.encode({'activity_machines': machines}, [item(1119001, 30001)])
+            self.assertGreater(hints._characters(meta['entries'][0]['text']), 100)
+            (root / hints.FILE).write_bytes(raw)
+            with (root / 'runtime.ini').open('a') as stream:
+                stream.write('\n[capsule_acquisition]\nfile=' + hints.FILE + '\nsha256=' + hashlib.sha256(raw).hexdigest() + '\n')
+            result = subprocess.run([str(harness()), str(root)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('CAPSULE_ACQUISITION 1', result.stdout)
+            self.assertIn('ACQUISITION_SOURCES 1', result.stdout)
 
 
 if __name__ == '__main__':

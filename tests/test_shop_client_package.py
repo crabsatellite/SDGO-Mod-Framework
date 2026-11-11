@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch
 import zipfile
 
 from manager import packages, storage
-from manager.shop import PACKAGE_FILES, Shop
+from manager.shop import (PACKAGE_FILES, Shop, _blueprint_category_map,
+                          _shop_acquisition_sources, _shop_category_maps)
 from manager.workspace import Workspace
 
 
@@ -90,6 +91,16 @@ class ShopClientPackageTests(unittest.TestCase):
             'workspace': str(self.root / 'shop-workspace'),
             'client': str(self.client),
         }
+        self.active_products = []
+        self.bridge = Mock()
+        def bridge_call(request):
+            self.assertEqual('read-effective', request.get('action'))
+            return {
+                'active_products': list(self.active_products),
+                'active_products_source': 'store_billing_visible_readback',
+            }
+        self.bridge.call.side_effect = bridge_call
+        self.workspace.services.resource = Mock(return_value=self.bridge)
         self.provider = Shop(self.workspace)
 
     def tearDown(self):
@@ -109,7 +120,9 @@ class ShopClientPackageTests(unittest.TestCase):
     def test_exact_allowlist_hashes_and_static_dictionary_bytes(self):
         before = self.snapshot(self.client)
         raw = self.export()
-        expected = {'symbols.fragment.ini', 'manifest.json'}
+        expected = {'symbols.fragment.ini', 'manifest.json',
+                    'client/sdgo/mods/shop_localization/acquisition-sources.json',
+                    'client/sdgo/mods/shop_localization/acquisition-sources.bin'}
         for identity, names in PACKAGE_FILES.items():
             expected.update('client/sdgo/mods/' + identity + '/' + name for name in names)
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
@@ -121,10 +134,96 @@ class ShopClientPackageTests(unittest.TestCase):
             manifest = json.loads(archive.read('manifest.json'))
             self.assertEqual(manifest['shop_revision'], REVISION)
             self.assertEqual(manifest['published_revision'], PUBLISHED_REVISION)
+            self.assertEqual('store_billing_visible_readback',
+                             manifest['acquisition_provenance']['source'])
+            self.assertEqual(0, manifest['acquisition_provenance']['active_product_options'])
             self.assertEqual(manifest['mods'], {'shop_localization': '0.2.0', 'shop_labels': '0.3.0'})
+            self.assertEqual(b'SDGOAS1\0', archive.read(
+                'client/sdgo/mods/shop_localization/acquisition-sources.bin')[:8])
             for name, digest in manifest['files'].items():
                 self.assertEqual(hashlib.sha256(archive.read(name)).hexdigest(), digest)
         self.assertEqual(self.snapshot(self.client), before)
+
+    def test_blueprint_sources_join_stock_and_enabled_imported_item_refs(self):
+        unit = self.client / 'sdgo/mods/unit_catalog'
+        unit.mkdir(parents=True)
+        (unit / 'definitions.json').write_text(json.dumps({
+            'protocol': 'sdgo.unit-family', 'schema_version': 1, 'registrations': [{
+                'category_id': 1199000, 'unit_id': 90001, 'enabled': True,
+                'blueprints': [
+                    {'id': 209000, 'item_category_id': 1599000, 'enabled': True},
+                    {'id': 209001, 'item_category_id': 1599001, 'enabled': False},
+                ],
+            }],
+        }), encoding='utf-8')
+        active = [
+            {'ProductId': 1019001, 'OptionId': 3801, 'Category': 1599000, 'Validity': 1},
+            # The disabled imported recipe is not in the category map even if a
+            # stale stock row still exists in StoreBilling.
+            {'ProductId': 1019002, 'OptionId': 3802, 'Category': 1599001, 'Validity': 1},
+        ]
+        value = json.loads(_shop_acquisition_sources(
+            self.client, active, 'store_billing_visible_readback'))
+        self.assertEqual({'209000': [{
+            'key': 'shop:blueprint:209000', 'text': '商城购买',
+        }]}, value['blueprints'])
+        self.assertEqual({}, value['units'])
+
+        stock = bytearray(614)
+        stock[105:109] = (200001).to_bytes(4, 'little')
+        stock[109] = 0
+        fake = Mock()
+        fake.records.return_value = {1520001: bytes(stock)}
+        with patch('manager.shop.native_assets.Assets', return_value=fake):
+            mapping = _blueprint_category_map(self.client)
+            units, blueprints = _shop_category_maps(self.client)
+            stock_source = json.loads(_shop_acquisition_sources(self.client, [{
+                'ProductId': 1000001, 'OptionId': 3001,
+                'Category': 1520001, 'Validity': 1,
+            }], 'store_billing_visible_readback'))
+        self.assertEqual({'200001': [{
+            'key': 'shop:blueprint:200001', 'text': '商城购买',
+        }]}, stock_source['blueprints'])
+        self.assertEqual(200001, mapping[1520001])
+        self.assertEqual(209000, mapping[1599000])
+        self.assertNotIn(1599001, mapping)
+        self.assertEqual(90001, units[1199000])
+        self.assertEqual(mapping, blueprints)
+
+
+    def test_unit_sources_use_item_time_limit_for_one_day_rental_and_purchase(self):
+        first = bytearray(614)
+        first[105:109] = (10001).to_bytes(4, 'little')
+        second = bytearray(614)
+        second[105:109] = (10002).to_bytes(4, 'little')
+        second[109] = 1
+        fake = Mock()
+        fake.records.return_value = {1110001: bytes(first), 1110002: bytes(second)}
+        with patch('manager.shop.native_assets.Assets', return_value=fake):
+            purchase = json.loads(_shop_acquisition_sources(
+                self.client, [
+                    {'ProductId': 1, 'OptionId': 11, 'Category': 1110001, 'Validity': 5},
+                    {'ProductId': 2, 'OptionId': 12, 'Category': 1110002, 'Validity': 1},
+                ], 'store_billing_visible_readback'))
+            self.assertEqual([{
+                'key': 'shop:unit:10001:purchase', 'text': '商城购买',
+            }], purchase['units']['10001'])
+            self.assertEqual([{
+                'key': 'shop:unit:10002:rental', 'text': '商城租用',
+            }], purchase['units']['10002'])
+
+            retargeted = json.loads(_shop_acquisition_sources(
+                self.client, [
+                    {'ProductId': 1, 'OptionId': 11, 'Category': 1110002, 'Validity': 30},
+                ], 'store_billing_visible_readback'))
+            self.assertNotIn('10001', retargeted['units'])
+            self.assertEqual([{
+                'key': 'shop:unit:10002:rental', 'text': '商城租用',
+            }], retargeted['units']['10002'])
+
+            cleared = json.loads(_shop_acquisition_sources(
+                self.client, [], 'store_billing_visible_readback'))
+            self.assertEqual({}, cleared['units'])
 
     def test_complete_localization_callsites_and_label_requirements_use_current_symbols(self):
         with zipfile.ZipFile(io.BytesIO(self.export())) as archive:
@@ -136,12 +235,12 @@ class ShopClientPackageTests(unittest.TestCase):
         self.assertIn('text.ansi_to_wide', fragment)
         self.assertNotIn('unrelated.private', fragment)
 
-    def test_export_never_starts_bridge_or_leaks_neighbor_files_and_rejects_credentials(self):
+    def test_export_uses_readback_and_never_leaks_neighbor_files_or_credentials(self):
         private = self.client / 'private/account.ini'
         private.parent.mkdir()
         private.write_text('password=never-export', encoding='utf-8')
-        self.workspace.services.resource = Mock(side_effect=AssertionError('bridge must not start'))
         raw = self.export()
+        self.bridge.call.assert_called()
         self.assertNotIn(b'never-export', raw)
         self.assertNotIn(str(self.client).encode(), raw)
         display = self.client / 'sdgo/mods/shop_labels/display.ini'
@@ -233,7 +332,7 @@ class ShopClientPackageTests(unittest.TestCase):
                 encoding='ascii')
             with patch.object(packages, '_running', return_value=False):
                 result = packages.import_client(player, host, base64.b64encode(raw).decode('ascii'))
-            self.assertEqual(result['installed_files'], 10)
+            self.assertEqual(result['installed_files'], 12)
             self.assertEqual((target / 'sdgo/mods/shop_localization/zh-CN.ini').read_bytes(),
                              (self.client / 'sdgo/mods/shop_localization/zh-CN.ini').read_bytes())
             self.assertEqual((target / 'sdgo/mods/shop_localization/symbols.fragment.ini').read_bytes(),
@@ -248,6 +347,12 @@ class ShopClientPackageTests(unittest.TestCase):
                 'workspace': str(self.root / 'player-shop-workspace'),
                 'client': str(target),
             }
+            readback = Mock()
+            readback.call.return_value = {
+                'active_products': list(self.active_products),
+                'active_products_source': 'store_billing_visible_readback',
+            }
+            player.services.resource = Mock(return_value=readback)
             second = Shop(player).request(
                 'GET', '/api/shop/client-package', {}, {'X-Shop-Revision': REVISION}).data
             self.assertEqual(second, raw)
@@ -261,6 +366,72 @@ class ShopClientPackageTests(unittest.TestCase):
                 self.assertTrue(UNIT_NAME_DISPLAY_SYMBOLS.issubset(second_symbols.sections()))
         finally:
             player.services.close()
+
+    def test_apply_reports_server_success_when_client_publication_fails(self):
+        self.bridge.call.side_effect = lambda request: {
+            'active_products': [],
+            'active_products_source': 'store_billing_visible_readback',
+            'items': [], 'catalog': {'products': []}, 'revision': REVISION,
+        }
+        with patch.object(self.provider, '_install_applied_acquisition_sources',
+                          side_effect=ValueError('fixture publication failure')) as publish:
+            with self.assertRaisesRegex(ValueError, '商城服务器应用已完成，但客户端获得方式发布失败'):
+                self.provider.request('POST', '/api/shop/apply', {},
+                                      {'X-Shop-Revision': REVISION})
+        self.assertEqual('apply', self.bridge.call.call_args.args[0]['action'])
+        publish.assert_called_once()
+
+    def test_full_stock_readback_is_used_by_source_callable_export_and_apply(self):
+        stock = bytearray(614)
+        stock[105:109] = (200001).to_bytes(4, 'little')
+        fake = Mock()
+        fake.records.return_value = {1520001: bytes(stock)}
+        self.active_products = [{
+            'ProductId': 1000001, 'OptionId': 3001,
+            'Category': 1520001, 'Validity': 1,
+        }]
+        with patch('manager.shop.native_assets.Assets', return_value=fake):
+            source = self.provider.applied_acquisition_sources()
+            raw = self.export()
+        self.assertEqual('store_billing_visible_readback', source['provenance']['source'])
+        self.assertEqual({'200001': [{
+            'key': 'shop:blueprint:200001', 'text': '商城购买',
+        }]}, source['blueprints'])
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            exported = json.loads(archive.read(
+                'client/sdgo/mods/shop_localization/acquisition-sources.json'))
+        self.assertEqual(source, exported)
+        # This stock product is absent from the managed display.ini fixture; it
+        # is still published because current StoreBilling readback is authority.
+        display = (self.client / 'sdgo/mods/shop_labels/display.ini').read_text(
+            encoding='utf-16')
+        self.assertNotIn('1000001', display)
+
+        def apply_call(request):
+            self.assertEqual('apply', request.get('action'))
+            return {
+                'active_products': list(self.active_products),
+                'active_products_source': 'store_billing_visible_readback',
+                'items': [], 'catalog': {'products': []}, 'revision': REVISION,
+            }
+        self.bridge.call.side_effect = apply_call
+        with patch('manager.shop.native_assets.Assets', return_value=fake):
+            applied = self.provider.request(
+                'POST', '/api/shop/apply', {}, {'X-Shop-Revision': REVISION})
+        sidecar = self.client / 'sdgo/mods/shop_localization/acquisition-sources.json'
+        self.assertEqual(source, json.loads(sidecar.read_text(encoding='utf-8')))
+        self.assertTrue(applied['acquisition_sources']['restart_required'])
+        self.assertEqual(b'SDGOAS1\0', (sidecar.with_suffix('.bin')).read_bytes()[:8])
+
+        # A subsequent successful readback with the product down clears the
+        # client claim instead of retaining the former draft or display label.
+        self.active_products = []
+        with patch('manager.shop.native_assets.Assets', return_value=fake):
+            cleared = self.provider.request(
+                'POST', '/api/shop/apply', {}, {'X-Shop-Revision': REVISION})
+        self.assertEqual({}, json.loads(sidecar.read_text(encoding='utf-8'))['blueprints'])
+        self.assertEqual(0, cleared['acquisition_sources']['provenance'][
+            'active_product_options'])
 
     def test_missing_files_symbols_client_and_revision_fail_before_bridge(self):
         self.workspace.services.resource = Mock(side_effect=AssertionError('bridge must not start'))

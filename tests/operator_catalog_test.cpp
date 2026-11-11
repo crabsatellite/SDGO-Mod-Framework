@@ -12,8 +12,10 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "sdgo/acquisition_sources.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/operator_model.h"
+#include "acquisition_sources_fixture.h"
 #include "../support/native_resource_overlay/native_resource_overlay.h"
 
 #pragma comment(lib, "bcrypt.lib")
@@ -514,6 +516,16 @@ HMODULE LoadMod(const wchar_t* path, int mode)
 {
     HMODULE module = LoadLibraryW(path);
     Require(module != nullptr);
+    const auto acquisition = reinterpret_cast<SdgoAcquisitionSourcesV1Fn>(
+        GetProcAddress(module, SDGO_ACQUISITION_SOURCES_EXPORT));
+    Require(acquisition != nullptr);
+    const SdgoAcquisitionRequestV1 request{
+        sizeof(SdgoAcquisitionRequestV1), 1, SDGO_ACQUISITION_BLUEPRINT, 200001};
+    acquisition_fixture::Capture capture;
+    const SdgoAcquisitionSinkV1 sink{
+        sizeof(SdgoAcquisitionSinkV1), 1, &capture, &acquisition_fixture::Emit};
+    Require(acquisition(&request, &sink) == SDGO_ACQUISITION_UNAVAILABLE &&
+            capture.rows.empty());
     auto entry = reinterpret_cast<SdgoModLoadFn>(GetProcAddress(module, "SdgoModLoad"));
     Require(entry != nullptr);
     g_apiFixture = {};
@@ -530,6 +542,16 @@ HMODULE LoadMod(const wchar_t* path, int mode)
         Require(loaded == 0 && !g_hook && !g_resourceHook);
     } else {
         Require(loaded != 0 && g_hook && g_resourceHook);
+    }
+    capture.rows.clear();
+    if (mode == 0) {
+        Require(acquisition(&request, &sink) == SDGO_ACQUISITION_READY);
+        Require(capture.rows.size() == 1 &&
+                capture.rows[0].first == "operator:60003:blueprint:200001" &&
+                capture.rows[0].second == L"operator fixture blueprint drop");
+    } else {
+        Require(acquisition(&request, &sink) == SDGO_ACQUISITION_UNAVAILABLE &&
+                capture.rows.empty());
     }
     return module;
 }
@@ -768,6 +790,13 @@ int wmain(int argc, wchar_t** argv)
     Require(!cleanupError);
     Require(fs::create_directories(g_directory));
     WriteConfig(mode);
+    if (mode == 0) {
+        Require(acquisition_fixture::Write(
+            fs::path(g_directory) / "acquisition-sources.bin", 2,
+            {{SDGO_ACQUISITION_BLUEPRINT, 200001,
+              "operator:60003:blueprint:200001",
+              L"operator fixture blueprint drop"}}));
+    }
     BaseRows();
     if (mode == 1 || mode == 2) {
         const auto before = g_a;

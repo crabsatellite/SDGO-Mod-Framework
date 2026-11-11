@@ -8,9 +8,11 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include "sdgo/acquisition_sources.h"
 #include "sdgo/content_localization_boundary.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/shop_labels.h"
+#include "acquisition_sources_fixture.h"
 #include "../mods/shop_localization/dictionary.h"
 #include "../mods/shop_localization/sites.h"
 
@@ -283,11 +285,41 @@ int wmain(int argc,wchar_t** argv)
             std::ofstream display(labels/L"display.ini",std::ios::binary);
             display.write(reinterpret_cast<const char*>(profile.data()),static_cast<std::streamsize>(profile.size()*sizeof(wchar_t)));
         }
+        if(g_mode==0) {
+            Check(acquisition_fixture::Write(
+                std::filesystem::path(g_directory)/"acquisition-sources.bin",1,
+                {{SDGO_ACQUISITION_UNIT,10001,"shop:unit:10001:purchase",L"shop fixture purchase"},
+                 {SDGO_ACQUISITION_BLUEPRINT,200001,"shop:blueprint:200001",L"shop fixture blueprint purchase"}}),
+                "shop acquisition fixture written");
+        }
         g_normal=MakeCode(false);g_preview=MakeCode(false);g_option=MakeCode(false);g_copyCode=MakeCode(true);g_outside=MakeCode(false);
         g_previewOuter=MakeUnitNameCode();g_unknownOuter=MakeUnitNameCode();
         HMODULE dll=LoadLibraryW(argv[1]);auto load=dll?reinterpret_cast<SdgoModLoadFn>(GetProcAddress(dll,"SdgoModLoad")):nullptr;
+        const auto acquisition=dll?reinterpret_cast<SdgoAcquisitionSourcesV1Fn>(GetProcAddress(dll,SDGO_ACQUISITION_SOURCES_EXPORT)):nullptr;
+        Check(acquisition!=nullptr,"shop provider exports optional acquisition ABI");
+        const SdgoAcquisitionRequestV1 acquisitionRequest{sizeof(SdgoAcquisitionRequestV1),1,SDGO_ACQUISITION_UNIT,10001};
+        acquisition_fixture::Capture acquisitionCapture;
+        const SdgoAcquisitionSinkV1 acquisitionSink{sizeof(SdgoAcquisitionSinkV1),1,&acquisitionCapture,&acquisition_fixture::Emit};
+        Check(acquisition(&acquisitionRequest,&acquisitionSink)==SDGO_ACQUISITION_UNAVAILABLE&&acquisitionCapture.rows.empty(),"shop acquisition provider is unavailable before Mod initialization");
         SdgoApi api{};api.size=sizeof(api);api.version=1;api.Symbol=Symbol;api.HookCode=Hook;api.SettingInt=Setting;api.ModDirectory=Directory;api.Log=Log;
         int result=load?load(&api,nullptr):0;
+        acquisitionCapture.rows.clear();
+        if(g_mode==0) {
+            Check(acquisition(&acquisitionRequest,&acquisitionSink)==SDGO_ACQUISITION_READY&&
+                  acquisitionCapture.rows.size()==1&&
+                  acquisitionCapture.rows[0].first=="shop:unit:10001:purchase"&&
+                  acquisitionCapture.rows[0].second==L"shop fixture purchase",
+                  "loaded shop provider publishes the exact unit acquisition source");
+            acquisitionCapture.rows.clear();
+            const SdgoAcquisitionRequestV1 blueprintRequest{sizeof(SdgoAcquisitionRequestV1),1,SDGO_ACQUISITION_BLUEPRINT,200001};
+            Check(acquisition(&blueprintRequest,&acquisitionSink)==SDGO_ACQUISITION_READY&&
+                  acquisitionCapture.rows.size()==1&&
+                  acquisitionCapture.rows[0].first=="shop:blueprint:200001"&&
+                  acquisitionCapture.rows[0].second==L"shop fixture blueprint purchase",
+                  "loaded shop provider publishes the exact blueprint acquisition source");
+        } else {
+            Check(acquisition(&acquisitionRequest,&acquisitionSink)==SDGO_ACQUISITION_UNAVAILABLE&&acquisitionCapture.rows.empty(),"missing optional shop source sidecar never publishes stale claims");
+        }
         if(g_mode==4||g_mode==5) {Check(!result&&g_hooks==0,"invalid dictionary or unverified caller refuses before installing hooks");return 0;}
         Check(result&&g_hooks==(g_mode==7?16U:8U),"actual DLL loaded only the scoped hooks required by its current display profile");
         Check(g_unitPlain && g_unitPreview && g_unitDisplay,

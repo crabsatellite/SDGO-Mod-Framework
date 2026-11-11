@@ -47,6 +47,20 @@ namespace Sdgo.Shop
                 using(var r=cmd.ExecuteReader()) while(r.Read()) {result.ProductIds.Add(Convert.ToInt32(r[0]));result.Skus.Add(Convert.ToString(r[1]).Trim());}
                 using(var cmd=Query(billing,"SELECT DISTINCT f_itemid FROM dbo.tbls_SubItems"))
                 using(var r=cmd.ExecuteReader()) while(r.Read()) result.Skus.Add(Convert.ToString(r[0]).Trim());
+                bool subDisplay;
+                using(var cmd=Query(billing,"SELECT CASE WHEN COL_LENGTH(N'dbo.tbls_SubItems',N'f_display') IS NULL THEN 0 ELSE 1 END"))
+                    subDisplay=Convert.ToInt32(cmd.ExecuteScalar())!=0;
+                string visible="LTRIM(RTRIM(CONVERT(varchar(16),p.f_display)))='1'";
+                if(subDisplay) visible+=" AND LTRIM(RTRIM(CONVERT(varchar(16),s.f_display)))='1'";
+                string active=@"SELECT p.f_productid,s.f_itemtblidx,s.f_categoryNumber,s.f_validity
+                    FROM dbo.tbls_StoreItems p JOIN dbo.tbls_SubItems s ON s.f_itemid=p.f_itemid
+                    WHERE "+visible+@" AND p.f_quantity>0
+                      AND s.f_categoryNumber IS NOT NULL AND s.f_categoryNumber>0 AND s.f_validity>0
+                    ORDER BY p.f_productid,s.f_itemtblidx";
+                using(var cmd=Query(billing,active))
+                using(var r=cmd.ExecuteReader()) while(r.Read()) result.ActiveProducts.Add(new ActiveProduct {
+                    ProductId=Convert.ToInt32(r[0]),OptionId=Convert.ToInt32(r[1]),
+                    Category=Convert.ToInt32(r[2]),Validity=Convert.ToInt32(r[3])});
             }
             result.Items=result.Items.Where(i=>result.Templates.Any(t=>t.Kind==i.Kind)).OrderBy(i=>i.Kind).ThenBy(i=>i.Name).ThenBy(i=>i.Id).ToList();return result;
         }
@@ -70,7 +84,7 @@ namespace Sdgo.Shop
         public List<Applied> Applied=new List<Applied>();
         public Snapshot Read()
         {
-            return new Snapshot {Items=new List<Item> {new Item{Id=1120022,Name="Zaku II (Sale)",TimeLimit=0},new Item{Id=1110549,Name="DUAL GUNDAM ASSAULT SHROUD + BUSTER GUNDAM",TimeLimit=1},new Item{Id=1120001,Name="Gundam",TimeLimit=0}},Templates=new List<Template> {new Template{Id=1010001,Sku="100001",Tab=1,Kind=11,Visible=true}},ProductIds=new HashSet<int>{1010001},Skus=new HashSet<string>{"100001"}};
+            return new Snapshot {Items=new List<Item> {new Item{Id=1120022,Name="Zaku II (Sale)",TimeLimit=0},new Item{Id=1110549,Name="DUAL GUNDAM ASSAULT SHROUD + BUSTER GUNDAM",TimeLimit=1},new Item{Id=1120001,Name="Gundam",TimeLimit=0}},Templates=new List<Template> {new Template{Id=1010001,Sku="100001",Tab=1,Kind=11,Visible=true}},ActiveProducts=Applied.Where(a=>a.Visible).Select(a=>new ActiveProduct {ProductId=a.Id,OptionId=a.Id,Category=a.Category,Validity=a.Validity}).ToList(),ProductIds=new HashSet<int>{1010001},Skus=new HashSet<string>{"100001"}};
         }
         public List<Applied> ReadApplied(string owner) {return Applied;}
     }

@@ -354,8 +354,11 @@ sdgo_add_mod(shop_art_localization DESCRIPTION "Chinese labels over verified sho
              SOURCES mods/shop_art_localization/shop_art_localization.cpp mods/shop_art_localization/native_ui.cpp
              FILES symbols.fragment.ini LIBS user32)
 sdgo_add_mod(ui_localization DESCRIPTION "Chinese native interface labels and system text"
-             SOURCES mods/ui_localization/ui_localization.cpp mods/ui_localization/system_text.cpp
+             SOURCES mods/ui_localization/ui_localization.cpp mods/ui_localization/system_text.cpp mods/ui_localization/acquisition_text.cpp
              FILES symbols.fragment.ini LIBS user32)
+sdgo_add_mod(acquisition_sources DESCRIPTION "Native unit and blueprint acquisition sources"
+             SOURCES mods/acquisition_sources/acquisition_sources.cpp
+             FILES symbols.fragment.ini)
 add_library(shop_catalog_engine STATIC mods/shop_catalog/catalog_runtime.cpp)
 target_include_directories(shop_catalog_engine PUBLIC mods/shop_catalog)
 target_link_libraries(shop_catalog_engine PUBLIC odbc32 bcrypt)
@@ -1194,13 +1197,31 @@ if(BUILD_TESTING)
     sdgo_strict(ui_localization_dictionary_test)
     target_compile_options(ui_localization_dictionary_test PRIVATE /UNDEBUG)
     add_test(NAME ui_localization_dictionary COMMAND ui_localization_dictionary_test)
+    add_executable(acquisition_sources_test tests/acquisition_sources_test.cpp)
+    target_link_libraries(acquisition_sources_test PRIVATE sdgo_api)
+    sdgo_strict(acquisition_sources_test)
+    target_compile_options(acquisition_sources_test PRIVATE /UNDEBUG)
+    add_test(NAME acquisition_sources_optional_providers COMMAND acquisition_sources_test)
+    add_executable(acquisition_sources_file_test tests/acquisition_sources_file_test.cpp)
+    target_link_libraries(acquisition_sources_file_test PRIVATE sdgo_api)
+    sdgo_strict(acquisition_sources_file_test)
+    target_compile_options(acquisition_sources_file_test PRIVATE /UNDEBUG)
+    add_test(NAME acquisition_sources_file COMMAND acquisition_sources_file_test)
     add_executable(ui_localization_system_text_test tests/ui_localization_system_text_test.cpp
-                   mods/ui_localization/system_text.cpp)
+                   mods/ui_localization/system_text.cpp mods/ui_localization/acquisition_text.cpp)
     target_include_directories(ui_localization_system_text_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(ui_localization_system_text_test PRIVATE sdgo_api)
     sdgo_strict(ui_localization_system_text_test)
     target_compile_options(ui_localization_system_text_test PRIVATE /UNDEBUG)
     add_test(NAME ui_localization_system_text COMMAND ui_localization_system_text_test)
+    add_executable(ui_localization_acquisition_text_test tests/ui_localization_acquisition_text_test.cpp
+                   mods/ui_localization/acquisition_text.cpp)
+    target_link_libraries(ui_localization_acquisition_text_test PRIVATE sdgo_api)
+    sdgo_strict(ui_localization_acquisition_text_test)
+    target_compile_options(ui_localization_acquisition_text_test PRIVATE /UNDEBUG)
+    add_dependencies(ui_localization_acquisition_text_test shop_localization_origin_fixture shop_localization_legacy_origin_fixture)
+    add_test(NAME ui_localization_acquisition_text COMMAND ui_localization_acquisition_text_test
+             "$<TARGET_FILE:shop_localization_origin_fixture>" "$<TARGET_FILE:shop_localization_legacy_origin_fixture>")
     add_executable(shop_catalog_mod_test tests/shop_catalog_mod_test.cpp)
     target_link_libraries(shop_catalog_mod_test PRIVATE sdgo_api)
     sdgo_strict(shop_catalog_mod_test)

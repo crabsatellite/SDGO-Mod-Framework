@@ -7,6 +7,15 @@ import test_game_test as runner_fixture
 game_test=runner_fixture.game_test
 
 class UnitScenarioTests(unittest.TestCase):
+    def test_detail_only_uses_real_list_detail_and_close_without_form_changes(self):
+        value=scope.bind({'schema':1,'presentation_target':10002,'detail_only':True},
+                         {'pages_only':True,'play_unit_uid':17})['unit_scenario']
+        self.assertEqual(scope.cases(value),('framework.bootstrap','flow.login','flow.onboarding',
+            'setup.active_unit','pages.unit_index.list','pages.unit_index.detail','pages.unit_index.close'))
+        self.assertEqual(scope.settings(value)['UnitPresentationDetailOnly'],'1')
+        for extra in ({'portraits':True,'capture_frames':True},{'collection_preview':True},{'detail_only':False}):
+            with self.assertRaises(ValueError):scope.bind({'schema':1,'detail_only':True,**extra},
+                {'pages_only':True,'play_unit_uid':17})
     def test_early_navigation_is_sealed_first_page_action_with_basic_recovery_suite(self):
         context={'pages_only':True,'play_unit_uid':17}
         for target in ('catalog','capsule','room'):
