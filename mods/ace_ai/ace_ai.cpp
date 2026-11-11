@@ -25,6 +25,15 @@ SdgoAceAiAnnouncementSnapshotV1 g_announcements[2]{};
 SRWLOCK g_announcementLock = SRWLOCK_INIT;
 volatile LONG g_announcementSequence = 0;
 volatile LONG g_announcementCount = 0;
+volatile LONG g_announcementFailureKinds = 0;
+
+void LogAnnouncementFailure(LONG kind, uint32_t phase, uint32_t count) {
+    const LONG prior = InterlockedOr(&g_announcementFailureKinds, kind);
+    if (!(prior & kind) && g_api && g_api->Log)
+        g_api->Log(g_mod, SDGO_LOG_WARN,
+                   "native Ace chat append unavailable: reason=%ld phase=%lu count=%lu",
+                   kind, static_cast<unsigned long>(phase), static_cast<unsigned long>(count));
+}
 
 void PublishAnnouncement(uint32_t colour, uint32_t before, uint32_t after,
                          const wchar_t* text) {
@@ -59,11 +68,16 @@ bool AppendAnnouncement(uint8_t* mode, uint32_t colour) {
     uint8_t* game = g_app();
     uint8_t* service = game ? *reinterpret_cast<uint8_t**>(game + 0x4A4) : nullptr;
     if (!service || *reinterpret_cast<uint8_t**>(service + 0x0C) != mode ||
-        *reinterpret_cast<uint32_t*>(service + 0x3C) != 3)
+        *reinterpret_cast<uint32_t*>(service + 0x3C) != 3) {
+        LogAnnouncementFailure(1, service ? *reinterpret_cast<uint32_t*>(service + 0x3C) : 0, 0);
         return false;
+    }
     void* head = *reinterpret_cast<void**>(service + 0x94);
     const uint32_t before = *reinterpret_cast<uint32_t*>(service + 0x98);
-    if (!head || before > 256) return false;
+    if (!head || before > 256) {
+        LogAnnouncementFailure(2, 3, before);
+        return false;
+    }
     alignas(4) uint8_t record[0x68]{};
     bool constructed = false;
     bool appended = false;
@@ -83,6 +97,7 @@ bool AppendAnnouncement(uint8_t* mode, uint32_t colour) {
         if (constructed) g_lineDtor(record);
     }
     if (appended) PublishAnnouncement(colour, before, before + 1, line);
+    else LogAnnouncementFailure(4, 3, *reinterpret_cast<uint32_t*>(service + 0x98));
     return appended;
 }
 }
@@ -104,7 +119,10 @@ extern "C" __declspec(dllexport) int __cdecl SdgoAceAiPilotNameV1(
 extern "C" __declspec(dllexport) int __cdecl SdgoAceAiAnnounceTeamV1(
     uint8_t* mode, uint32_t colour) {
     __try { return AppendAnnouncement(mode, colour) ? 1 : 0; }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        LogAnnouncementFailure(8, 0, GetExceptionCode());
+        return 0;
+    }
 }
 
 extern "C" __declspec(dllexport) int __cdecl
