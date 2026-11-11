@@ -10,7 +10,10 @@ Ace AI gives authored pilot identities to eligible AI in two places:
 Enemy mission NPCs are outside this feature. Ace selection does not change human players.
 The native overhead nameplate and the TAB roster both show the selected pilot. The nameplate keeps
 the game's own font, team colour and renderer, including when the native game rebuilds it on respawn.
-The feature remains Beta while its complete native PvP and mission flows are being accepted.
+
+![Ace pilot names in a native PvP battle](ace-ai-demo.webp)
+
+![Ace wingmen and unchanged enemy labels in a native mission](ace-ai-mission-demo.webp)
 
 ## Install
 
