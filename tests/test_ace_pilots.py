@@ -16,11 +16,14 @@ ROOT=Path(__file__).resolve().parents[1]
 class AcePilotCatalog(unittest.TestCase):
     def test_public_base_catalog_is_complete_unique_and_contains_reviewed_associations(self):
         catalog=normalize_catalog(json.loads((ROOT/'mods/ace_ai/base-pilots.json').read_text(encoding='utf-8')))
-        self.assertEqual(1073,len(catalog['pilots']))
+        self.assertEqual(1103,len(catalog['pilots']))
         roster=('\n'.join(str(row['unit_id']) for row in catalog['pilots'])+'\n').encode()
-        self.assertEqual('5da00f55408475d4ea5e2bd300f4a4ca95d2b1c6067952b3c7f5c074399f4436',hashlib.sha256(roster).hexdigest())
+        self.assertEqual('fd9d82a773d96aecd6175f0ebf3d4d9c1c7a86d30bf504faec26e4227cb50c10',hashlib.sha256(roster).hexdigest())
         rows={row['unit_id']:row for row in catalog['pilots']}
         self.assertEqual('阿姆罗·雷',rows[10001]['display_name'])
+        self.assertEqual('阿姆罗·雷',rows[3607006]['display_name'])
+        self.assertEqual('爱娜·萨哈林',rows[3607018]['display_name'])
+        self.assertEqual('联邦老兵',rows[3607022]['display_name'])
         self.assertEqual('凯·西登',rows[10007]['display_name'])
         self.assertEqual('克莉丝汀娜·麦肯吉',rows[10011]['display_name'])
         self.assertEqual('夏亚·阿兹纳布尔',rows[11047]['display_name'])

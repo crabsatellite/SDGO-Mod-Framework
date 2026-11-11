@@ -5365,6 +5365,156 @@
       "unit_id": 25127,
       "display_name": "资深王牌驾驶员",
       "kind": "role"
+    },
+    {
+      "unit_id": 3607001,
+      "display_name": "基拉·大和",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607002,
+      "display_name": "克瓦特罗·巴吉纳",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607003,
+      "display_name": "卡缪·维丹",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607004,
+      "display_name": "基拉·大和",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607005,
+      "display_name": "塞西莉·菲亚查德",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607006,
+      "display_name": "阿姆罗·雷",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607007,
+      "display_name": "阿里·阿尔·萨谢斯",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607008,
+      "display_name": "托比亚·阿罗纳克斯",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607009,
+      "display_name": "卡托尔·拉巴伯·温纳",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607010,
+      "display_name": "刹那·F·清英",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607011,
+      "display_name": "基拉·大和",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607012,
+      "display_name": "爱德华·哈里逊",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607013,
+      "display_name": "阿纳贝尔·卡多",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607014,
+      "display_name": "特洛瓦·巴顿",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607015,
+      "display_name": "凯利·雷兹纳",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607016,
+      "display_name": "多兹鲁·扎比",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607017,
+      "display_name": "凤·村雨",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607018,
+      "display_name": "爱娜·萨哈林",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607019,
+      "display_name": "阿斯兰·萨拉",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607020,
+      "display_name": "洛克昂·史特拉托斯",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607021,
+      "display_name": "提耶利亚·厄德",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607022,
+      "display_name": "联邦老兵",
+      "kind": "role"
+    },
+    {
+      "unit_id": 3607023,
+      "display_name": "基拉·大和",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607024,
+      "display_name": "缪迪·霍尔克罗夫特",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607025,
+      "display_name": "迪奥·麦斯威尔",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607026,
+      "display_name": "莎拉·萨比亚罗夫",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607027,
+      "display_name": "东方不败",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607028,
+      "display_name": "迪奥·麦斯威尔",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607029,
+      "display_name": "尼高尔·阿玛菲",
+      "kind": "named"
+    },
+    {
+      "unit_id": 3607030,
+      "display_name": "萨比尼·夏尔",
+      "kind": "named"
     }
   ]
 }

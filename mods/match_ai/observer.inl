@@ -268,6 +268,9 @@ namespace
             const uint8_t* npc =
                 *reinterpret_cast<const uint8_t* const*>(
                     bot.unit + kUnitNpcData);
+            // Non-deck native AI starts advertise zero deck entries. Read the
+            // actual NPC record rather than reporting an empty deck cache as ID 0.
+            if (npc) copied.npc_id = *reinterpret_cast<const uint32_t*>(npc);
             copied.machine_id = npc ?
                 *reinterpret_cast<const uint32_t*>(npc + kNpcUnitDataId) : 0;
             copied.current_hp =
