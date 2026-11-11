@@ -172,7 +172,7 @@ function(sdgo_add_mod id)
 endfunction()
 
 sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
-             SOURCES mods/mission_ai/mission_ai.cpp FILES mission_ai.lua)
+             SOURCES mods/mission_ai/mission_ai.cpp FILES mission_ai.lua symbols.fragment.ini)
 sdgo_add_mod(newcomer_protection SERVER DESCRIPTION "server-owned newcomer HP and ordinary attack multipliers"
              SOURCES mods/newcomer_protection/newcomer_protection.cpp FILES symbols.fragment.ini)
 if(BUILD_TESTING)

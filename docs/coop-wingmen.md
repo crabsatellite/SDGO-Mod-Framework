@@ -27,6 +27,7 @@ Put a command in the co-op mission room title:
 | title | effect |
 |---|---|
 | `!ai` | fill the free player slots with wingmen |
+| `!ai hard` | fill free slots with Hard wingmen |
 | `!ai2` | two wingmen (still capped by the free slots) |
 | `!ai3 lv4` | three wingmen from the level 4 pool |
 | `!ai3 inf` | three wingmen with unlimited respawns |

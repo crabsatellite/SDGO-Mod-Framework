@@ -178,9 +178,12 @@ class GameTestRunnerTests(unittest.TestCase):
         fragment=addon/'symbols.fragment.ini';fragment.write_text(text+'[addon.call]\nkind=code\nrva=0x1234\nexpect=55 8B EC 90 90\n')
         diagnostic=self.root/'diagnostic.ini';diagnostic.write_text('[mod]\nenabled=0\nrequires=missing.disabled\n')
         game_test.merge_retained_addon_symbols(staged,base,[manifest,diagnostic])
-        self.assertIn('addon.call',game_test.read_ini(base))
+        self.assertNotIn('addon.call',game_test.read_ini(base))
+        consumer=self.root/'consumer.ini';consumer.write_text('[mod]\nid=consumer\nrequires=addon.call\n')
+        with self.assertRaisesRegex(game_test.GameTestError,'lack required sections: addon.call'):
+            game_test.merge_retained_addon_symbols(staged,base,[manifest,consumer])
         base.write_text(text);fragment.write_text(text.replace('0x54BE1568','0x11111111')+'[addon.call]\nkind=data\nrva=0\n')
-        with self.assertRaisesRegex(game_test.GameTestError,'different host'):
+        with self.assertRaisesRegex(game_test.GameTestError,'does not match'):
             game_test.merge_retained_addon_symbols(staged,base,[manifest])
 
     def test_friends_scope_is_bound_to_native_session_and_exclusive(self):
