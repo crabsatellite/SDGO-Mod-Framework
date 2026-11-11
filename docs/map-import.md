@@ -6,6 +6,10 @@ Register maps and missions that were made outside the game and prepared in the *
 
 The feature only imports. It reads protocol data, generates the records and resources the game needs and installs them on the client and the server. It does not unpack, export or change the game's own maps and missions.
 
+![Native unit illustration strip](map-native-cutin-demo.webp)
+
+The native entrance and exit animation uses built-in artwork here. The owner content package supplies the artwork used by each mission.
+
 ## Parts
 
 | Part | Role |
@@ -110,7 +114,9 @@ Mission files live under `missions/` in the map package and are listed in `files
 
 Players cannot move during a cutscene; control returns when it ends.
 
-Declare an illustration strip in the matching NPC's `cutin`; the native NPC-arrival flow plays it. `image` may reference a package PNG/JPEG instead of `native_sprite`; its default size is 1024×156. Other sizes declare `crop: [left,top,right,bottom]`: the native SPR clips that pixel rectangle and preserves its aspect, removing white margins without squeezing the unit. Source dimensions are at most 2048 and the selected logical height is 64..512. Choose one artwork source and provide `line` in either case. A text title image does not replace a unit illustration strip.
+Declare an illustration strip in the matching NPC's `cutin`; the native NPC-arrival flow plays it. `image` may reference a package PNG/JPEG instead of `native_sprite`; its default size is 1024×156. Other sizes declare `crop: [left,top,right,bottom]`: the native SPR selects that pixel rectangle and retains its logical aspect, using the original interface's placement and resolution scaling. Source dimensions are at most 2048 and the selected logical height is 64..512. Choose one artwork source and provide `line` in either case. A text title image does not replace a unit illustration strip.
+
+Use a transparent PNG to retain parts that extend beyond the banner edge. `crop` selects the displayed rectangle; it does not remove the background.
 
 The compiler checks placement and camera work: spawn points, mission spawns, cutscene actors and warp points must not be inside an object; a cutscene camera must not be below the ground or inside an object, and its view toward the target must not be blocked by terrain or objects (models the client already has are tested with their own collision, so open structures such as gate frames and arches stay open). Errors name the cutscene, the time and the camera position.
 

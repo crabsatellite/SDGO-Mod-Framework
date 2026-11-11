@@ -173,6 +173,16 @@
       "title_en": "Unit encyclopedia: shop, blueprint and adjutant sources",
       "guide_zh": "docs/acquisition-sources.zh-CN.md",
       "guide_en": "docs/acquisition-sources.md"
+    },
+    {
+      "id": "map-native-cutin",
+      "path": "docs/map-native-cutin-demo.webp",
+      "since": "1.16.23",
+      "mods": ["map_catalog"],
+      "title_zh": "导入任务：原生机体图片横幅",
+      "title_en": "Imported missions: native unit illustration strip",
+      "guide_zh": "docs/map-import.zh-CN.md",
+      "guide_en": "docs/map-import.md"
     }
   ]
 }
