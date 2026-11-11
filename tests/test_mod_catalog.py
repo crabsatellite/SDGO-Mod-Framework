@@ -257,7 +257,7 @@ class CatalogTests(unittest.TestCase):
             catalog.read_catalog(self.root)
 
     def test_future_data_config_contract_is_supported(self):
-        self.replace("mods/mission_ai/mod.ini", "files=mission_ai.lua", "files=mission_ai.lua\nconfig_files=config.ini,settings/roster.json")
+        self.replace("mods/mission_ai/mod.ini", "files=mission_ai.lua,symbols.fragment.ini", "files=mission_ai.lua,symbols.fragment.ini\nconfig_files=config.ini,settings/roster.json")
         c = catalog.read_catalog(self.root)
         mod = next(m for m in c["mods"] if m["id"] == "mission_ai")
         self.assertEqual(mod["config_files"], ["config.ini", "settings/roster.json"])

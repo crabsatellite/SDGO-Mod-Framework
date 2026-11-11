@@ -1,6 +1,7 @@
 """Build a generic, verified Stable or Beta Manager release (no game data)."""
 from pathlib import Path
 import argparse
+import configparser
 import hashlib
 import json
 import os
@@ -23,11 +24,46 @@ def catalog_for(channel):
     return {**full,'profile':channel,'mods':mods,'features':{k:v for k,v in full['features'].items() if k in features}}
 
 
+def validate_symbol_requirements(stage, catalog):
+    """Match core's global-plus-own-fragment lookup, never another Mod's aliases."""
+    def read(path):
+        if not path.is_file():
+            raise ValueError('Missing staged symbol contract: '+str(path))
+        parser=configparser.ConfigParser(interpolation=None,strict=False)
+        parser.read(path,encoding='utf-8-sig')
+        return parser
+    for mod in catalog['mods']:
+        folder=stage/mod['target']/'sdgo/mods'/mod['id']
+        manifest=read(folder/'mod.ini')
+        required={v.strip()for v in manifest.get('mod','requires',fallback='').split(',')if v.strip()}
+        if not required:continue
+        fragment=(read(folder/'symbols.fragment.ini')
+                  if 'symbols.fragment.ini' in public_payload_files(mod) else None)
+        hosts=mod['hosts']
+        if '*' in hosts:
+            hosts=[p.stem for p in (stage/mod['target']/'sdgo/symbols').glob('*.ini')]
+        for host in hosts:
+            shared=read(stage/mod['target']/'sdgo/symbols'/(host+'.ini'))
+            available=set(shared.sections())-{'host'}
+            if fragment is not None:
+                try:
+                    matching=(fragment['host']['image'].casefold()==shared['host']['image'].casefold()
+                              and all(int(fragment['host'][key],0)==int(shared['host'][key],0)
+                                      for key in ('timestamp','size_of_image')))
+                except (KeyError,ValueError):matching=False
+                if not matching:raise ValueError('Mod symbol fragment host differs: '+mod['id'])
+                available|=set(fragment.sections())-{'host'}
+            missing=sorted(required-available)
+            if missing:
+                raise ValueError('Unresolved runtime symbols for '+mod['id']+' on '+host+': '+', '.join(missing))
+
+
 def build(channel, release_version, stage, manager, output, commit=None, repository=REPOSITORY):
     repository=validate_repository(repository)
     version(release_version)
     if (channel=='beta')!=('-beta.' in release_version):raise ValueError('Version must match the release channel')
     catalog=catalog_for(channel);validate_stage(ROOT,stage,catalog)
+    validate_symbol_requirements(stage,catalog)
     payload={MANAGER:manager.read_bytes()}
     for tree,loader in (('client','d3d9.dll'),('server','winmm.dll')):
         for name in (loader,'sdgo/core.dll','sdgo/sdgo.ini'):
