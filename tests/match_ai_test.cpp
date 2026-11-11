@@ -136,6 +136,13 @@ void __fastcall NativeReady(uint8_t* svc, void*) {
         Get<uint32_t>(svc, kServiceReadyState) == 3)
         localPlayer[kPlayerControlEnabled] = 1;
 }
+int __fastcall LateNativeHealthReset(uint8_t*,void*) {
+    if(!g_botTable.empty()) {
+        Put<uint32_t>(g_botTable[0].unit,kUnitMaxHp,13500u);
+        Put<uint32_t>(g_botTable[0].unit,kUnitCurrentHp,4000u);
+    }
+    return 29;
+}
 void __fastcall RosterInit(uint8_t*, void*, void*, void*) {}
 int rosterDraws = 0;
 void __fastcall RosterDraw(uint8_t*, void*, uint8_t*, int) { ++rosterDraws; }
@@ -1353,6 +1360,21 @@ int main() {
           g_botTable[0].startDeckGeneration == advertisedGeneration);
     CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitMaxHp) == 16200u);
     CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitCurrentHp) == 16200u);
+
+    SCENARIO("native mode completion restores an Ace maximum reset after playback without healing");
+    g_aiEnabled=true;
+    g_classes[0].updateOriginal=reinterpret_cast<decltype(g_classes[0].updateOriginal)>(&LateNativeHealthReset);
+    CHECK(ModeUpdate<0>(mode.data(),nullptr)==29);
+    CHECK(Get<uint32_t>(g_botTable[0].unit,kUnitMaxHp)==16200u &&
+          Get<uint32_t>(g_botTable[0].unit,kUnitCurrentHp)==4000u);
+    CHECK(ModeUpdate<0>(mode.data(),nullptr)==29);
+    CHECK(Get<uint32_t>(g_botTable[0].unit,kUnitMaxHp)==16200u &&
+          Get<uint32_t>(g_botTable[0].unit,kUnitCurrentHp)==4000u);
+    const auto healthBinding=g_botTable[0].startDeckGeneration;
+    ++g_botTable[0].startDeckGeneration;
+    CHECK(ModeUpdate<0>(mode.data(),nullptr)==29);
+    CHECK(Get<uint32_t>(g_botTable[0].unit,kUnitMaxHp)==13500u);
+    g_botTable[0].startDeckGeneration=healthBinding;
 
     SCENARIO("zero-count health remains fail-closed without a valid first block and in deck modes");
     Reset(0, 1); Records(1, 1); Put<uint32_t>(ais.data(), kRecordServerId, aceHealthPilot);

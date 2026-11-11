@@ -298,6 +298,17 @@ int main() {
     CHECK(Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1440u &&
           Get<uint32_t>(units[0].data(), kObjectHp) == 1440u);
 
+    SCENARIO("mission update corrects a late native maximum reset without healing or multiplying");
+    Put<uint32_t>(units[0].data(),kObjectMaxHp,1200u);
+    Put<uint32_t>(units[0].data(),kObjectHp,400u);
+    g_disabled=true;
+    MissionUpdate(mode.data(),nullptr);
+    CHECK(Get<uint32_t>(units[0].data(),kObjectMaxHp)==1440u &&
+          Get<uint32_t>(units[0].data(),kObjectHp)==400u);
+    MissionUpdate(mode.data(),nullptr);
+    CHECK(Get<uint32_t>(units[0].data(),kObjectMaxHp)==1440u &&
+          Get<uint32_t>(units[0].data(),kObjectHp)==400u);
+
     Reset(1, 1, true); SetAceRecord(0);
     createdCurrentHp = 900; createdMaxHp = 1200;
     g_matchStartUnit = &StartUnit;

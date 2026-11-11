@@ -23,6 +23,7 @@
 
 #include "sdgo/mission_ai_client_observer.h"
 #include "sdgo/ai_start_units.h"
+#include "sdgo/ace_ai_client.h"
 #include "sdgo/ace_ai_observer.h"
 #include "sdgo/mission_ai_stage_warp_observer.h"
 #include "sdgo/sdgo_api.h"
@@ -233,6 +234,7 @@ namespace
     BattleAiBeginBattleFn g_battleAiBeginBattle = nullptr;
     HMODULE g_aceAiModule = nullptr;
     AcePilotNameFn g_acePilotName = nullptr;
+    SdgoAceAiSetNameplateV1Fn g_aceSetNameplate = nullptr;
     NativeStepFn g_lineCtor = nullptr;
     NativeStepFn g_lineDtor = nullptr;
     NativeStringCtorFn g_nativeStringCtor = nullptr;
@@ -358,7 +360,8 @@ namespace
             const bool freshFullSeed = initializeFreshCurrent &&
                 nativeMaximum != 0 && nativeMaximum <= 0x7fffffffu &&
                 nativeCurrent == nativeMaximum;
-            *reinterpret_cast<uint32_t*>(unit + kObjectMaxHp) = request.max_hp;
+            if (nativeMaximum != request.max_hp)
+                *reinterpret_cast<uint32_t*>(unit + kObjectMaxHp) = request.max_hp;
             if (freshFullSeed)
                 *reinterpret_cast<uint32_t*>(unit + kObjectHp) = request.max_hp;
             wingman.startUnitGeneration = request.generation;
@@ -499,10 +502,14 @@ namespace
         if (module != g_aceAiModule) {
             g_aceAiModule = module;
             g_acePilotName = nullptr;
+            g_aceSetNameplate = nullptr;
         }
         if (module && !g_acePilotName)
             g_acePilotName = reinterpret_cast<AcePilotNameFn>(
                 GetProcAddress(module, "SdgoAceAiPilotNameV1"));
+        if (module && !g_aceSetNameplate)
+            g_aceSetNameplate = reinterpret_cast<SdgoAceAiSetNameplateV1Fn>(
+                GetProcAddress(module, SDGO_ACE_AI_SET_NAMEPLATE_EXPORT));
     }
 
     bool ApplyAcePilotName(void* um, ObservedWingman& wingman)
@@ -523,6 +530,8 @@ namespace
         if (!player) return false;
         g_game.assign(player + kSlotName, name, wcslen(name));
         wingman.acePilotName.assign(name);
+        if (g_aceSetNameplate)
+            g_aceSetNameplate(wingman.spawnedUnit, name, wingman.startUnitGeneration);
         wingman.aceNameApplied = true;
         return true;
     }
@@ -717,14 +726,14 @@ namespace
                 SdgoAceAiMissionPlaybackContextV1 context{};
                 const bool exactPlayback =
                     CurrentPlaybackContext(object, &context);
-                if (exactPlayback)
-                    ApplyAdvertisedAceHealth(wingman, false);
                 wingman.aceNameApplied = false;
                 wingman.profileInitial = false;
                 ApplyAcePilotName(um, wingman);
                 wingman.profileInitialized = InitializeBattleAiWingman(
                     unit, wingman.effectiveDifficulty, false,
                     &wingman.profileGeneration);
+                if (exactPlayback)
+                    ApplyAdvertisedAceHealth(wingman, false);
                 if (exactPlayback)
                     PublishPlaybackReceipt(wingman, context);
                 return;
@@ -1528,11 +1537,11 @@ namespace
             observed.recordNpcId = npcData;
             g_observedWingmen.push_back(observed);
             ObservedWingman& stored = g_observedWingmen.back();
-            ApplyAdvertisedAceHealth(stored, true);
-            ApplyAcePilotName(um, stored);
             stored.profileInitialized = InitializeBattleAiWingman(
                 unit, stored.effectiveDifficulty, true,
                 &stored.profileGeneration);
+            ApplyAdvertisedAceHealth(stored, true);
+            ApplyAcePilotName(um, stored);
             if (stored.ace) g_missionAcePending = true;
             g_api->Log(g_mod, SDGO_LOG_INFO, "AI participant %08lX joined as object %lu (NPC %lu, team %d, slot %d, %s)",
                        static_cast<unsigned long>(*reinterpret_cast<uint32_t*>(record)),
@@ -1865,12 +1874,6 @@ namespace
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX in mission tick; mission AI disabled until restart", code);
             }
         }
-        if (!GuardedRefreshObserver(
-                static_cast<uint8_t*>(mode),
-                &code)) {
-            RecordNativeException(code);
-            g_api->Log(g_mod, SDGO_LOG_WARN, "exception %08lX while observing mission update", code);
-        }
         if (g_matchAiMissionTick)
             g_matchAiMissionTick(
                 static_cast<uint8_t*>(mode));
@@ -1882,7 +1885,14 @@ namespace
                     wingman.profileInitialized = InitializeBattleAiWingman(
                         wingman.spawnedUnit, wingman.effectiveDifficulty,
                         wingman.profileInitial, &wingman.profileGeneration);
+                ApplyAdvertisedAceHealth(wingman, false);
             }
+        }
+        if (!GuardedRefreshObserver(
+                static_cast<uint8_t*>(mode),
+                &code)) {
+            RecordNativeException(code);
+            g_api->Log(g_mod, SDGO_LOG_WARN, "exception %08lX while observing mission update", code);
         }
         if (g_missionReadyReleased)
             TryMissionAceAnnouncement(static_cast<uint8_t*>(mode));

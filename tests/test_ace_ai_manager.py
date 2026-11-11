@@ -114,6 +114,7 @@ class AceAiManagerContractTests(unittest.TestCase):
         self.assertEqual(
             {
                 "host",
+                "ace.unit_nameplate",
                 "dialogue.battle_chat.ctor",
                 "dialogue.battle_chat.dtor",
                 "dialogue.battle_chat.append",
@@ -124,6 +125,7 @@ class AceAiManagerContractTests(unittest.TestCase):
         self.assertEqual("0x54BE1568", fragment.get("host", "timestamp"))
         self.assertEqual("0x00C97000", fragment.get("host", "size_of_image"))
         for section in (
+            "ace.unit_nameplate",
             "dialogue.battle_chat.ctor",
             "dialogue.battle_chat.dtor",
             "dialogue.battle_chat.append",

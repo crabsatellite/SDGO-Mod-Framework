@@ -8,6 +8,8 @@ Ace AI gives authored pilot identities to eligible AI in two places:
 - Friendly mission wingmen created for the human side.
 
 Enemy mission NPCs are outside this feature. Ace selection does not change human players.
+The native overhead nameplate and the TAB roster both show the selected pilot. The nameplate keeps
+the game's own font, team colour and renderer, including when the native game rebuilds it on respawn.
 The feature remains Beta while its complete native PvP and mission flows are being accepted.
 
 ## Install
@@ -119,3 +121,6 @@ Both client and server `owner-pilots.json` paths are declared configuration/cont
 fingerprints their actual bytes when present and also distinguishes a missing overlay. The two public base
 catalogs are versioned programme files generated from one source. No catalog is an independent authority for
 chance or stat policy.
+
+The shared battle-start bridge supplies the authoritative maximum HP. Client mode completion reconciles
+that maximum after native respawn and skill initialization; it never heals current HP or multiplies it again.

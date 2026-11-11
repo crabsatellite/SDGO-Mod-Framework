@@ -1,9 +1,12 @@
 #include <windows.h>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/ace_ai_observer.h"
+#include "sdgo/ace_ai_client.h"
 #include "pilot_catalog.h"
 
 namespace {
@@ -20,6 +23,73 @@ StepFn g_lineCtor = nullptr;
 StepFn g_lineDtor = nullptr;
 StringCtorFn g_stringCtor = nullptr;
 AppendLineFn g_appendLine = nullptr;
+using NameplateFn = void(__thiscall*)(uint8_t*, const void*, uint32_t, uint32_t);
+static_assert(sizeof(std::wstring) == 24, "native x86 string layout changed");
+NameplateFn g_originalNameplate = nullptr;
+struct NameplateBinding {
+    uint8_t* unit = nullptr;
+    uint32_t object = 0;
+    uint32_t pilot = 0;
+    std::wstring name;
+};
+std::array<NameplateBinding, 12> g_nameplates{};
+uint32_t g_nameplateGeneration = 0;
+
+bool NameplateMatches(const NameplateBinding& binding, const uint8_t* unit) {
+    __try {
+        if (!g_active || !unit || binding.unit != unit ||
+            *reinterpret_cast<const uint32_t*>(unit + 4) != binding.object ||
+            *reinterpret_cast<const uint32_t*>(unit + 0x2B68) != binding.pilot ||
+            (binding.pilot & 0xC0000000u) != 0xC0000000u)
+            return false;
+        const uint32_t npc = *reinterpret_cast<const uint32_t*>(unit + 0x3238);
+        return npc >= 3604001 && npc <= 3607000;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// Native CBaseGameUnit message 6 owns this renderer. The original creates and
+// destroys its own nameplate texture at unit+0xE5C and consumes the string now.
+// Keep the caller's colour and pilot arguments, including on later respawns.
+void __fastcall Nameplate(uint8_t* unit, void*, const void* text,
+                          uint32_t colour, uint32_t pilot) {
+    for (const auto& binding : g_nameplates) {
+        if (NameplateMatches(binding, unit)) {
+            g_originalNameplate(unit, &binding.name, colour, pilot);
+            return;
+        }
+    }
+    g_originalNameplate(unit, text, colour, pilot);
+}
+
+int SetNameplate(uint8_t* unit, const wchar_t* name, uint32_t generation) {
+    if (!g_active || !g_originalNameplate || !unit || !name || !generation ||
+        generation < g_nameplateGeneration) return 0;
+    const size_t length = wcsnlen_s(name, 65);
+    if (!length || length >= 65) return 0;
+    NameplateBinding identity;
+    identity.unit = unit;
+    identity.object = *reinterpret_cast<uint32_t*>(unit + 4);
+    identity.pilot = *reinterpret_cast<uint32_t*>(unit + 0x2B68);
+    if (!identity.object || !NameplateMatches(identity, unit)) return 0;
+    if (generation != g_nameplateGeneration) {
+        for (auto& binding : g_nameplates) binding = {};
+        g_nameplateGeneration = generation;
+    }
+    NameplateBinding* selected = nullptr;
+    for (auto& binding : g_nameplates)
+        if (binding.unit == unit) { selected = &binding; break; }
+    if (!selected)
+        for (auto& binding : g_nameplates)
+            if (!binding.unit) { selected = &binding; break; }
+    if (!selected) return 0;
+    identity.name.assign(name, length);
+    *selected = std::move(identity);
+    auto* plate = *reinterpret_cast<uint8_t**>(unit + 0xE5C);
+    if (!plate) return 0; // A later native message 6 will consume the binding.
+    const uint32_t colour = *reinterpret_cast<uint32_t*>(plate + 0x148);
+    g_originalNameplate(unit, &selected->name, colour, selected->pilot);
+    return *reinterpret_cast<uint8_t**>(unit + 0xE5C) ? 1 : 0;
+}
 SdgoAceAiAnnouncementSnapshotV1 g_announcementLatest{};
 SdgoAceAiAnnouncementSnapshotV1 g_announcements[2]{};
 SRWLOCK g_announcementLock = SRWLOCK_INIT;
@@ -106,6 +176,12 @@ extern "C" __declspec(dllexport) int __cdecl SdgoAceAiActiveV1() {
     return g_active ? 1 : 0;
 }
 
+extern "C" __declspec(dllexport) int __cdecl SdgoAceAiSetNameplateV1(
+    uint8_t* unit, const wchar_t* name, uint32_t generation) {
+    __try { return SetNameplate(unit, name, generation); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
 extern "C" __declspec(dllexport) int __cdecl SdgoAceAiPilotNameV1(
     uint32_t unitId, wchar_t* output, uint32_t capacity) {
     if (!g_active || !output || capacity == 0) return 0;
@@ -155,7 +231,9 @@ SDGO_MOD_ENTRY
         !Bind(g_lineCtor, "dialogue.battle_chat.ctor") ||
         !Bind(g_lineDtor, "dialogue.battle_chat.dtor") ||
         !Bind(g_stringCtor, "flow.native_wstring_ctor") ||
-        !Bind(g_appendLine, "dialogue.battle_chat.append"))
+        !Bind(g_appendLine, "dialogue.battle_chat.append") ||
+        !api->HookCode(mod, "ace.unit_nameplate", reinterpret_cast<void*>(&Nameplate),
+                       reinterpret_cast<void**>(&g_originalNameplate)))
         return 0;
     g_active = true;
     api->Log(mod, SDGO_LOG_INFO, "ready: %u Ace pilot identities",

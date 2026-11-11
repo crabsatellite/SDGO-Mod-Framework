@@ -42,6 +42,7 @@
 #include <windows.h>
 #include "sdgo/mission_ai_lifecycle.h"
 #include "sdgo/ai_start_units.h"
+#include "sdgo/ace_ai_client.h"
 
 static SdgoMissionClientLifecycleV1* g_missionLifecycle = nullptr;
 
@@ -335,6 +336,7 @@ namespace
     using AcePilotNameFn = int(__cdecl*)(uint32_t, wchar_t*, uint32_t);
     using AceAnnounceTeamFn = int(__cdecl*)(uint8_t*, uint32_t);
     AcePilotNameFn g_acePilotName = nullptr;
+    SdgoAceAiSetNameplateV1Fn g_aceSetNameplate = nullptr;
     AceAnnounceTeamFn g_aceAnnounceTeam = nullptr;
     ForceMoveSenderFn g_forceMoveSender = nullptr;
     battle_ai::native::SendForceMovePacketFn g_sendForceMovePacket = nullptr;
@@ -521,6 +523,7 @@ namespace
         if (module != g_aceAiModule) {
             g_aceAiModule = module;
             g_acePilotName = nullptr;
+            g_aceSetNameplate = nullptr;
             g_aceAnnounceTeam = nullptr;
         }
         if (module && !g_acePilotName)
@@ -529,6 +532,9 @@ namespace
         if (module && !g_aceAnnounceTeam)
             g_aceAnnounceTeam = reinterpret_cast<AceAnnounceTeamFn>(
                 GetProcAddress(module, "SdgoAceAiAnnounceTeamV1"));
+        if (module && !g_aceSetNameplate)
+            g_aceSetNameplate = reinterpret_cast<SdgoAceAiSetNameplateV1Fn>(
+                GetProcAddress(module, SDGO_ACE_AI_SET_NAMEPLATE_EXPORT));
     }
 
     int GuardedAcePilotName(uint32_t unitId, wchar_t* value, uint32_t capacity)
@@ -553,6 +559,9 @@ namespace
         __try {
             uint8_t* slot = g_game.playerSlot(um, bot.slot);
             if (slot) g_game.assign(slot + kSlotName, bot.acePilotName.c_str(), bot.acePilotName.size());
+            ResolveAceProvider();
+            if (g_aceSetNameplate)
+                g_aceSetNameplate(bot.unit, bot.acePilotName.c_str(), bot.startDeckGeneration);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: restoring Ace pilot name failed (%08lX)",
                        static_cast<unsigned long>(bot.pilotId), GetExceptionCode());
@@ -766,7 +775,8 @@ namespace
                 *reinterpret_cast<const uint32_t*>(bot.unit + kUnitCurrentHp);
             const bool freshFullSeed = initializeFreshCurrent && nativeMaximum != 0 &&
                 nativeMaximum <= 0x7fffffffu && nativeCurrent == nativeMaximum;
-            *reinterpret_cast<uint32_t*>(bot.unit + kUnitMaxHp) = advertised;
+            if (nativeMaximum != advertised)
+                *reinterpret_cast<uint32_t*>(bot.unit + kUnitMaxHp) = advertised;
             // The start packet has no current-HP field.  Preserve all server-authored
             // current HP except the exact native full-health seed of a newly created
             // actor, where the advertised maximum is the only truthful full value.
@@ -1047,8 +1057,8 @@ namespace
             g_creatingAiUnit = false;
         }
         bot.generation = NextUnitGeneration();
-        ApplyAdvertisedAceHealth(bot, 0, true);
         InitializeBattleAiUnit(bot, true);
+        ApplyAdvertisedAceHealth(bot, 0, true);
         // Native CreateNpc/InitNPCAI may already enable the controller. Apply
         // the per-unit steps of AllNpcStopControl (0x00AE5A20), scoped to this
         // newly created match_ai participant, before the first world update.
@@ -1282,6 +1292,12 @@ namespace
     int __fastcall ModeUpdate(uint8_t* mode,void*)
     {
         const int result=g_classes[I].updateOriginal(mode);
+        // Native NPC skill/respawn initialization can reset maximum HP after
+        // PlaybackUnit returns. Keep the exact server-advertised maximum at
+        // the completed mode boundary; never rescale or restore current HP.
+        if(mode==g_botMode&&g_aiEnabled&&CurrentMode()==mode)
+            for(Bot& bot:g_botTable)
+                ApplyAdvertisedAceHealth(bot,bot.form,false);
         NotifyTick(mode,static_cast<uint32_t>(InterlockedCompareExchange(&g_receivedBattleStartCount,0,0)));
         if(mode==g_botMode&&g_aiEnabled) {
             InterlockedIncrement(&g_forcedPadTicks);
@@ -2893,9 +2909,9 @@ namespace
             if (bot.pendingInitialize) {
                 bot.pendingInitialize = false;
                 bot.generation = NextUnitGeneration();
-                ApplyAdvertisedAceHealth(bot, bot.form, false);
                 ApplyAcePilotName(g_game.unitManager ? *g_game.unitManager : nullptr, bot);
                 InitializeBattleAiUnit(bot);
+                ApplyAdvertisedAceHealth(bot, bot.form, false);
             }
         }
     }

@@ -14,6 +14,13 @@ int appendCalls = 0;
 int raiseStage = 0;
 bool appendSuccess = false;
 std::wstring appendedText;
+std::wstring nameplateText;
+uint32_t nameplateColour=0, nameplatePilot=0;
+int nameplateCalls=0;
+void __fastcall NativeNameplate(uint8_t*,void*,const void* text,uint32_t colour,uint32_t pilot) {
+    nameplateText=*static_cast<const std::wstring*>(text);
+    nameplateColour=colour;nameplatePilot=pilot;++nameplateCalls;
+}
 
 uint8_t* App() { return app.data(); }
 void __fastcall LineCtor(void*, void*) {
@@ -66,6 +73,9 @@ void Reset() {
     g_lineDtor = reinterpret_cast<StepFn>(&LineDtor);
     g_stringCtor = reinterpret_cast<StringCtorFn>(&StringCtor);
     g_appendLine = reinterpret_cast<AppendLineFn>(&Append);
+    g_originalNameplate=reinterpret_cast<NameplateFn>(&NativeNameplate);
+    for(auto& binding:g_nameplates)binding={};
+    g_nameplateGeneration=0;nameplateCalls=0;nameplateText.clear();
 }
 }
 
@@ -138,5 +148,39 @@ int main() {
     g_active = false;
     CHECK(SdgoAceAiAnnounceTeamV1(mode.data(), 1) == 0 && lineCtors == 0);
 
+    SCENARIO("Ace nameplate reuses the native renderer, preserves its colour and survives later native resets");
+    Reset();
+    std::array<uint8_t,0x3400> actor{};
+    std::array<uint8_t,0x160> plate{};
+    ai_test::Put<uint32_t>(actor.data(),4,1001u);
+    ai_test::Put<uint32_t>(actor.data(),0x2B68,0xE0000002u);
+    ai_test::Put<uint32_t>(actor.data(),0x3238,3604001u);
+    ai_test::Put(actor.data(),0xE5C,plate.data());
+    ai_test::Put<uint32_t>(plate.data(),0x148,0xAA55FF33u);
+    CHECK(SdgoAceAiSetNameplateV1(actor.data(),L"阿姆罗·雷",7)==1);
+    CHECK(nameplateText==L"阿姆罗·雷"&&nameplateColour==0xAA55FF33u&&nameplatePilot==0xE0000002u);
+    std::wstring machine=L"原版机体名称";
+    Nameplate(actor.data(),nullptr,&machine,0x11223344u,99u);
+    CHECK(nameplateText==L"阿姆罗·雷"&&nameplateColour==0x11223344u&&nameplatePilot==99u);
+    ai_test::Put<uint32_t>(actor.data(),0x3238,3604002u);
+    Nameplate(actor.data(),nullptr,&machine,5u,6u);
+    CHECK(nameplateText==L"阿姆罗·雷");
+
+    SCENARIO("ordinary AI, enemy NPCs and reused actor identities keep native names");
+    ai_test::Put<uint32_t>(actor.data(),0x2B68,0x80000002u);
+    Nameplate(actor.data(),nullptr,&machine,5u,6u);
+    CHECK(nameplateText==machine&&SdgoAceAiSetNameplateV1(actor.data(),L"王牌",7)==0);
+    ai_test::Put<uint32_t>(actor.data(),0x2B68,0xE0000002u);
+    ai_test::Put<uint32_t>(actor.data(),4,1002u);
+    Nameplate(actor.data(),nullptr,&machine,5u,6u);
+    CHECK(nameplateText==machine);
+    ai_test::Put<uint32_t>(actor.data(),0x3238,12345u);
+    CHECK(SdgoAceAiSetNameplateV1(actor.data(),L"王牌",7)==0);
+    ai_test::Put<uint32_t>(actor.data(),0x3238,3604002u);
+    CHECK(SdgoAceAiSetNameplateV1(actor.data(),L"",7)==0);
+    CHECK(SdgoAceAiSetNameplateV1(actor.data(),std::wstring(65,L'A').c_str(),7)==0);
+    CHECK(SdgoAceAiSetNameplateV1(actor.data(),L"新王牌",8)==1);
+    CHECK(SdgoAceAiSetNameplateV1(actor.data(),L"旧王牌",7)==0);
+    CHECK(nameplateText==L"新王牌");
     return ai_test::Finish();
 }
