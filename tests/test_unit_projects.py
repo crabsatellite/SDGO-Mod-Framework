@@ -65,6 +65,19 @@ class UnitProjects(unittest.TestCase):
         with self.assertRaises(ValueError):normalize_metadata({'server_password':'not metadata'})
         with self.assertRaises(ValueError):normalize_metadata({'visibility':'public'})
         with self.assertRaises(ValueError):normalize_metadata({'aliases':['Alias','ＡＬＩＡＳ']})
+        with self.assertRaises(ValueError):normalize_metadata({'ace_pilot':{'display_name':'','kind':'named'}})
+        with self.assertRaises(ValueError):normalize_metadata({'ace_pilot':{'display_name':'阿姆罗·雷','kind':'invented'}})
+        with self.assertRaises(ValueError):normalize_metadata({'ace_pilot':{'display_name':'阿姆罗·雷','kind':'named','unit':'Gundam'}})
+
+    def test_optional_ace_pilot_metadata_round_trips_without_affecting_legacy_projects(self):
+        one=self.engine('one');state=one.create_project({'name':'Ace Example','metadata':{
+            'ace_pilot':{'display_name':'阿姆罗·雷','kind':'named'}}},one.public()['revision'])
+        raw=export_project(one,state['draft'])
+        two=self.engine('two');imported=two.inspect('ace.zip',raw,two.public()['revision'])
+        self.assertEqual({'display_name':'阿姆罗·雷','kind':'named'},imported['draft']['metadata']['ace_pilot'])
+        self.assertTrue(matches(imported['draft'],'阿姆罗'))
+        legacy=normalize_metadata({'description':'old package'})
+        self.assertNotIn('ace_pilot',legacy)
 
     def test_examples_do_not_invent_search_matches(self):
         draft={'name':'Example','metadata':{'aliases':['Known'],'search_examples':['Unmatched']}}

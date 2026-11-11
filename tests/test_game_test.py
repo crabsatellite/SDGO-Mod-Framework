@@ -773,6 +773,31 @@ rva=state
         self.assertNotIn('ai_layout', baseline_meta['plan'])
         self.assertNotIn('ai_layout', baseline_run)
 
+    def test_plain_mission_ai_difficulty_is_sealed_and_tamper_checked(self):
+        self.account_profile.write_text('[account]\nusername=ReuseA1234\npassword=ReusePass123\n[registration]\nstate=existing_account\n')
+        run = self.prepare('mission-hard-ace', mission_mode=5, mission_ai_difficulty='Hard',
+                           capture_native_frames=True)
+        metadata = self.metadata(run)
+        self.assertEqual('Hard', metadata['plan']['mission_ai_difficulty'])
+        self.assertEqual(metadata['plan']['title_nonce']+' !ai hard', metadata['plan']['room_title'])
+        self.assertEqual('Hard', game_test.read_public_plan(run/'client')['mission_ai_difficulty'])
+        self.assertEqual('1', game_test.read_ini(run/'client/sdgo/mods/game_test_client/mod.ini')['settings']['CaptureNativeFrames'])
+        game_test.validate_metadata(run)
+        config = game_test.read_ini(run/'client/sdgo/gametest/run.ini')
+        config['run']['mission_ai_difficulty'] = 'Easy'
+        game_test.write_ini(run/'client/sdgo/gametest/run.ini', config)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run)
+
+    def test_mission_ai_difficulty_rejects_other_scopes_and_preserves_default_title(self):
+        with self.assertRaisesRegex(game_test.GameTestError, 'requires --mission-mode'):
+            game_test.make_plan('127.0.0.1', 5001, '1', '1', '1', 1, False, 3, None,
+                                mission_ai_difficulty='Hard')
+        self.assertEqual('abc !ai3 lv2', game_test.mission_room_title('abc'))
+        self.assertEqual('abc !ai hard inf', game_test.mission_room_title('abc','infinite','Hard'))
+        with self.assertRaisesRegex(game_test.GameTestError, 'twenty-byte'):
+            game_test.mission_room_title('x'*15, difficulty='Medium')
+
     def test_ai_difficulty_seals_native_full_room_command(self):
         for difficulty in ('Easy', 'Medium', 'Hard'):
             with self.subTest(ai_difficulty=difficulty):
@@ -1936,6 +1961,74 @@ state=pending_first_login
             "framework.infrastructure",
             [case.get("name") for case in suite.findall("testcase")],
         )
+
+    def test_native_battle_ai_policy_reload_error_fails_receipt(self):
+        run_dir = self.prepare("battle-ai-policy-reload-error")
+        self.set_execution(run_dir)
+        self.write_events(run_dir, game_test.FLOW_CASES, include_end=True)
+        log = run_dir / "client/sdgo/logs/sdgo.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(
+            "[error] battle_ai: Lua reload rejected; previous policy retained: too many upvalues\n",
+            encoding="utf-8",
+        )
+
+        report = game_test.build_report(run_dir)
+        native = report["layers"]["native"]
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(native["status"], "fail")
+        self.assertEqual(native["battle_ai_policy_reload"]["count"], 1)
+        self.assertIn("rejected 1 native Lua policy reload", " ".join(native["errors"]))
+
+    def test_native_battle_ai_policy_reload_ignores_prelaunch_log_bytes(self):
+        run_dir = self.prepare("battle-ai-prelaunch-log")
+        self.set_execution(run_dir)
+        self.write_events(run_dir, game_test.FLOW_CASES, include_end=True)
+        log = run_dir / "client/sdgo/logs/sdgo.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        stale = "[error] battle_ai: Lua reload rejected; previous policy retained: stale\n"
+        log.write_text(stale + "[info] battle_ai: policies loaded\n", encoding="utf-8")
+        metadata = self.metadata(run_dir)
+        log_stat = log.stat()
+        metadata["execution"]["native_log_start"] = len(stale.encode("utf-8"))
+        metadata["execution"]["native_log_identity"] = {
+            "device": log_stat.st_dev,
+            "inode": log_stat.st_ino,
+        }
+        game_test.atomic_write(run_dir / "run.json", json.dumps(metadata))
+
+        report = game_test.build_report(run_dir)
+        self.assertEqual(report["status"], "pass")
+        self.assertNotIn("battle_ai_policy_reload", report["layers"]["native"])
+
+    def test_native_battle_ai_policy_reload_reads_rotated_log_from_start(self):
+        run_dir = self.prepare("battle-ai-rotated-log")
+        self.set_execution(run_dir)
+        self.write_events(run_dir, game_test.FLOW_CASES, include_end=True)
+        log = run_dir / "client/sdgo/logs/sdgo.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        stale = "[info] previous session log bytes that must be skipped\n"
+        log.write_text(stale, encoding="utf-8")
+        old_stat = log.stat()
+        metadata = self.metadata(run_dir)
+        metadata["execution"]["native_log_start"] = len(stale.encode("utf-8"))
+        metadata["execution"]["native_log_identity"] = {
+            "device": old_stat.st_dev,
+            "inode": old_stat.st_ino,
+        }
+        game_test.atomic_write(run_dir / "run.json", json.dumps(metadata))
+
+        log.unlink()
+        rejection = (
+            "[error] battle_ai: Lua reload rejected; previous policy retained: rotated\n"
+        )
+        log.write_text(rejection + ("[info] new session padding\n" * 4), encoding="utf-8")
+        self.assertGreater(log.stat().st_size, len(stale.encode("utf-8")))
+
+        report = game_test.build_report(run_dir)
+        native = report["layers"]["native"]
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(native["battle_ai_policy_reload"]["messages"], [rejection.strip()])
 
     def test_wrong_pid_image_malformed_and_premature_pass_fail(self):
         scenarios = ("pid", "image", "malformed", "premature")

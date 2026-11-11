@@ -136,6 +136,33 @@
       "guide_en": "docs/operator-assistant.md"
     },
     {
+      "id": "ace-ai",
+      "path": "docs/ace-ai-demo.webp",
+      "since": "1.16.21",
+      "mods": [
+        "ace_ai",
+        "ace_ai_server"
+      ],
+      "title_zh": "王牌驾驶员：原生头顶名称保留队伍颜色",
+      "title_en": "Ace pilots: native overhead names retain team colours",
+      "guide_zh": "docs/ace-ai.zh-CN.md",
+      "guide_en": "docs/ace-ai.md"
+    },
+    {
+      "id": "ace-ai-mission",
+      "path": "docs/ace-ai-mission-demo.webp",
+      "since": "1.16.21",
+      "mods": [
+        "ace_ai",
+        "ace_ai_server",
+        "mission_ai"
+      ],
+      "title_zh": "任务王牌：驾驶员名与未改名的敌方机体",
+      "title_en": "Mission Aces: pilot names and unchanged enemy labels",
+      "guide_zh": "docs/ace-ai.zh-CN.md",
+      "guide_en": "docs/ace-ai.md"
+    },
+    {
       "id": "acquisition-sources",
       "path": "docs/acquisition-sources-demo.webp",
       "since": "1.16.22",

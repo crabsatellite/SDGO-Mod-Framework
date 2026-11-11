@@ -1411,6 +1411,19 @@ observation.selectedSlot=0;calls.switch=nil;Tick(100)
 Check(formState.meleeAdvanceTarget==nil and not formState.recovering and
       formState.requestedSlot==nil and formState.meleeAdvanceAt==0 and calls.fire==true,
       'a committed weapon-layout revision clears stale knife pursuit, switch and recovery state before firing')
+-- One loaded room policy must follow the current unit, not cache the last Ace.
+local currentDifficulty=0
+SDGO_BattleAI_Difficulty=function() return currentDifficulty end
+Reset({Difficulty=0,GenericMode=1});Tick(0)
+Check(calls.native==1 and calls.target==nil,
+      'an ordinary Easy unit retains its native controller with an Ace-capable policy loaded')
+currentDifficulty=2;Tick(100)
+Check(calls.native==2 and calls.target==2 and calls.fire==true,
+      'the next Hard-profile unit immediately uses enhanced AI without reloading the room policy')
+currentDifficulty=0;Tick(200)
+Check(calls.native==3,
+      'an ordinary Easy unit after an Ace immediately returns to its own native controller')
+SDGO_BattleAI_Difficulty=nil
 UNIT_MOVE_EVENT_MOVE=1;UNIT_MOVE_EVENT_DASH=4
 local enumOk,enumError=pcall(dofile,'mods/battle_ai/universal_ai.lua')
 Check(not enumOk and string.find(tostring(enumError),'native locomotion enum mismatch'),

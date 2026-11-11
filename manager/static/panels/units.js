@@ -196,6 +196,15 @@ function renderProjectMetadata(){
   const tags=blueprintInput(fields,"检索标签（逗号分隔）",(metadata.tags||[]).join(", "));
   const sources=metadataArea(fields,"资料出处（每行：标题 | 网址）",(metadata.sources||[]).map(r=>r.title+" | "+r.url).join("\n"),8192);
   const declared=blueprintInput(fields,"资料关联机体编号（可稍后填写）",metadata.declared_unit_id,"number");
+  const aceName=blueprintInput(fields,"王牌驾驶员显示名（王牌出战时整场替代机体名，可选）",metadata.ace_pilot?.display_name||"");
+  const aceKindField=document.createElement("label");aceKindField.className="field";
+  const aceKindLabel=document.createElement("span");aceKindLabel.textContent="王牌驾驶员条目类型";
+  const aceKind=document.createElement("select");
+  for(const [value,label] of [["named","有依据的具名驾驶员"],["role","阵营／身份称号"]]){
+    const option=document.createElement("option");option.value=value;option.textContent=label;aceKind.append(option);
+  }
+  aceKind.value=metadata.ace_pilot?.kind||"named";aceKind.addEventListener("change",markDirty);
+  aceKindField.append(aceKindLabel,aceKind);fields.append(aceKindField);
   panel.append(fields);
   const poster=document.createElement("div");poster.className="preview-card";
   const heading=document.createElement("strong");heading.textContent="活动扭蛋机海报";
@@ -221,7 +230,8 @@ function renderProjectMetadata(){
     return {...metadata,description:description.value,gameplay_notes:gameplay.value,short_description:short.value,aliases:lines(aliases),
       search_examples:lines(examples),series:series.value,model_number:model.value,english_name:english.value,
       tags:tags.value.split(/[,，\n]/).map(v=>v.trim()).filter(Boolean),sources:refs,visibility:"private",
-      declared_unit_id:declared.value.trim()?Number(declared.value):null};
+      declared_unit_id:declared.value.trim()?Number(declared.value):null,
+      ace_pilot:aceName.value.trim()?{display_name:aceName.value.trim(),kind:aceKind.value}:null};
   };
   if($("project-search"))$("project-search").placeholder=(metadata.search_examples||[]).length
     ?"搜索示例："+metadata.search_examples.slice(0,3).join(" / "):"搜索名称、别名、作品或型号";
