@@ -775,11 +775,13 @@ rva=state
 
     def test_plain_mission_ai_difficulty_is_sealed_and_tamper_checked(self):
         self.account_profile.write_text('[account]\nusername=ReuseA1234\npassword=ReusePass123\n[registration]\nstate=existing_account\n')
-        run = self.prepare('mission-hard-ace', mission_mode=5, mission_ai_difficulty='Hard')
+        run = self.prepare('mission-hard-ace', mission_mode=5, mission_ai_difficulty='Hard',
+                           capture_native_frames=True)
         metadata = self.metadata(run)
         self.assertEqual('Hard', metadata['plan']['mission_ai_difficulty'])
         self.assertEqual(metadata['plan']['title_nonce']+' !ai hard', metadata['plan']['room_title'])
         self.assertEqual('Hard', game_test.read_public_plan(run/'client')['mission_ai_difficulty'])
+        self.assertEqual('1', game_test.read_ini(run/'client/sdgo/mods/game_test_client/mod.ini')['settings']['CaptureNativeFrames'])
         game_test.validate_metadata(run)
         config = game_test.read_ini(run/'client/sdgo/gametest/run.ini')
         config['run']['mission_ai_difficulty'] = 'Easy'

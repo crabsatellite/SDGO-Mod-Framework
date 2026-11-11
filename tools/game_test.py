@@ -3566,9 +3566,9 @@ def prepare(
                                 '(--expected-ai 7 --ai-allies 0, the default for this flag)')
     if review_footage and (not quiet or fps_cap is not None):
         raise GameTestError('review footage is a quiet-lane recording profile; it does not apply to visible or FPS runs')
-    if capture_native_frames and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
+    if capture_native_frames and (fps_cap is not None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,friends_only,room_titles_only))):
-        raise GameTestError('native frame capture requires pages or a complete ordinary battle')
+        raise GameTestError('native frame capture requires pages or a complete native battle')
     fps_only = fps_cap is not None
     if fps_only:
         if not quiet or sfx_only:
