@@ -399,9 +399,8 @@ def merge_required_symbols(
 
 
 def merge_retained_addon_symbols(stage_symbols:Path,copied_symbols:Path,manifests:list[Path]) -> None:
-    """Retain installed addons through their declared, matching-host fragments."""
+    """Validate retained addons without promoting their private aliases to globals."""
     active=[]
-    destination=read_ini(copied_symbols)
     for manifest in manifests:
         raw=manifest.read_bytes()
         decoded=raw.decode('utf-16' if raw.startswith((b'\xff\xfe',b'\xfe\xff')) else 'utf-8-sig')
@@ -410,16 +409,6 @@ def merge_retained_addon_symbols(stage_symbols:Path,copied_symbols:Path,manifest
         config=ini_parser();config.read_string('[mod]\n'+match[1])
         if config.getint('mod','enabled',fallback=1)==0:continue
         active.append(manifest)
-        required=manifest_requires(manifest)
-        if all(destination.has_section(key) for key in required):continue
-        fragment=manifest.parent/'symbols.fragment.ini'
-        if not fragment.is_file():continue
-        source=read_ini(fragment)
-        if not source.has_section('host') or dict(source['host'])!=dict(destination['host']):
-            raise GameTestError('retained addon symbol fragment describes a different host')
-        for key in required:
-            if not destination.has_section(key) and source.has_section(key):destination[key]=dict(source[key])
-    write_ini(copied_symbols,destination)
     merge_required_symbols(stage_symbols,copied_symbols,active,preserve_existing=True)
 
 
