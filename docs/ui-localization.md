@@ -6,6 +6,8 @@ Displays reviewed Thai/Korean controls, acquisition descriptions and selected lo
 
 ![Chinese text on native capsule controls](ui-localization-demo.webp)
 
+![Chinese stock acquisition descriptions](ui-localization-acquisition.png)
+
 ## Use
 
 Players receive `ui_localization` through the server owner's client package or update. Enable **原生界面中文汉化** in SDGO Mod Manager and restart the game. Disabling it also requires a restart.

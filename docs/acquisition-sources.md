@@ -4,6 +4,8 @@
 
 Combines currently applied unit and blueprint sources in the original unit encyclopedia. Capsule sources use the numbers actually displayed in game. Blueprint information covers both synthesis and where to obtain the blueprint itself.
 
+![Unit encyclopedia: hover to read shop and adjutant blueprint sources](acquisition-sources-demo.webp)
+
 ## Use
 
 Install through the server owner's client package or update. Enable **机体获得方式** in SDGO Mod Manager and restart as directed by the update.

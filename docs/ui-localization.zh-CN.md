@@ -6,6 +6,8 @@
 
 ![原生扭蛋机按钮的中文显示](ui-localization-demo.webp)
 
+![原版活动获得说明的中文显示](ui-localization-acquisition.png)
+
 ## 使用
 
 玩家通过服主提供的客户端包或更新取得 `ui_localization`。在 SDGO Mod Manager 中启用「原生界面中文汉化」后重启游戏；停用后同样需要重启。

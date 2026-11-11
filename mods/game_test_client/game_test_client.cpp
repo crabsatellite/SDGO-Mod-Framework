@@ -5039,6 +5039,7 @@ int __cdecl ImportedIndex(const SdgoGameTestContextV1* context) {
 }
 int __cdecl ImportedDetail(const SdgoGameTestContextV1* context) {
     const auto result=unitPresentations.OpenDetail();
+    if(result==UnitPresentationsActions::Ready && HoldReviewPage(context))return SDGO_GAME_TEST_WAIT;
     static bool requested=false;
     if(captureNativeFrames && result==UnitPresentationsActions::Ready) {
         if(!requested) {
