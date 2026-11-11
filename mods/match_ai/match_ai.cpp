@@ -453,7 +453,8 @@ namespace
         char full[SDGO_ROOM_TITLE_MAX_UTF8_BYTES+1]={};
         const auto n=g_api&&g_api->ModDirectory?sdgo::CurrentRoomTitle(g_api->ModDirectory(g_mod),full,sizeof(full)):0;
         if(n&&n<=SDGO_ROOM_TITLE_MAX_UTF8_BYTES&&full[n]==0) {
-            int value=battle_ai::RoomDifficulty(std::string_view(full,n));return value<0?1:value;
+            int value=battle_ai::RoomDifficulty(std::string_view(full,n));
+            if(value>=0&&value<=2)return value;
         }
         wchar_t title[21] = {};
         size_t length = 0;

@@ -24,6 +24,7 @@
 #include "sdgo/mission_ai_client_observer.h"
 #include "sdgo/ai_start_units.h"
 #include "sdgo/ace_ai_client.h"
+#include "sdgo/match_ai_events.h"
 #include "sdgo/ace_ai_observer.h"
 #include "sdgo/mission_ai_stage_warp_observer.h"
 #include "sdgo/sdgo_api.h"
@@ -244,6 +245,12 @@ namespace
     bool g_missionAcePending = false;
     bool g_missionAceAnnounced = false;
     bool g_missionReadyReleased = false;
+    uint8_t* g_completedMissionUpdateMode = nullptr;
+    int g_startRoomDifficulty = -1;
+    using NativeRoomInfoFn=uint8_t*(__thiscall*)(uint8_t*);
+    NativeRoomInfoFn g_nativeRoomInfo=nullptr;
+    const void* g_nativeWaitRoomVtable=nullptr;
+    const void* g_nativeMissionManagerVtable=nullptr;
     SdgoAceAiAnnouncementSnapshotV1 g_aceAnnouncementSnapshot{};
     SRWLOCK g_aceAnnouncementLock = SRWLOCK_INIT;
     volatile LONG g_aceAnnouncementSequence = 0;
@@ -383,15 +390,55 @@ namespace
         }
     }
 
-    int BattleDifficulty(const uint8_t* room)
+    int NativeWaitRoomDifficulty()
+    {
+        __try {
+            auto* app=g_gameApp?g_gameApp():nullptr;
+            if(!app||*reinterpret_cast<uint32_t*>(app+0x4A0)!=18||!g_nativeRoomInfo ||
+               !g_nativeWaitRoomVtable||!g_nativeMissionManagerVtable)return -1;
+            auto* owner=*reinterpret_cast<uint8_t**>(app+0x4A4);
+            if(!owner||*reinterpret_cast<void**>(owner)!=g_nativeWaitRoomVtable)return -1;
+            auto* manager=*reinterpret_cast<uint8_t**>(owner+4);
+            if(!manager||*reinterpret_cast<void**>(manager)!=g_nativeMissionManagerVtable)return -1;
+            auto* model=*reinterpret_cast<uint8_t**>(manager+0x38);
+            auto* table=model?*reinterpret_cast<uint8_t**>(model):nullptr;
+            if(!table||*reinterpret_cast<NativeRoomInfoFn*>(table+0x1C)!=g_nativeRoomInfo)return -1;
+            auto* packed=g_nativeRoomInfo(model);
+            if(!packed||!*reinterpret_cast<uint32_t*>(packed)||packed[5]<4||packed[5]>8)return -1;
+            // Same confirmed packed mission-room view consumed by the original
+            // title bar: the native title occupies exactly twenty bytes at +0x54.
+            char title[21]{};memcpy(title,packed+0x54,20);
+            return battle_ai::RoomDifficulty(std::string_view(title,strnlen_s(title,20)));
+        } __except(EXCEPTION_EXECUTE_HANDLER) {return -1;}
+    }
+
+    int ConfirmedRoomDifficulty()
     {
         char full[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
         const auto length = g_api && g_api->ModDirectory ?
             sdgo::CurrentRoomTitle(g_api->ModDirectory(g_mod), full, sizeof(full)) : 0;
         if (length && length <= SDGO_ROOM_TITLE_MAX_UTF8_BYTES && full[length] == 0) {
             const int value = battle_ai::RoomDifficulty(std::string_view(full, length));
-            return value >= 0 && value <= 2 ? value : 1;
+            if (value >= 0 && value <= 2) return value;
         }
+        return NativeWaitRoomDifficulty();
+    }
+
+    void __cdecl MissionStartPacket(uint16_t opcode,const uint8_t*,void*)
+    {
+        if(opcode!=0x06C3)return;
+        // The confirmed wait-room title can disappear when the mission mode
+        // replaces that service. Capture it before the original start handler.
+        g_startRoomDifficulty=ConfirmedRoomDifficulty();
+        if(g_api&&g_api->Log)
+            g_api->Log(g_mod,SDGO_LOG_INFO,"mission start packet room tier=%d",g_startRoomDifficulty);
+    }
+
+    int BattleDifficulty(const uint8_t* room)
+    {
+        if(g_startRoomDifficulty>=0&&g_startRoomDifficulty<=2)return g_startRoomDifficulty;
+        const int confirmed=ConfirmedRoomDifficulty();
+        if(confirmed>=0)return confirmed;
         wchar_t title[21] = {};
         size_t nativeLength = 0;
         __try {
@@ -409,6 +456,10 @@ namespace
             return 1;
         }
         const int value = battle_ai::RoomDifficulty(std::wstring_view(title, nativeLength));
+        if (g_api && g_api->Log)
+            g_api->Log(g_mod, SDGO_LOG_INFO,
+                "mission room difficulty fallback: native-length=%u native-tier=%d",
+                static_cast<unsigned>(nativeLength), value);
         return value >= 0 && value <= 2 ? value : 1;
     }
 
@@ -542,8 +593,9 @@ namespace
             return false;
         uint8_t* app = g_gameApp ? g_gameApp() : nullptr;
         uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + 0x4A4) : nullptr;
-        if (!service || *reinterpret_cast<uint8_t**>(service + 0x0C) != mode ||
-            *reinterpret_cast<uint32_t*>(service + 0x3C) != 3)
+        if (!service || *reinterpret_cast<uint32_t*>(app + 0x4A0) != 22 ||
+            *reinterpret_cast<uint8_t**>(service + 0x0C) != mode ||
+            g_completedMissionUpdateMode != mode)
             return false;
         void* head = *reinterpret_cast<void**>(service + 0x94);
         const uint32_t before = *reinterpret_cast<uint32_t*>(service + 0x98);
@@ -610,12 +662,12 @@ namespace
                 return 0;
             uint8_t* app = g_gameApp ? g_gameApp() : nullptr;
             uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + 0x4A4) : nullptr;
-            if (!service || *reinterpret_cast<uint8_t**>(service + 0x0C) != mode ||
-                *reinterpret_cast<uint32_t*>(service + 0x3C) != 3)
+            if (!service || *reinterpret_cast<uint32_t*>(app + 0x4A0) != 22 ||
+                *reinterpret_cast<uint8_t**>(service + 0x0C) != mode ||
+                g_completedMissionUpdateMode != mode)
                 return 0;
-            // match_ai calls this only after the genuine phase-3 control release.
-            // Later update ticks may retry dependencies/append failure, but may
-            // not invent the first release from a visible state field alone.
+            // Mission owns its completed native Update boundary. A raw state
+            // field or a PvP-only shared-ready callback cannot release it.
             g_missionReadyReleased = true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return 0;
@@ -1576,6 +1628,7 @@ namespace
             g_missionAcePending = false;
             g_missionAceAnnounced = false;
             g_missionReadyReleased = false;
+            g_completedMissionUpdateMode = nullptr;
             g_pendingRespawnObject = 0;
             g_pendingRespawnColour = -1;
             BeginMissionObservation(mode);
@@ -1866,6 +1919,16 @@ namespace
     void __fastcall MissionUpdate(void* mode, void* /*edx*/)
     {
         g_originalUpdate(mode);
+        g_completedMissionUpdateMode = nullptr;
+        __try {
+            auto* app = g_gameApp ? g_gameApp() : nullptr;
+            auto* service = app ? *reinterpret_cast<uint8_t**>(app + 0x4A4) : nullptr;
+            if (mode && mode == g_observedMode &&
+                *reinterpret_cast<const void* const*>(mode) == g_game.missionVtable &&
+                app && *reinterpret_cast<uint32_t*>(app + 0x4A0) == 22 && service &&
+                *reinterpret_cast<void**>(service + 0x0C) == mode)
+                g_completedMissionUpdateMode = static_cast<uint8_t*>(mode);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
         DWORD code = 0;
         if (!g_disabled) {
             if (!GuardedTick(mode, &code)) {
@@ -1896,7 +1959,7 @@ namespace
         }
         if (g_missionReadyReleased)
             TryMissionAceAnnouncement(static_cast<uint8_t*>(mode));
-        else if (!g_matchAiMissionTick)
+        else
             MissionReady(static_cast<uint8_t*>(mode));
     }
 
@@ -2197,7 +2260,10 @@ SDGO_MOD_ENTRY
                  Bind(g_lineCtor, "dialogue.battle_chat.ctor") &&
                  Bind(g_lineDtor, "dialogue.battle_chat.dtor") &&
                  Bind(g_nativeStringCtor, "flow.native_wstring_ctor") &&
-                 Bind(g_appendLine, "dialogue.battle_chat.append");
+                 Bind(g_appendLine, "dialogue.battle_chat.append") &&
+                 Bind(g_nativeRoomInfo,"flow.mission_room_info") &&
+                 Bind(g_nativeWaitRoomVtable,"flow.three_d_wait_room_vtable") &&
+                 Bind(g_nativeMissionManagerVtable,"flow.mission_3d_manager_vtable");
     if (!bound)
         return 0;
     g_game.findObject = reinterpret_cast<FindObjectFn>(
@@ -2234,6 +2300,10 @@ SDGO_MOD_ENTRY
         &KeepDeadMissionUnit, &MissionRespawnComplete, &MissionReady};
     HMODULE match = sdgo::MissionSibling(api, mod, L"match_ai\\match_ai.dll");
     if (match) {
+        const auto events=reinterpret_cast<SdgoMatchAiRegisterEventsV1Fn>(
+            GetProcAddress(match,SDGO_MATCH_AI_EVENTS_EXPORT));
+        static const SdgoMatchAiEventsV1 missionEvents{
+            sizeof(missionEvents),1,nullptr,&MissionStartPacket,nullptr};
         auto share = reinterpret_cast<SdgoRegisterMissionClientV1>(
             GetProcAddress(match, "SdgoMatchAiRegisterMissionV1"));
         g_matchAiMissionTick =
@@ -2247,7 +2317,7 @@ SDGO_MOD_ENTRY
         g_matchStartUnit =
             reinterpret_cast<SdgoAiStartUnitV1Fn>(GetProcAddress(
                 match, SDGO_AI_START_UNIT_EXPORT));
-        if (!share || !g_matchAiMissionTick || !g_matchPlaybackContext ||
+        if (!share || !events || !events(&missionEvents) || !g_matchAiMissionTick || !g_matchPlaybackContext ||
             !g_matchStartUnit ||
             !share(reinterpret_cast<const SdgoMissionClientLifecycleV1*>(&lifecycle))) {
             api->Log(mod, SDGO_LOG_ERROR, "matching match_ai lifecycle bridge is required; update both Mods");

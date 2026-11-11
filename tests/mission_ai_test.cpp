@@ -16,6 +16,11 @@ std::array<std::wstring, 12> slotNames{};
 std::array<uint8_t, 0x40> start{};
 std::array<uint8_t, 0x500> app{};
 std::array<uint8_t, 0x120> service{};
+uint8_t* packedRoomForTitle=nullptr;
+unsigned packedTitleReads=0;
+uint8_t* __fastcall PackedMissionRoom(uint8_t*,void*) {
+    ++packedTitleReads;return packedRoomForTitle;
+}
 std::array<ModeVirtualFn, 8> vtable{};
 int manager = 0;
 void* um = &manager;
@@ -168,6 +173,9 @@ void SetAceRecord(int index, int team = 1) {
     record[kRecordTeam] = static_cast<uint8_t>(team);
 }
 void Reset(int h, int a, bool master) {
+    g_startRoomDifficulty=-1;
+    g_nativeRoomInfo=nullptr;g_nativeWaitRoomVtable=nullptr;g_nativeMissionManagerVtable=nullptr;
+    packedRoomForTitle=nullptr;packedTitleReads=0;
     mode.fill(0); derivedMode.fill(0); room.fill(0); humans.fill(0); ais.fill(0);
     units = {}; npcDefinitions = {}; playerSlots = {}; slotNames = {};
     app.fill(0); service.fill(0); slots.clear(); beginGenerations.clear(); profileCalls.clear(); profileEvents.clear();
@@ -235,6 +243,31 @@ void Reset(int h, int a, bool master) {
 int main() {
     using namespace fixture;
     g_api = &ai_test::api;
+    SCENARIO("the confirmed native mission title is captured before its wait-room owner is destroyed");
+    Reset(1,1,true);
+    std::array<uint8_t,0x20> waitOwner{},waitTable{},model{},modelTable{};
+    std::array<uint8_t,0x40> waitManager{},managerTable{};
+    std::array<uint8_t,0x80> packed{};
+    Put(waitOwner.data(),0,waitTable.data());Put(waitOwner.data(),4,waitManager.data());
+    Put(waitManager.data(),0,managerTable.data());Put(waitManager.data(),0x38,model.data());
+    Put(model.data(),0,modelTable.data());
+    g_nativeRoomInfo=reinterpret_cast<NativeRoomInfoFn>(&PackedMissionRoom);
+    Put(modelTable.data(),0x1C,g_nativeRoomInfo);
+    g_nativeWaitRoomVtable=waitTable.data();g_nativeMissionManagerVtable=managerTable.data();
+    Put<uint32_t>(packed.data(),0,5u);packed[5]=5;
+    memcpy(packed.data()+0x54,"native !ai hard",15);
+    packedRoomForTitle=packed.data();
+    Put<uint32_t>(app.data(),0x4A0,18u);Put(app.data(),0x4A4,waitOwner.data());
+    MissionStartPacket(0x06C3,nullptr,nullptr);
+    CHECK(g_startRoomDifficulty==2&&packedTitleReads==1);
+    Put<uint32_t>(app.data(),0x4A0,22u);Put(app.data(),0x4A4,service.data());
+    MissionInit(mode.data(),nullptr);
+    CHECK(g_observedWingmen.size()==1&&
+          g_observedWingmen[0].baseDifficulty==battle_ai::Difficulty::Hard&&
+          g_observedWingmen[0].effectiveDifficulty==battle_ai::Difficulty::Hard);
+    CHECK(profileCalls.size()==1&&profileCalls[0].flags==(2|0x100)&&packedTitleReads==1);
+    MissionStartPacket(0x0525,nullptr,nullptr);CHECK(g_startRoomDifficulty==2);
+    MissionStartPacket(0x06C3,nullptr,nullptr);CHECK(g_startRoomDifficulty==-1&&packedTitleReads==1);
     SCENARIO("configuration values remain data when converted to Lua");
     CHECK(Trim(" \t hi\r ") == "hi"); CHECK(Trim(" \t\r").empty());
     CHECK(IsInteger("-42") && IsInteger("0") && !IsInteger("-") && !IsInteger("1e9"));
@@ -265,6 +298,7 @@ int main() {
     CHECK(g_wingmen == (std::vector<uint32_t>{1001, 1002, 1003}));
     CHECK(g_localWingmen == g_wingmen);
     CHECK(slotNames[1] == L"机体一");
+
     SCENARIO("mission respawn mappings retain only this mission's exact wingman objects");
     CHECK(MissionObjectForPilot(um, 0x80000010u) == 1001);
     CHECK(MissionSlotForObject(um, 1001) == 1);
@@ -478,7 +512,7 @@ int main() {
     CHECK(profileCalls.size() == 1 && profileCalls[0].flags ==
           (static_cast<int>(battle_ai::Difficulty::Medium) | 0x100));
 
-    SCENARIO("fixed Ace announcement retries dependencies and append failure, then sends once at genuine ready state");
+    SCENARIO("mission announcement requires a completed native mission update and retries append failure");
     Reset(1, 1, true); SetAceRecord(0); MissionInit(mode.data(), nullptr);
     CHECK(g_missionAcePending && !g_missionAceAnnounced);
     CHECK(MissionReady(mode.data()) == 0 && appendCalls == 0); // state 2
@@ -487,10 +521,16 @@ int main() {
     CHECK(SdgoMissionAiGetAnnouncementSnapshotV1(
               &missionAnnouncement) == 0);
     Put(service.data(), 0x3C, uint32_t{3});
+    Put(app.data(), 0x4A0, uint32_t{22});
+    CHECK(MissionReady(mode.data()) == 0); // State fields cannot invent a native completion.
+    Put(app.data(), 0x4A0, uint32_t{18});
     g_matchAiMissionTick = &MatchTick; g_disabled = true;
     MissionUpdate(mode.data(), nullptr);
     CHECK(!g_missionReadyReleased && appendCalls == 0);
     g_appendLine = nullptr;
+    Put(app.data(), 0x4A0, uint32_t{22});
+    Put(service.data(), 0x3C, uint32_t{2}); // Mission does not need the PvP phase-3 field.
+    MissionUpdate(mode.data(), nullptr);
     CHECK(MissionReady(mode.data()) == 0 && !g_missionAceAnnounced);
     g_appendLine = reinterpret_cast<AppendLineFn>(&Append); appendSuccess = false;
     CHECK(MissionReady(mode.data()) == 0 && appendCalls == 1 && lineCtors == 1 && lineDtors == 1);
@@ -516,11 +556,13 @@ int main() {
 
     SCENARIO("every local mission audience receives the same fixed message once per new battle");
     Reset(1, 1, false); SetAceRecord(0); MissionInit(mode.data(), nullptr);
-    Put(service.data(), 0x3C, uint32_t{3});
+    Put(app.data(), 0x4A0, uint32_t{22}); g_disabled=true;
+    MissionUpdate(mode.data(), nullptr);
     CHECK(MissionReady(mode.data()) == 1 && appendedText == L"我方出现了王牌驾驶员！");
     CHECK(appendCalls == 1);
     Reset(1, 1, true); SetAceRecord(0); MissionInit(mode.data(), nullptr);
-    Put(service.data(), 0x3C, uint32_t{3});
+    Put(app.data(), 0x4A0, uint32_t{22}); g_disabled=true;
+    MissionUpdate(mode.data(), nullptr);
     CHECK(MissionReady(mode.data()) == 1 && appendCalls == 1);
 
     return ai_test::Finish();
