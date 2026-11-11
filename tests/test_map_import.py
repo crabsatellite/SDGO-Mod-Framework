@@ -341,14 +341,24 @@ def record_templates():
     for slot, weapon in zip(M.UNIT_WEAPON_SLOTS + (M.UNIT_SPECIAL_SLOT,), (7001, 7002, 0, 7002)):
         struct.pack_into('<I', unit, slot, weapon)
     weapons = {}
+    server_weapons = {}
     for ident, damage in ((7001, 800), (7002, 5000)):
         raw = bytearray(M.WEAPON_RECORD_BYTES)
         struct.pack_into('<I', raw, 0, ident)
         struct.pack_into('<I', raw, M.WEAPON_DAMAGE, damage)
         weapons[ident] = bytes(raw)
+        server = {name: 0 for name in M.SERVER_WEAPON_COLUMNS}
+        server.update(WeaponNo=ident, WeaponName=f'weapon {ident}', DamageSize=damage)
+        server_weapons[ident] = server
+    server_unit = {name: 0 for name in M.SERVER_UNIT_NPC_COLUMNS}
+    server_unit.update(UnitNumber=1001, CustomNumber=6, UnitModelName='Fixture',
+                       WeaponNumber_1=7001, WeaponNumber_2=7002, WeaponNumber_3=None,
+                       WeaponNumber_FatalAttack=7002)
     base = templates()
     return M.Templates(**{**base.__dict__, 'unit_record': lambda u: bytes(unit) if u == 1001 else None,
-                          'weapon_record': weapons.get})
+                          'weapon_record': weapons.get,
+                          'server_unit_record': lambda u, template=None: dict(server_unit) if u == 1001 else None,
+                          'server_weapon_record': lambda w: dict(server_weapons[w]) if w in server_weapons else None})
 
 
 def compile_spec(spec, tpl=None):
@@ -359,6 +369,94 @@ def compile_spec(spec, tpl=None):
 
 
 class MissionFeatureTests(unittest.TestCase):
+    def test_native_unit_cutin_is_bound_to_the_spawned_npc(self):
+        spec = mission_spec()
+        spec['schema_version'] = 2
+        spec['npcs']['target']['cutin'] = {'native_sprite': 'sprs\\10763.spr', 'line': 'l1'}
+        tpl = templates()
+        tpl.native_exists = lambda name: name == 'sprs\\10763.spr'
+        built = compile_spec(spec, tpl)
+        row = next(raw for kind, _, raw in built.rows if kind == M.NPC_TEMPLATE_KIND)
+        npc_id = struct.unpack_from('<I', row)[0]
+        self.assertEqual(struct.unpack_from('<I', row, 390)[0], ids().speech_first)
+        self.assertEqual(row[398:598].decode('utf-16-le').rstrip('\0'), 'sprs\\10763.spr')
+        self.assertTrue(any(r['NpcID'] == npc_id for r in built.server['tbl_MissionNpc']))
+        # The native sprite is referenced, never repackaged as a world-space text effect.
+        self.assertFalse(any(n.endswith(('.zfx', '.spr', '.txr')) for n in built.resources))
+        tpl.native_exists = lambda _: False
+        with self.assertRaisesRegex(M.MissionError, 'native_sprite'):
+            compile_spec(spec, tpl)
+        for bad in ({'native_sprite': '../wrong.spr', 'line': 'l1'},
+                    {'native_sprite': 'sprs\\10763.spr', 'line': 'missing'},
+                    {'native_sprite': 'sprs\\10763.spr', 'line': 'l1', 'text': 'wrong'}):
+            spec['npcs']['target']['cutin'] = bad
+            with self.assertRaises(M.MissionError):
+                compile_spec(spec, tpl)
+
+    def test_authored_cutin_uses_the_native_strip_viewport(self):
+        spec = mission_spec()
+        spec['schema_version'] = 2
+        spec['npcs']['target']['cutin'] = {'image': 'images/unit.png', 'line': 'l1'}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp), mission=spec)
+            image = png(Image.new('RGBA', (1024, 156), (35, 60, 90, 255)))
+            (root / 'images').mkdir(exist_ok=True)
+            (root / 'images/unit.png').write_bytes(image)
+            manifest = json.loads((root / 'map.json').read_bytes())
+            manifest['files']['images/unit.png'] = hashlib.sha256(image).hexdigest()
+            (root / 'map.json').write_bytes(json.dumps(manifest).encode())
+            built = M.compile_mission(P.load(root), spec, map_no=144, terrain_path='Trns\\m143x.trn',
+                                      ids=ids(), templates=templates())
+            sprites = [raw for name, raw in built.resources.items() if name.endswith('.spr')]
+            self.assertEqual(len(sprites), 1)
+            self.assertEqual(struct.unpack_from('<II', sprites[0], 12), (156, 1024))
+            npc = next(raw for kind, _, raw in built.rows if kind == M.NPC_TEMPLATE_KIND)
+            self.assertIn('sdgom1u', npc[398:598].decode('utf-16-le'))
+            self.assertFalse(any(name.endswith('.zfx') for name in built.resources))
+
+    def test_new_mission_features_cannot_be_silently_ignored_by_v1(self):
+        spec = mission_spec()
+        spec['npcs']['target']['cutin'] = {'native_sprite': 'sprs\\10763.spr', 'line': 'l1'}
+        with self.assertRaisesRegex(M.MissionError, 'schema_version=2'):
+            compile_spec(spec)
+        spec['npcs']['target'].pop('cutin')
+        spec['transition_delay'] = 'immediate'
+        with self.assertRaisesRegex(M.MissionError, 'schema_version=2'):
+            compile_spec(spec)
+
+    def test_cutin_crop_uses_native_uvs_and_preserves_the_picture_aspect(self):
+        from owner.maps import txr_format
+        spec = mission_spec()
+        spec['schema_version'] = 2
+        spec['npcs']['target']['cutin'] = {'image': 'images/strip.png', 'line': 'l1',
+                                         'crop': [0, 116, 1280, 312]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = write_package(Path(tmp), mission=spec)
+            picture = Image.new('RGBA', (1280, 427), 'white')
+            picture.paste((10, 40, 90, 255), (0, 116, 1280, 312))
+            raw = png(picture)
+            (root / 'images/strip.png').write_bytes(raw)
+            manifest = json.loads((root / 'map.json').read_bytes())
+            manifest['files']['images/strip.png'] = hashlib.sha256(raw).hexdigest()
+            (root / 'map.json').write_bytes(json.dumps(manifest).encode())
+            pkg = P.load(root)
+            def build():
+                return M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn',
+                                         ids=ids(), templates=templates())
+            result = build()
+            sprite = next(r for n, r in result.resources.items() if n.endswith('.spr'))
+            self.assertEqual(struct.unpack_from('<II', sprite, 12), (157, 1024))
+            self.assertEqual(struct.unpack_from('<4f', sprite, 20), (0, 116/512, 1280/2048, 312/512))
+            texture = next(r for n, r in result.resources.items() if n.endswith('.txr'))
+            width, height, pixels = txr_format.decode_rgba(txr_format.parse(texture))
+            image = Image.frombytes('RGBA', (width, height), pixels)
+            self.assertEqual(image.getpixel((20, 10)), (255, 255, 255, 255))
+            self.assertEqual(image.getpixel((20, 120)), (10, 40, 90, 255))
+            for bad in ([0, -1, 1280, 312], [0, 116, 1281, 312], [0, 312, 1280, 116],
+                        [False, 116, 1280, 312], [0, 0, 10, 427]):
+                spec['npcs']['target']['cutin']['crop'] = bad
+                with self.assertRaises(M.MissionError):
+                    build()
     def test_drops_keep_native_drops_and_add_mission_blueprints(self):
         tpl = record_templates()
         # unit 1001 (the template NPC's unit) has two blueprints; unit 3003 is not in the mission
@@ -402,8 +500,8 @@ class MissionFeatureTests(unittest.TestCase):
                          [(2, 2, 0, 3)])
         first = sorted((r['NpcParty'], r['AfterTime'], r['AbsTime']) for r in built.server['tbl_MissionNpc']
                        if r['MissionPart'] == 1)
-        # waves start after the 3 s opening: the ally at 1 s, the targets at 6 and 8 s become absolute times
-        self.assertEqual(first, [(1, 0, 4), (2, 0, 9), (2, 0, 11)])
+        # Native ScriptTime holds the opening and resets the phase clock; authored times start afterwards.
+        self.assertEqual(first, [(1, 1, 0), (2, 0, 6), (2, 0, 8)])
         spec.pop('opening')
         first = sorted((r['NpcParty'], r['AfterTime'], r['AbsTime']) for r in compile_spec(spec).server['tbl_MissionNpc']
                        if r['MissionPart'] == 1)
@@ -413,7 +511,7 @@ class MissionFeatureTests(unittest.TestCase):
         with self.assertRaisesRegex(M.MissionError, 'kill_any'):
             compile_spec(spec)
 
-    def test_npc_label_and_attack_use_client_only_copies(self):
+    def test_npc_label_and_attack_use_paired_client_server_copies(self):
         spec = mission_spec()
         spec['npcs']['boss'] = {'template': 500, 'hp': 20000, 'boss': True, 'label': '加亚',
                                 'attack': 2.0, 'special_attack': 1.5}
@@ -433,7 +531,11 @@ class MissionFeatureTests(unittest.TestCase):
         template = [r for (k, i), r in rows.items() if k == M.NPC_TEMPLATE_KIND][-1]
         self.assertEqual(struct.unpack_from('<I', template, 105)[0], units[0])
         server = [r for r in built.server['tbl_NpcData'] if r['UseUnitHP'] == 20000][0]
-        self.assertEqual((server['UseUnitID'], server['BossFlag']), (1001, 1))     # the server keeps the unit
+        self.assertEqual((server['UseUnitID'], server['BossFlag']), (units[0], 1))
+        server_unit = built.server['tbl_UnitNpc'][0]
+        self.assertEqual(server_unit['UnitNumber'], units[0])
+        self.assertEqual([server_unit[name] or 0 for name in M.SERVER_UNIT_WEAPON_FIELDS], slots)
+        self.assertEqual({row['WeaponNo']: row['DamageSize'] for row in built.server['tbl_WeaponsRev']}, damage)
         for kind, _, raw in built.rows:
             self.assertEqual(len(raw), M.SIZES[kind])
         for bad in ({'attack': 5}, {'attack': True}, {'special_attack': 0.1}, {'label': 'A(B)'}):

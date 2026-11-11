@@ -29,7 +29,15 @@ class MissionPlanContractTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def plan(self, mode=5, play_unit_uid=None, target_host="127.0.0.1", respawns=None):
+    def plan(
+        self,
+        mode=5,
+        play_unit_uid=None,
+        target_host="127.0.0.1",
+        respawns=None,
+        game_mode_id=None,
+        mission_ai_count=game_test.MISSION_AI_COUNT,
+    ):
         plan = game_test.make_plan(
             target_host,
             5001,
@@ -43,6 +51,8 @@ class MissionPlanContractTests(unittest.TestCase):
             play_unit_uid=play_unit_uid,
             mission_mode=mode,
             mission_respawns=respawns,
+            mission_game_mode_id=game_mode_id,
+            mission_ai_count=mission_ai_count,
         )
         plan["network_policy"] = "direct"
         plan["quiet"] = True
@@ -73,6 +83,8 @@ class MissionPlanContractTests(unittest.TestCase):
         route=False,
         account_state="existing_account",
         respawns=None,
+        game_mode_id=None,
+        mission_ai_count=game_test.MISSION_AI_COUNT,
     ):
         self.sequence += 1
         run_dir = self.base / f"run-{self.sequence}"
@@ -81,7 +93,13 @@ class MissionPlanContractTests(unittest.TestCase):
         game = client / game_test.GAME_EXE
         game.write_bytes(b"offline mission plan fixture")
         run_id = str(uuid.uuid4())
-        plan = self.plan(mode, play_unit_uid, respawns=respawns)
+        plan = self.plan(
+            mode,
+            play_unit_uid,
+            respawns=respawns,
+            game_mode_id=game_mode_id,
+            mission_ai_count=mission_ai_count,
+        )
         if route:
             plan.update({
                 "target_host": "127.90.0.1",
@@ -163,6 +181,63 @@ class MissionPlanContractTests(unittest.TestCase):
         with self.assertRaises(game_test.GameTestError):  # a GameModeID above the mode-5 range is a mode-8 mission
             game_test.make_plan('127.0.0.1', 5001, '1', '1', '1', 1, False, 3, None,
                                 mission_mode=5, mission_game_mode_id=0x313991)
+
+
+    def test_zero_ai_is_sealed_only_for_an_exact_ordinary_imported_mission(self):
+        plan = game_test.make_plan(
+            "127.0.0.1", 5001, "1", "1", "1", 1, False, 3, None,
+            mission_mode=5,
+            mission_game_mode_id=88072,
+            mission_ai_count=0,
+        )
+        self.assertEqual(plan["mission_ai_count"], 0)
+        self.assertEqual(plan["room_title"], f"{plan['title_nonce']} lv2")
+        self.assertNotIn("!ai", plan["room_title"])
+        self.assertEqual(
+            game_test.required_cases_for_plan(plan),
+            game_test.FLOW_CASES[:3] + game_test.MISSION_FLOW_CASES + ("mission.import_flow",),
+        )
+
+        run_dir = self.capsule(game_mode_id=88072, mission_ai_count=0)
+        metadata = game_test.validate_metadata(run_dir)
+        self.assertEqual(metadata["plan"]["mission_ai_count"], 0)
+        public = game_test.read_public_plan(run_dir / "client")
+        self.assertEqual(public["mission_ai_count"], 0)
+        self.assertEqual(public["room_title"], metadata["plan"]["room_title"])
+        required = game_test.required_cases_for_plan(public)
+        self.complete_execution(run_dir, required)
+        report = game_test.build_report(run_dir)
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["layers"]["native"]["mission_ai_count"], 0)
+
+    def test_zero_ai_rejects_every_non_imported_or_mutated_scope(self):
+        invalid = (
+            {"mission_mode": 5, "mission_ai_count": 0},
+            {"mission_mode": 5, "mission_game_mode_id": 88072, "mission_ai_count": 0, "mission_respawns": "player"},
+            {"mission_mode": 5, "mission_game_mode_id": 88006, "mission_ai_count": 0, "mission_behavior_profile": "oc"},
+            {"mission_ai_count": 0},
+            {"mission_mode": 5, "mission_game_mode_id": 88072, "mission_ai_count": 1},
+            {"mission_mode": 5, "mission_game_mode_id": 88072, "mission_ai_count": True},
+        )
+        for options in invalid:
+            with self.subTest(options=options), self.assertRaises(game_test.GameTestError):
+                game_test.make_plan(
+                    "127.0.0.1", 5001, "1", "1", "1", 1, False, 3, None,
+                    **options,
+                )
+
+        parsed = game_test.parse_args([
+            "prepare", "--client-template", str(self.base), "--stage", str(self.base),
+            "--run-dir", str(self.base / "parsed"), "--mission-mode", "5",
+            "--mission-game-mode-id", "88072", "--mission-ai-count", "0",
+        ])
+        self.assertEqual(parsed.mission_ai_count, 0)
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                game_test.parse_args([
+                    "prepare", "--client-template", str(self.base), "--stage", str(self.base),
+                    "--run-dir", str(self.base / "invalid"), "--mission-ai-count", "2",
+                ])
 
     def test_respawn_probe_requires_a_mission(self):
         with self.assertRaises(game_test.GameTestError):

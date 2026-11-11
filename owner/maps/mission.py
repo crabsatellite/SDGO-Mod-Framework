@@ -1,4 +1,4 @@
-"""Compile a neutral mission description (`sdgo.map-mission` v1) into server mission rows, client mirror records
+"""Compile a neutral mission description (`sdgo.map-mission` v1/v2) into server mission rows, client mirror records
 and a text Lua script for cutscenes and phase events.
 
 The mission runs on a map row of the map package (normally its ``mission`` variant). Server semantics follow
@@ -13,7 +13,9 @@ Mission JSON (all coordinates in the map's world frame, seconds for times)::
      "bgm": {"native": "BGM\\\\0036.mp3"},
      "npcs": {key: {"template": id} | {"template": id, "ai": name, "hp": n, "boss": bool, "name": {...}}
                    | {"unit": unit_id, "base": template_id, "hp": n, "ai": name, "name": {...}}
-                   (+ optional "label": overhead name, "attack" / "special_attack": weapon damage multipliers)},
+                   (+ optional "label": overhead name, "attack" / "special_attack": weapon damage multipliers,
+                    "cutin": {"native_sprite": "sprs\\\\NNNN.spr" | "image": 1024x156 PNG,
+                              "line": dialogue key})},
      "area": [left x, top z, right x, bottom z] (the map compiler paints every movable area's edge on the ground),
      "presentation": {"list_banner", "room_icon", "room_poster", "title", "loading": PNG paths,
                       "loading_screen": "poster" | "random"},
@@ -50,11 +52,22 @@ GAME_MODE_KIND, CLEAR_KIND, NPC_TEMPLATE_KIND = 0x2A, 0x2F, 0x29
 CATALOGUE_KIND, ROUTE_KIND, OBJECTIVE_KIND, SPEECH_KIND, SPAWN_KIND = 0x1D, 0x1F, 0x20, 0x36, 0x2E
 UNIT_KIND, UNIT_RECORD_BYTES = 0x02, 4976
 WEAPON_KIND, WEAPON_RECORD_BYTES = 0x0A, 1871
-UNIT_LABEL_FIRST = 9_600_000      # client-only unit copies that carry an NPC's display name / stronger weapons
-WEAPON_COPY_FIRST = 9_700_000     # client-only weapon copies with an NPC's damage multiplier
+UNIT_LABEL_FIRST = 9_600_000      # derived unit copies; damage-changing copies are paired on the server
+WEAPON_COPY_FIRST = 9_700_000     # paired client/server weapon copies for an NPC's damage multiplier
 UNIT_WEAPON_SLOTS = (585, 589, 593)   # unit record: weapons 1..3 (u32 ids); +597 is the special attack
 UNIT_SPECIAL_SLOT = 597
 WEAPON_DAMAGE = 108                   # weapon record: DamageSize (u32)
+SERVER_UNIT_NPC_COLUMNS = tuple(('UnitNumber CustomNumber Influence1 Influence2 UnitModelName UnitGradeNumber '
+    'UnitGradeNumber2 MasteredWeaponType BattleCost Star UnitNumber_Transform HP Shield ShieldType ShieldRate '
+    'DashType MoveLevel DashLevel QuickStepLevel MotivePower BoosterIncrease BoosterDecrease FatalAttackIncrease '
+    'AdaptEnvironType AdaptEnvironSpace AdaptEnvironGround AdaptEnvironUnderwater AdaptEnvironDesert '
+    'AdaptEnvironSky Sight SkillNumber_1 SkillNumber_2 SkillNumber_3 StrikingPower DefensivePower MasteredWeaponIX '
+    'WeaponNumber_1 WeaponNumber_2 WeaponNumber_3 WeaponNumber_FatalAttack ViewOrder MaxEnergyAmount MaxEnergyCost '
+    'EnergyDecAmount UnitGrowIndex DailyLimit MonthLimit UserGradeLimit SallyReady CollectionUnit').split())
+SERVER_WEAPON_COLUMNS = tuple(('WeaponNo WeaponName AttackStyle RangeType HitType DamageSize SpeedRate RangeSize '
+    'AttackSpeed ExtraAttackType BulletRemain ReloadTime PushDist CoolTime SpecialFeature PushType StunBase '
+    'StunFinal Pierce PierceRate MovingShot MaxCombo FunnelID').split())
+SERVER_UNIT_WEAPON_FIELDS = ('WeaponNumber_1', 'WeaponNumber_2', 'WeaponNumber_3', 'WeaponNumber_FatalAttack')
 DROP_CONDITION_BASE = 1_000_000       # native mission drop ids: 1000000 + group * 1000 + difficulty level
 DROP_MACHINE_BASE = 390_000           # imported rare dice machines: 390000 + group * 10 + level
 NATIVE_NORMAL_MACHINE = 101_000       # the shipped missions' normal drops per level: 101000 + level (levels 1..5)
@@ -164,7 +177,12 @@ class Templates:
     unit_labels: Callable[[int], set] | None = None   # unit id -> action labels of its model
     unit_record: Callable[[int], bytes | None] | None = None   # unit id -> client unit record (for NPC labels)
     weapon_record: Callable[[int], bytes | None] | None = None  # weapon id -> client weapon record (NPC attack)
+    # source unit -> complete tbl_UnitNpc definition.  For a tbl_Units-only source, template_unit supplies the
+    # NPC template whose SQL-only CustomNumber is inherited; all native combat fields still come from source.
+    server_unit_record: Callable[[int, int | None], dict | None] | None = None
+    server_weapon_record: Callable[[int], dict | None] | None = None
     blueprints: dict[int, list[tuple[int, str]]] | None = None  # output unit -> [(blueprint item category, name)]
+    native_exists: Callable[[str], bool] | None = None  # referenced native cut-in artwork
 
 
 def _lua_string(text: str) -> str:
@@ -323,25 +341,44 @@ end
 '''
 
 
+def _complete_server_row(row, columns: tuple[str, ...], what: str) -> dict:
+    if not isinstance(row, dict) or set(row) != set(columns):
+        _fail(f'{what} 的服务端定义字段不完整或含未知字段')
+    return dict(row)
+
+
 def _weapon_copy(build: 'MissionBuild', templates: Templates, ids: 'MissionIds', key: str, weapon: int,
                  factor: float) -> int:
-    """Client-only copy of `weapon` with DamageSize x factor (one copy per source weapon and factor)."""
+    """Paired client/server copy of a changed weapon (one copy per source weapon and factor)."""
     cache = build.weapon_copies
     if (weapon, factor) in cache:
         return cache[(weapon, factor)]
     if templates.weapon_record is None:
         _fail(f'npcs.{key}.attack 需要读取目标客户端的武器记录')
     source = templates.weapon_record(weapon)
-    if source is None or len(source) != WEAPON_RECORD_BYTES:
-        _fail(f'npcs.{key}.attack：目标客户端没有武器 {weapon} 的记录')
+    if source is None or len(source) != WEAPON_RECORD_BYTES or struct.unpack_from('<I', source)[0] != weapon:
+        _fail(f'npcs.{key}.attack：目标客户端没有匹配的武器 {weapon} 记录')
+    damage = struct.unpack_from('<I', source, WEAPON_DAMAGE)[0]
+    changed_damage = min(100000, int(round(damage * factor)))
+    if changed_damage == damage:
+        return weapon
+    if templates.server_weapon_record is None:
+        _fail(f'npcs.{key}.attack 需要读取目标服务端的武器记录')
+    server_source = templates.server_weapon_record(weapon)
+    server_source = _complete_server_row(server_source, SERVER_WEAPON_COLUMNS,
+                                         f'npcs.{key}.attack 武器 {weapon}')
+    if server_source['WeaponNo'] != weapon or server_source['DamageSize'] != damage:
+        _fail(f'npcs.{key}.attack：客户端与服务端武器 {weapon} 的编号或伤害不匹配')
     ident = WEAPON_COPY_FIRST + ids.group * 100 + len(cache)
     if len(cache) >= 100 or templates.weapon_record(ident) is not None:
-        _fail(f'npcs.{key}.attack：武器编号 {ident} 已被占用或超出每个任务 100 个')
+        _fail(f'npcs.{key}.attack：武器编号 {ident} 已被客户端占用或超出每个任务 100 个')
     copy = bytearray(source)
     _u32(copy, 0, ident)
-    damage = struct.unpack_from('<I', copy, WEAPON_DAMAGE)[0]
-    _u32(copy, WEAPON_DAMAGE, min(100000, int(round(damage * factor))))
+    _u32(copy, WEAPON_DAMAGE, changed_damage)
     build.rows.append((WEAPON_KIND, ident, bytes(copy)))
+    server_copy = dict(server_source)
+    server_copy.update(WeaponNo=ident, DamageSize=changed_damage)
+    build.server.setdefault('tbl_WeaponsRev', []).append(server_copy)
     cache[(weapon, factor)] = ident
     return ident
 
@@ -439,7 +476,7 @@ def _validate_npcs(spec: dict, templates: Templates) -> dict:
             tpl = row['template']
             if tpl not in templates.npc_templates or tpl not in templates.npc_data:
                 _fail(f'npcs.{key}.template {tpl} 在目标客户端或服务端不存在')
-            derived = any(k in row for k in ('ai', 'hp', 'boss', 'name', 'label', 'attack', 'special_attack'))
+            derived = any(k in row for k in ('ai', 'hp', 'boss', 'name', 'label', 'attack', 'special_attack', 'cutin'))
             npcs[key] = {'kind': 'derived' if derived else 'native', 'base': int(tpl), **row}
         else:
             _fail(f'npcs.{key} 需要 template 或 unit')
@@ -459,13 +496,17 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                     occluders: list | None = None) -> MissionBuild:
     """Compile `spec` (parsed mission JSON). `banner_effect(png, name)` returns overlay resources for a banner
     effect named `name` (a cloned text effect bound to the PNG) or None when banners are unsupported."""
-    if spec.get('schema') != SCHEMA or spec.get('schema_version') != 1:
-        _fail(f'任务文件必须声明 schema={SCHEMA} 且 schema_version=1')
+    version = spec.get('schema_version')
+    if spec.get('schema') != SCHEMA or type(version) is not int or version not in (1, 2):
+        _fail(f'任务文件必须声明 schema={SCHEMA} 且 schema_version=1 或 2')
     if not 1 <= ids.group <= 255 or ids.clear_first + 1000 > CLEAR_ID_LIMIT or ids.game_mode_first > MODE5_ID_LIMIT:
         _fail('任务 ID 规划越界')
     if not LUA_NAME.fullmatch(ids.lua_prefix) or len(ids.lua_prefix) > 12:
         _fail('lua_prefix 无效')
     build = MissionBuild()
+    transition_delay = spec.get('transition_delay', 'native')
+    if transition_delay not in ('native', 'immediate'):
+        _fail('transition_delay 只能是 native 或 immediate')
     name = _zh(spec.get('name'), 'name', 48)
     name_en = (spec.get('name') or {}).get('en') or spec.get('mission_key', 'mission')
     description = _zh(spec.get('description'), 'description', 240)
@@ -476,6 +517,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     if not isinstance(difficulties, list) or not 1 <= len(difficulties) <= 4:
         _fail('difficulties 需要 1..4 档')
     npcs = _validate_npcs(spec.get('npcs'), templates)
+    if version < 2 and (transition_delay != 'native' or any(npc.get('cutin') is not None for npc in npcs.values())):
+        _fail('机体图片横幅与立即阶段衔接需要 schema_version=2；旧编译器必须拒绝这些新语义')
     lines = spec.get('lines') or {}
     banners = spec.get('banners') or {}
     sectors = spec.get('sectors') or {}
@@ -493,6 +536,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     # -- NPC ids: native templates keep their id; derived/unit NPCs get new NpcData + template rows
     npc_ids: dict[str, int] = {}
     npc_units: dict[str, int] = {}
+    npc_goal_units: dict[str, int] = {}
     next_npc = ids.npc_first
     for key, npc in npcs.items():
         base_row = templates.npc_templates[npc['base']]
@@ -500,6 +544,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         if npc['kind'] == 'native':
             npc_ids[key] = npc['base']
             npc_units[key] = int(base_data['UseUnitID'])
+            npc_goal_units[key] = int(base_data['UseUnitID'])
             continue
         ident = next_npc
         next_npc += 1
@@ -511,14 +556,15 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         if npc.get('name'):
             _w(row, 5, 100, _zh(npc['name'], f'npcs.{key}.name', 49), f'npcs.{key}.name')
         client_unit = unit
+        server_unit = unit
         label = npc.get('label')
         attack = npc.get('attack')
         special = npc.get('special_attack', attack)
         if label is not None or attack is not None or special is not None:
-            # The NPC gets a client-only copy of its unit (the server keeps the real unit and its NpcData HP).
+            # The NPC gets a client unit copy.  A label-only copy remains client-only; a copy with changed
+            # weapon slots is published with matching tbl_UnitNpc/tbl_WeaponsRev server rows.
             # label: the overhead label is the unit's display name up to its first "(".
-            # attack / special_attack: the copy points to weapon copies whose damage is multiplied; normal and
-            # special damage are computed on the client from these weapon rows.
+            # attack / special_attack: normal and special damage use the paired weapon rows.
             if label is not None and (not isinstance(label, str) or not label.strip() or len(label) > 49
                                       or '(' in label):
                 _fail(f'npcs.{key}.label 需要 1..49 字、不含半角括号')
@@ -535,12 +581,33 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             _u32(copy, 0, client_unit)
             if label is not None:
                 _w(copy, 5, 100, label, f'npcs.{key}.label')
+            source_slots = [struct.unpack_from('<I', source, slot)[0]
+                            for slot in UNIT_WEAPON_SLOTS + (UNIT_SPECIAL_SLOT,)]
             for slot in UNIT_WEAPON_SLOTS + (UNIT_SPECIAL_SLOT,):
                 factor = special if slot == UNIT_SPECIAL_SLOT else attack
                 weapon = struct.unpack_from('<I', copy, slot)[0]
                 if factor is None or float(factor) == 1.0 or weapon == 0:
                     continue
                 _u32(copy, slot, _weapon_copy(build, templates, ids, key, weapon, float(factor)))
+            changed_slots = [struct.unpack_from('<I', copy, slot)[0]
+                             for slot in UNIT_WEAPON_SLOTS + (UNIT_SPECIAL_SLOT,)]
+            if changed_slots != source_slots:
+                if templates.server_unit_record is None:
+                    _fail(f'npcs.{key}.attack 需要读取目标服务端的机体记录')
+                server_source = templates.server_unit_record(unit, int(base_data['UseUnitID']))
+                server_source = _complete_server_row(server_source, SERVER_UNIT_NPC_COLUMNS,
+                                                     f'npcs.{key}.attack 机体 {unit}')
+                if server_source['UnitNumber'] != unit:
+                    _fail(f'npcs.{key}.attack：服务端机体 {unit} 的编号不匹配')
+                server_slots = [int(server_source[name] or 0) for name in SERVER_UNIT_WEAPON_FIELDS]
+                if server_slots != source_slots:
+                    _fail(f'npcs.{key}.attack：客户端与服务端机体 {unit} 的武器槽不匹配')
+                server_copy = dict(server_source)
+                server_copy['UnitNumber'] = client_unit
+                for name, weapon_id in zip(SERVER_UNIT_WEAPON_FIELDS, changed_slots):
+                    server_copy[name] = weapon_id or None if server_source[name] is None else weapon_id
+                build.server.setdefault('tbl_UnitNpc', []).append(server_copy)
+                server_unit = client_unit
             build.rows.append((UNIT_KIND, client_unit, bytes(copy)))
         _u32(row, 105, client_unit)
         if npc.get('ai'):
@@ -549,11 +616,12 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         row[259] = boss
         build.rows.append((NPC_TEMPLATE_KIND, ident, bytes(row)))
         data = dict(base_data)
-        data.update({'NpcDataID': ident, 'UseUnitID': unit, 'UseUnitHP': hp, 'BossFlag': boss,
+        data.update({'NpcDataID': ident, 'UseUnitID': server_unit, 'UseUnitHP': hp, 'BossFlag': boss,
                      'NpcName': _ascii(((npc.get('name') or {}).get('en') or key), 32)})
         build.server.setdefault('tbl_NpcData', []).append(data)
         npc_ids[key] = ident
         npc_units[key] = unit
+        npc_goal_units[key] = server_unit
 
     drop_items = _drop_blueprints(spec.get('drops'), npcs, npc_units, templates)
 
@@ -571,6 +639,66 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         _w(row, 105, 400, f'[{speaker}]\n{_zh(line.get("text"), f"lines.{key}.text", 150)}', f'lines.{key}')
         build.rows.append((SPEECH_KIND, ident, bytes(row)))
         speech_ids[key] = ident
+
+    # Native OriginalModeOperator's full-width UnitIcon. The NPC-create path reads the dialogue at +390
+    # and the sprite at +398; the original UI owns its animation, placement and resolution scaling.
+    for cutin_index, (key, npc) in enumerate(npcs.items()):
+        cutin = npc.get('cutin')
+        if cutin is None:
+            continue
+        if (not isinstance(cutin, dict) or set(cutin) not in
+                ({'native_sprite', 'line'}, {'image', 'line'}, {'image', 'line', 'crop'}) or cutin.get('line') not in speech_ids):
+            _fail(f'npcs.{key}.cutin 需要 native_sprite 或 image（二选一）与已定义的 line')
+        if 'native_sprite' in cutin:
+            sprite = cutin['native_sprite']
+            if not isinstance(sprite, str) or not re.fullmatch(r'(?i)sprs\\[0-9a-z_]{1,24}\.spr', sprite):
+                _fail(f'npcs.{key}.cutin.native_sprite 必须形如 sprs\\\\NNNN.spr')
+            if templates.native_exists is None or not templates.native_exists(sprite):
+                _fail(f'npcs.{key}.cutin.native_sprite 在目标客户端不存在')
+        else:
+            from PIL import Image
+            import io
+            from .compiler import spr_bytes, _native
+            from .txr_format import build_txr
+            image = Image.open(io.BytesIO(package.read(cutin['image'])))
+            if not (1 <= image.width <= 2048 and 1 <= image.height <= 2048):
+                _fail(f'npcs.{key}.cutin.image 的宽高不能超过 2048 像素')
+            rect = cutin.get('crop')
+            if rect is None:
+                if image.size != (1024, 156):
+                    _fail(f'npcs.{key}.cutin.image 必须是 1024x156，其他尺寸需声明 crop')
+                rect = [0, 0, 1024, 156]
+            if (not isinstance(rect, list) or len(rect) != 4 or any(type(v) is not int for v in rect)
+                    or not 0 <= rect[0] < rect[2] <= image.width
+                    or not 0 <= rect[1] < rect[3] <= image.height):
+                _fail(f'npcs.{key}.cutin.crop 需要图片范围内的 [左,上,右,下] 像素坐标')
+            height = round(1024 * (rect[3] - rect[1]) / (rect[2] - rect[0]))
+            if not 64 <= height <= 512:
+                _fail(f'npcs.{key}.cutin.crop 需要适合横幅的宽高比例')
+            # Keep source pixels intact. The native sprite's UV rectangle clips
+            # the margins, and its logical size preserves the selected aspect.
+            width_t = 1 << (image.width - 1).bit_length()
+            height_t = 1 << (image.height - 1).bit_length()
+            image = image.convert('RGBA')
+            canvas = Image.new('RGBA', (width_t, height_t), (0, 0, 0, 0))
+            canvas.paste(image, (0, 0))
+            texture = f'txrs/{ids.lua_prefix.lower()}u{cutin_index:02d}.txr'
+            sprite_name = f'sprs/{ids.lua_prefix.lower()}u{cutin_index:02d}.spr'
+            build.resources[texture] = build_txr(width_t, height_t, canvas.tobytes())
+            native_sprite = bytearray(spr_bytes(_native(texture), 1024, height, (width_t, height_t)))
+            struct.pack_into('<4f', native_sprite, 20, rect[0]/width_t, rect[1]/height_t,
+                             rect[2]/width_t, rect[3]/height_t)
+            build.resources[sprite_name] = bytes(native_sprite)
+            sprite = _native(sprite_name)
+        for index, (kind, ident, raw) in enumerate(build.rows):
+            if kind == NPC_TEMPLATE_KIND and ident == npc_ids[key]:
+                row = bytearray(raw)
+                _u32(row, 390, speech_ids[cutin['line']])
+                _w(row, 398, 200, sprite, f'npcs.{key}.cutin.native_sprite')
+                build.rows[index] = (kind, ident, bytes(row))
+                break
+        else:
+            _fail(f'npcs.{key}.cutin 缺少派生 NPC 模板')
 
     # -- banners: one overlay effect per banner image
     banner_fx: dict[str, str] = {}
@@ -880,9 +1008,9 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             cut_name, scene = cutscene_names.get(enter.get('cutscene'), ('', 0.0)) if enter.get('cutscene') else ('', 0.0)
             if enter.get('cutscene') and enter['cutscene'] not in cutscene_names:
                 _fail(f'phases[{p_index}].enter.cutscene 未定义')
-            # waves start when the cutscene that opens the phase has ended (the opening for the first phase):
-            # the server starts the phase clock with the cutscene, so units spawned at once fought during it
-            lead = math.ceil(opening[1]) if order == 1 else math.ceil(scene)
+            # Native ScriptTime/SceneTime already holds the phase and resets its spawn clock when the
+            # cutscene ends. Spawn times are therefore relative to active play; adding the scene length here
+            # would make every authored delay run twice.
             event_fn = event_function(p_index, enter) if d_index == 0 else f'{ids.lua_prefix}_E{p_index}' \
                 if any((enter.get('lines'), enter.get('sector'), enter.get('area') is not None)) else ''
             reward = phase.get('reward') or {}
@@ -899,9 +1027,9 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             if 'kill' in goal:
                 units_seen = set()
                 for g in goal['kill']:
-                    if g.get('npc') not in npc_units:
+                    if g.get('npc') not in npc_goal_units:
                         _fail(f'phases[{p_index}].goal.kill 引用未定义的 NPC')
-                    unit = npc_units[g['npc']]
+                    unit = npc_goal_units[g['npc']]
                     if unit in units_seen:
                         _fail(f'phases[{p_index}].goal.kill 中的 NPC 使用了相同机体，计数会互相干扰')
                     units_seen.add(unit)
@@ -921,9 +1049,9 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                                       'UseTime': int(f['time_limit'])})
                 elif 'lose' in f:
                     lose = f['lose']
-                    if lose.get('npc') not in npc_units:
+                    if lose.get('npc') not in npc_goal_units:
                         _fail(f'phases[{p_index}].fail.lose 引用未定义的 NPC')
-                    fail_rows.append({'UseWho': 2, 'UseHow': 6, 'UseObjectID': npc_units[lose['npc']],
+                    fail_rows.append({'UseWho': 2, 'UseHow': 6, 'UseObjectID': npc_goal_units[lose['npc']],
                                       'UseObjectCount': int(lose.get('count', 1)), 'UseTime': 0})
                 else:
                     _fail(f'phases[{p_index}].fail 只支持 time_limit / lose')
@@ -980,7 +1108,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                 side = {'enemy': 2, 'ally': 1}.get(spawn.get('side', 'enemy'))
                 if side is None:
                     _fail(f'phases[{p_index}].spawns[{s_index}].side 只能是 enemy 或 ally')
-                at = float(spawn.get('at', 0)) + lead
+                at = float(spawn.get('at', 0))
                 every = float(spawn.get('every', 0))
                 for k, position in enumerate(spawn.get('positions') or []):
                     pos = _vec(position, f'phases[{p_index}].spawns[{s_index}].positions[{k}]')
@@ -1001,7 +1129,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             for side, t, _, _, npc, pos, min_free in queue:
                 # timed waves use AbsTime (seconds since the phase began), as the shipped reinforcements do:
                 # AfterTime only advances while the spawn chain moves, so a quickly cleared field stalled it
-                after, absolute = (max(1, int(round(t))), 0) if t < 2 else (0, int(round(t)))
+                after, absolute = (max(0, int(round(t))), 0) if t < 2 else (0, int(round(t)))
                 tables.setdefault('tbl_MissionNpc', []).append({
                     'MissionNpcID': spawn_id, 'MissionID': mode_id, 'MissionDifficult': level, 'MissionPart': order,
                     'NpcID': npc, 'px': int(round(pos[0])), 'py': int(round(pos[1])), 'pz': int(round(pos[2])), 'AfterTime': after,
@@ -1053,6 +1181,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         _fail('生成的 Lua 含非 ASCII 字符')
     build.report = {'mission_key': spec.get('mission_key'), 'group': ids.group,
                     'game_modes': [ids.game_mode_first + i for i in range(len(difficulties))],
+                    'transition_delay': transition_delay,
                     'phases': len(phases), 'clear_rows': clear_id - ids.clear_first,
                     'spawn_rows': spawn_id - ids.spawn_first, 'npc_rows': next_npc - ids.npc_first,
                     'speech_rows': len(speech_ids), 'cutscenes': {k: v[0] for k, v in cutscene_names.items()},

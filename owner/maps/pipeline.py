@@ -79,6 +79,22 @@ def unit_labels(baseline, unit):
     return {label.rstrip() for label in mod.labels()}
 
 
+def _server_unit_record(npc_units: dict[int, dict], player_units: dict[int, dict], unit: int,
+                        template_unit: int | None = None) -> dict | None:
+    if unit in npc_units:
+        return dict(npc_units[unit])
+    source = player_units.get(unit)
+    template = npc_units.get(template_unit) if template_unit is not None else None
+    if source is None or template is None:
+        return None
+    # CustomNumber is required by tbl_UnitNpc but is not part of BattleServer's packed UnitData.  Inherit the
+    # selected NPC template's value; all shared native combat fields come from the requested player unit.
+    result = {name: source[name] for name in M.SERVER_UNIT_NPC_COLUMNS
+              if name not in ('UnitNumber', 'CustomNumber')}
+    result.update(UnitNumber=unit, CustomNumber=template['CustomNumber'])
+    return result
+
+
 def mission_templates(baseline, server_ini) -> M.Templates:
     """Native rows the mission mirrors are cloned from, plus the server's NpcData (read-only)."""
     from owner.units import repository
@@ -91,6 +107,21 @@ def mission_templates(baseline, server_ini) -> M.Templates:
     connection = repository._connect(Path(server_ini))
     try:
         cursor = connection.cursor()
+
+        def exact_rows(table: str, columns: tuple[str, ...], key: str) -> dict[int, dict]:
+            cursor.execute(f'SELECT {",".join(columns)} FROM dbo.{table}')
+            observed = tuple(item[0] for item in cursor.description)
+            if observed != columns:
+                raise ValueError(f'{table} 的服务端列与任务协议不匹配')
+            result = {}
+            for values in cursor.fetchall():
+                row = dict(zip(columns, values))
+                ident = int(row[key])
+                if ident in result:
+                    raise ValueError(f'{table} 的 {key} {ident} 不唯一')
+                result[ident] = row
+            return result
+
         cursor.execute('SELECT * FROM dbo.tbl_NpcData')
         columns = [d[0] for d in cursor.description]
         npc_data = {}
@@ -98,7 +129,14 @@ def mission_templates(baseline, server_ini) -> M.Templates:
             item = dict(zip(columns, row))
             if isinstance(item.get('NpcName'), str):
                 item['NpcName'] = item['NpcName'].rstrip()
-            npc_data[int(item['NpcDataID'])] = item
+            ident = int(item['NpcDataID'])
+            if ident in npc_data:
+                raise ValueError(f'tbl_NpcData 的 NpcDataID {ident} 不唯一')
+            npc_data[ident] = item
+        npc_units = exact_rows('tbl_UnitNpc', M.SERVER_UNIT_NPC_COLUMNS, 'UnitNumber')
+        player_units = exact_rows('tbl_Units', tuple(repository.UNIT_COLUMNS), 'UnitNumber')
+        server_weapons = exact_rows('tbl_WeaponsRev', M.SERVER_WEAPON_COLUMNS, 'WeaponNo')
+
         # blueprint items (item category -> recipe) and the unit each recipe produces, for mission drops
         cursor.execute('SELECT i.CatalogueID, i.Name, m.OutUnitID FROM dbo.tbl_ItemCategory i '
                        'JOIN dbo.tbl_MixTreeFile m ON m.Idx = i.RefIndex')
@@ -118,7 +156,11 @@ def mission_templates(baseline, server_ini) -> M.Templates:
         spawn=records('gdrs/0053.gdt', 152)[620001],
         unit_exists=lambda unit: baseline.record('unit', unit) is not None,
         unit_labels=lambda unit: unit_labels(baseline, unit), unit_record=lambda unit: baseline.record('unit', unit),
-        weapon_record=lambda weapon: baseline.record('weapon', weapon), blueprints=blueprints)
+        weapon_record=lambda weapon: baseline.record('weapon', weapon),
+        server_unit_record=lambda unit, template=None: _server_unit_record(npc_units, player_units, unit, template),
+        server_weapon_record=lambda weapon: server_weapons.get(weapon),
+        blueprints=blueprints,
+        native_exists=lambda name: baseline.exists(name.replace('\\', '/').lower()))
 
 
 def occluders(package, baseline):

@@ -343,6 +343,21 @@ sdgo_add_mod(map_catalog DESCRIPTION "imported maps and missions"
                      support/native_resource_overlay/native_resource_overlay.cpp
                      support/native_resource_overlay/native_resource_overlay.def
              FILES symbols.fragment.ini)
+sdgo_add_mod(map_catalog_server SERVER DESCRIPTION "imported mission pacing"
+             SOURCES mods/map_catalog_server/map_catalog_server.cpp FILES symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_executable(map_catalog_server_policy_test tests/map_catalog_server_policy_test.cpp)
+    target_include_directories(map_catalog_server_policy_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    sdgo_strict(map_catalog_server_policy_test)
+    add_test(NAME map_catalog_server_policy COMMAND map_catalog_server_policy_test)
+
+    add_executable(map_catalog_server_dll_test tests/map_catalog_server_dll_test.cpp)
+    target_link_libraries(map_catalog_server_dll_test PRIVATE sdgo_api)
+    sdgo_strict(map_catalog_server_dll_test)
+    add_dependencies(map_catalog_server_dll_test map_catalog_server)
+    add_test(NAME map_catalog_server_loaded_dll
+             COMMAND map_catalog_server_dll_test $<TARGET_FILE:map_catalog_server>)
+endif()
 sdgo_add_mod(unit_catalog_server SERVER DESCRIPTION "owned imported-unit runtime bindings"
              SOURCES mods/unit_catalog_server/server.cpp mods/unit_catalog_server/human_build_capture.cpp mods/unit_catalog_server/native_form_gate.cpp
              FILES symbols.fragment.ini LIBS sdgo_skill_identity sdgo_human_unit_capture sdgo_unit_form_preflight

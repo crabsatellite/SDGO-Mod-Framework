@@ -355,7 +355,9 @@ bool LoadMissionScript(const std::wstring& path) {
 // reports mode 8 for that one comparison, so the client builds its own speech UI. Every other
 // room keeps its native mode.
 std::vector<uint32_t> g_importedModes;
+std::vector<uint32_t> g_cutinNpcs;
 void* g_operatorModeOriginal = nullptr;
+void* g_npcOperatorModeOriginal = nullptr;
 constexpr size_t kRoomGameModeId = 0x9C;  // u32 GameModeID in the room data (the 0x66 mode word's object)
 constexpr uint32_t kListedMissionMode = 5;
 constexpr uint32_t kSpeechMissionMode = 8;
@@ -393,6 +395,46 @@ __declspec(naked) void OperatorModeSite() {
         popad
         popfd
         jmp dword ptr [g_operatorModeOriginal]
+    }
+}
+
+// The NPC-create notification has a separate mode check before it queues the
+// original full-width unit illustration. Opt in only the imported NPC records
+// that declare both its native sprite and dialogue; ordinary NPCs stay silent.
+uint32_t __stdcall DecideNpcOperatorMode(uint32_t mode, const uint8_t* room, const uint8_t* packet) {
+    if (!packet || (mode & 0xFFFF) != kListedMissionMode) return mode;
+    __try {
+        const uint32_t npc = U32(packet + 0x0E);
+        if (std::find(g_cutinNpcs.begin(), g_cutinNpcs.end(), npc) == g_cutinNpcs.end()) return mode;
+        const uint32_t selected = DecideOperatorMode(mode, room);
+        if (selected == kSpeechMissionMode)
+            g_api->Log(g_mod, SDGO_LOG_INFO, "imported NPC %lu: native unit cut-in queued", static_cast<unsigned long>(npc));
+        return selected;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return mode;
+    }
+}
+
+__declspec(naked) void NpcOperatorModeSite() {
+    __asm {
+        pushfd
+        pushad
+        mov ebx, esp
+        sub esp, 0x210
+        and esp, 0xfffffff0
+        fxsave [esp]
+        fninit
+        cld
+        push dword ptr [ebx + 4]  // esi: native create-NPC notification
+        push dword ptr [ebx + 24] // ecx: current room data
+        push dword ptr [ebx + 28] // eax: room mode
+        call DecideNpcOperatorMode
+        mov [ebx + 28], eax
+        fxrstor [esp]
+        mov esp, ebx
+        popad
+        popfd
+        jmp dword ptr [g_npcOperatorModeOriginal]
     }
 }
 
@@ -534,35 +576,44 @@ void __cdecl ResourceOpened(const char* owner, const wchar_t* path, void*, void*
 
 bool RegisterResourceOverlay() {
     using GetBroker = const SdgoResourceOverlayBrokerApiV1*(__cdecl*)();
-    HMODULE capsule = GetModuleHandleW(L"capsule_catalog.dll");
-    if (capsule) {
-        auto getter = reinterpret_cast<GetBroker>(GetProcAddress(capsule, "SdgoGetResourceOverlayBrokerV1"));
+    const SdgoResourceOverlayBrokerApiV1* shared = nullptr;
+    const wchar_t* sharedModule = nullptr;
+    for (const wchar_t* name : {L"capsule_catalog.dll", L"unit_catalog.dll"}) {
+        HMODULE module = GetModuleHandleW(name);
+        if (!module) continue;
+        auto getter = reinterpret_cast<GetBroker>(GetProcAddress(module, "SdgoGetResourceOverlayBrokerV1"));
         if (!getter) {
             g_api->Log(g_mod, SDGO_LOG_ERROR,
-                       "loaded capsule_catalog.dll is incompatible: SdgoGetResourceOverlayBrokerV1 is missing");
+                       "loaded %ls is incompatible: SdgoGetResourceOverlayBrokerV1 is missing", name);
             return false;
         }
         const SdgoResourceOverlayBrokerApiV1* broker = getter();
         if (broker) {
             if (broker->size < sizeof(SdgoResourceOverlayBrokerApiV1) || broker->version != 1 ||
                 !broker->RegisterBundle) {
-                g_api->Log(g_mod, SDGO_LOG_ERROR, "loaded capsule resource broker has an incompatible ABI");
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "loaded %ls has an incompatible resource broker ABI", name);
                 return false;
             }
-            char error[512] = {};
-            if (!broker->RegisterBundle(g_api->ModDirectory(g_mod), L"resource-overlay.ini", "map_catalog",
-                                        error, static_cast<uint32_t>(sizeof(error)))) {
-                g_api->Log(g_mod, SDGO_LOG_ERROR, "capsule resource broker rejected map bundle: %s",
-                           error[0] ? error : "unknown broker error");
+            if (shared && shared != broker) {
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "multiple native resource brokers are active");
                 return false;
             }
-            g_api->Log(g_mod, SDGO_LOG_INFO, "sealed map resources registered with capsule resource broker");
-            return true;
+            shared = broker;
+            sharedModule = name;
         }
     }
-    // Without the capsule broker this module runs its own provider. Each module
-    // links its own provider copy, so only one standalone provider can own the
-    // OpenFile hook; owner clients normally load capsule_catalog as the broker.
+    if (shared) {
+            char error[512] = {};
+            if (!shared->RegisterBundle(g_api->ModDirectory(g_mod), L"resource-overlay.ini", "map_catalog",
+                                        error, static_cast<uint32_t>(sizeof(error)))) {
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "%ls resource broker rejected map bundle: %s",
+                           sharedModule, error[0] ? error : "unknown broker error");
+                return false;
+            }
+            g_api->Log(g_mod, SDGO_LOG_INFO, "sealed map resources registered with %ls resource broker", sharedModule);
+            return true;
+    }
+    // Only when no earlier catalogue owns the hook do maps start a provider.
     std::string error;
     auto& provider = sdgo::resource_overlay::LocalProvider();
     if (!provider.RegisterBundleFiles(g_api->ModDirectory(g_mod), L"resource-overlay.ini", "map_catalog", error) ||
@@ -607,12 +658,22 @@ SDGO_MOD_ENTRY {
     g_nativeLog = api->SettingInt(mod, "NativeDebugLog", 0) != 0;
     const size_t maps = g_catalog.Count(kMapType);
     const size_t missionRecords = g_catalog.records.size() - maps;
-    for (const auto& entry : g_catalog.records)
+    for (const auto& entry : g_catalog.records) {
         if (entry.kind == kGameModeType) g_importedModes.push_back(entry.id);
+        if (entry.kind == kNpcTemplateType && entry.bytes.size() == 598 &&
+            U32(entry.bytes.data() + 390) && entry.bytes[398]) g_cutinNpcs.push_back(entry.id);
+    }
     if (!g_importedModes.empty() && api->size >= offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) && api->HookSite &&
         !api->HookSite(mod, "map_catalog.operator_mode", reinterpret_cast<void*>(&OperatorModeSite),
                        &g_operatorModeOriginal)) {
         api->Log(mod, SDGO_LOG_WARN, "character speech UI unavailable for imported missions");
+    }
+    if (!g_cutinNpcs.empty() &&
+        (api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) || !api->HookSite ||
+         !api->HookSite(mod, "map_catalog.npc_operator_mode", reinterpret_cast<void*>(&NpcOperatorModeSite),
+                        &g_npcOperatorModeOriginal))) {
+        api->Log(mod, SDGO_LOG_ERROR, "native unit cut-ins unavailable for imported missions");
+        return 0;
     }
     CollectPosterModes();
     if (!g_posterModes.empty() && api->size >= offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) &&

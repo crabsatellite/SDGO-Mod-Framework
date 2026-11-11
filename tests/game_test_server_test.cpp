@@ -15,6 +15,23 @@ namespace
 {
     unsigned g_checks = 0;
     unsigned g_failures = 0;
+    std::string g_roomTitle;
+
+    uint32_t __cdecl QueryRoomTitle(
+        uint32_t pilot, char* output, uint32_t capacity)
+    {
+        if (pilot != 9229 || !output ||
+            g_roomTitle.size() + 1 > capacity) {
+            return 0;
+        }
+        memcpy(output, g_roomTitle.c_str(), g_roomTitle.size() + 1);
+        return static_cast<uint32_t>(g_roomTitle.size());
+    }
+
+    const SdgoRoomTitleApi kRoomTitleApi = {
+        sizeof(SdgoRoomTitleApi),
+        SDGO_ROOM_TITLE_API_VERSION,
+        &QueryRoomTitle};
 
     void Check(bool passed, const char* expression, int line)
     {
@@ -246,6 +263,31 @@ namespace
         CHECK(lifecycle.outcome == Lifecycle::Pass);
         CHECK(lifecycle.phase == 4);
         CHECK(lifecycle.eventCount == 5);
+    }
+
+
+    void TestZeroAiMissionLifecycle()
+    {
+        ResetConfig("T7x", 9229, 5, 0, true);
+        Lifecycle lifecycle;
+        ProcessEvent(
+            &lifecycle, Event(SDGO_PVP_AI_EVENT_REQUEST_ACCEPTED, 0x10203040u, 9229, 5));
+        SdgoPvpAiObserverEventV1 setup =
+            Event(SDGO_PVP_AI_EVENT_SETUP_COMPLETE, 0x10203040u, 9229, 5);
+        setup.ai_team_1 = 0;
+        setup.ai_team_2 = 0;
+        setup.active_slots = 1;
+        ProcessEvent(&lifecycle, setup);
+        CHECK(lifecycle.outcome == Lifecycle::Running);
+        CHECK(lifecycle.phase == 2);
+        ProcessEvent(
+            &lifecycle, Event(SDGO_PVP_AI_EVENT_BATTLE_ACTIVE, 0x10203040u, 9229, 5));
+        CHECK(lifecycle.outcome == Lifecycle::Running);
+        CHECK(lifecycle.phase == 3);
+        ProcessEvent(
+            &lifecycle, Event(SDGO_PVP_AI_EVENT_BATTLE_END, 0x10203040u, 9229, 5));
+        CHECK(lifecycle.outcome == Lifecycle::Pass);
+        CHECK(lifecycle.phase == 4);
     }
 
     void TestRequireEndLifecycle()
@@ -599,6 +641,82 @@ namespace
             &unrelated));
         g_deathEnabled = false;
     }
+
+    void TestMissionNpcDamagesHuman()
+    {
+        ResetConfig("T7x", 9229, 5, 0, true);
+        g_config.missionGameModeId = 88072;
+        g_deathEnabled = true;
+        g_titleApi = &kRoomTitleApi;
+        g_roomTitle = "T7x lv2";
+
+        std::vector<uint8_t> room(0x40000);
+        std::vector<uint8_t> npcData(0x100);
+        std::vector<uint8_t> unit(0x100);
+        room[kRoomMode] = 5;
+        Put(room.data(), kRoomHost, uint32_t{9229});
+        Put(room.data(), kRoomMissionId, uint32_t{88072});
+
+        const int attackerSlot = 12;
+        const int victimSlot = 0;
+        uint8_t* attacker = room.data() + kBattlePilots +
+            attackerSlot * kBattlePilotStride;
+        uint8_t* victim = room.data() + kBattlePilots +
+            victimSlot * kBattlePilotStride;
+        const uint32_t attackerId = 0x80000021u;
+        const uint32_t victimId = 9229;
+        Put(attacker, kPilotEntity, attackerId);
+        Put(attacker, kPilotTeam, uint8_t{2});
+        Put(attacker, kBattlePilotNpcData, npcData.data());
+        Put(npcData.data(), kNpcDataId, uint32_t{97621});
+        Put(victim, kPilotEntity, victimId);
+        Put(victim, kPilotTeam, uint8_t{1});
+        Put(
+            room.data(),
+            kSlotInfo + victimSlot * kSlotInfoStride + kSlotPilotId,
+            victimId);
+        Put(unit.data(), kUnitMaxHp, uint32_t{14500});
+        Put(unit.data(), kUnitHp, uint32_t{0});
+
+        DamageEvent event = {};
+        CHECK(CaptureDamage(
+            room.data(), victim, attacker, unit.data(), 875, 1, &event));
+        CHECK(event.missionId == 88072);
+        CHECK(event.attackerSlot == 12);
+        CHECK(event.victimSlot == 0);
+        CHECK(event.attackerNativeNpc == 1);
+        CHECK(event.attackerIsAi == 1);
+        CHECK(event.attackerNpcDataId == 97621);
+        CHECK(event.victimPilotId == 9229);
+        CHECK(event.victimIsAi == 0);
+        CHECK(event.identityValid == 1);
+        CHECK(event.effectiveLoss == 875);
+        CHECK(event.deathFlag == 1);
+
+        Lifecycle lifecycle;
+        ProcessMissionDamage(&lifecycle, event);
+        CHECK(lifecycle.outcome == Lifecycle::Pass);
+        CHECK(lifecycle.roomCookie == event.roomCookie);
+        CHECK(lifecycle.mode == 5);
+        CHECK(lifecycle.phase == 4);
+        CHECK(lifecycle.eventCount == 1);
+
+        const std::string json = DamageJson(event);
+        CHECK(json.find("\"mission_game_mode_id\":88072") !=
+              std::string::npos);
+        CHECK(json.find("\"attacker_native_npc\":true") !=
+              std::string::npos);
+        CHECK(json.find("\"attacker_npc_data_id\":97621") !=
+              std::string::npos);
+        CHECK(json.find("\"victim_is_ai\":false") !=
+              std::string::npos);
+
+        g_roomTitle = "other";
+        CHECK(!CaptureDamage(
+            room.data(), victim, attacker, unit.data(), 1, 0, &event));
+        g_titleApi = nullptr;
+        g_deathEnabled = false;
+    }
 }
 
 int main(int argc, char** argv)
@@ -616,12 +734,14 @@ int main(int argc, char** argv)
     TestObserverWildcardAndDisabledHost();
     TestTitleBoundary();
     TestNormalLifecycle();
+    TestZeroAiMissionLifecycle();
     TestRequireEndLifecycle();
     TestBattleEndUsesCapturedIdentityWithoutRelaxingFilters();
     TestLifecycleFailures();
     TestLifecycleDuplicatesAndTerminalOutcomes();
     TestQueueCapacityAndOrder();
     TestNativeDamageIdentityReceipts();
+    TestMissionNpcDamagesHuman();
 
     DeleteCriticalSection(&g_queueLock);
     std::printf("%u checks, %u failures\n", g_checks, g_failures);

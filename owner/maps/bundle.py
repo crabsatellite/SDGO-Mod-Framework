@@ -24,7 +24,8 @@ from .compiler import CompiledMap
 
 MODULE = 'map_catalog'
 PREFIX = 'client/sdgo/mods/map_catalog/'
-PLAN_SCHEMA = 'sdgo.map-import-server-plan/1'
+PLAN_SCHEMA = 'sdgo.map-import-server-plan/2'
+LEGACY_PLAN_SCHEMAS = frozenset({'sdgo.map-import-server-plan/1'})
 OVERLAY_DOMAINS = {'trns': '.trn', 'sol': '.sol', 'mdrs': '.mod', 'anrs': '.ani', 'txrs': '.txr', 'fxrs': '.zfx',
                    'sprs': '.spr', 'sdrs': '.zsd'}
 TABLE_KEYS = {
@@ -36,6 +37,8 @@ TABLE_KEYS = {
     'tbl_MissionModeStart': ('MissionModeStartID',),
     'tbl_MissionNpc': ('MissionNpcID',),
     'tbl_MissionExp': ('MissionExpID',),
+    'tbl_WeaponsRev': ('WeaponNo',),
+    'tbl_UnitNpc': ('UnitNumber',),
     'tbl_NpcData': ('NpcDataID',),
     'tbl_MissionRankBossData': ('MissionID',),
     'tbl_BattleResultItemDropSetting': ('DropConditionID',),
@@ -103,6 +106,12 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
             resources[name] = raw
         rows.extend(mission.rows)
         lua += mission.lua
+    mission_reports = [m.report for m in missions or []]
+    immediate_transition_missions = sorted({
+        mode_id for report in mission_reports if report.get('transition_delay', 'native') == 'immediate'
+        for mode_id in report['game_modes']
+    })
+    runtime_policy = {'immediate_transition_missions': immediate_transition_missions}
     rows.sort(key=lambda row: (row[0] != 0x0F, row[0], row[1]))
     ids = [row[1] for row in rows]
     if len(set(ids)) != len(ids):
@@ -118,10 +127,10 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
         'lua': hashlib.sha256(lua.encode('ascii')).hexdigest(),
         'server': hashlib.sha256(json.dumps([b.server for b in list(builds) + list(missions or [])],
                                             sort_keys=True, default=str).encode()).hexdigest(),
+        'runtime_policy': runtime_policy,
     }, sort_keys=True).encode()).hexdigest()[:16]
     maps = [{'map_key': b.report['map_key'], 'map_no': b.map_no, 'map_id': b.map_id, 'variant': b.variant,
              'trn': b.report['trn']} for b in builds]
-    mission_reports = [m.report for m in missions or []]
     files = {PREFIX + 'catalog.bin': catalog, PREFIX + 'resource-overlay.ini': overlay,
              PREFIX + 'resources.zdx': zdx, PREFIX + 'resources.zpk': zpk,
              PREFIX + 'definitions.json': json.dumps({'protocol': 'sdgo.map-package', 'schema_version': 1,
@@ -160,7 +169,7 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
                 if not same:
                     keyed.append(item)
     plan = {'schema': PLAN_SCHEMA, 'revision': revision, 'maps': maps, 'keys': TABLE_KEYS, 'tables': tables,
-            'credentials_included': False}
+            'runtime_policy': runtime_policy, 'credentials_included': False}
     (output / 'server-plan.json').write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding='utf-8')
     (output / 'report.json').write_text(json.dumps([b.report for b in builds], ensure_ascii=False, indent=1),
                                         encoding='utf-8')

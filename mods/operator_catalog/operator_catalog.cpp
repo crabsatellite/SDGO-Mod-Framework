@@ -394,7 +394,7 @@ bool RegisterResourceOverlays()
     const SdgoResourceOverlayBrokerApiV1* shared = nullptr;
     const wchar_t* sharedModule = nullptr;
     for (const wchar_t* moduleName :
-         {L"capsule_catalog.dll", L"unit_catalog.dll"}) {
+         {L"capsule_catalog.dll", L"unit_catalog.dll", L"map_catalog.dll"}) {
         HMODULE module = GetModuleHandleW(moduleName);
         if (!module)
             continue;

@@ -2,7 +2,7 @@
 
 [简体中文](map-import.zh-CN.md)
 
-Register maps and missions that were made outside the game and prepared in the **map package protocol**: new terrain, objects, spawn points, sky, minimap and music, plus PvE missions with phase objectives, enemy waves, character dialogue, opening/mid-mission/ending cutscenes and banner effects. Imported maps appear in the battle room map list and imported missions in the mission room list, next to the original ones.
+Register maps and missions that were made outside the game and prepared in the **map package protocol**: new terrain, objects, spawn points, sky, minimap and music, plus PvE missions with phase objectives, enemy waves, character dialogue, opening/mid-mission/ending cutscenes and native unit illustration strips. Imported maps appear in the battle room map list and imported missions in the mission room list, next to the original ones.
 
 The feature only imports. It reads protocol data, generates the records and resources the game needs and installs them on the client and the server. It does not unpack, export or change the game's own maps and missions.
 
@@ -11,6 +11,7 @@ The feature only imports. It reads protocol data, generates the records and reso
 | Part | Role |
 | --- | --- |
 | Client Mod `map_catalog` | Registers imported map rows and mission records at startup, serves terrain/model/texture resources, loads mission scripts (cutscenes, phase events) and enables the character dialogue panel for imported missions |
+| Battle server Mod `map_catalog_server` | Applies the imported-mission pacing policy only to MissionIDs declared by the server owner content package; stock missions, final settlement and native cutscene timing remain unchanged |
 | Manager page "地图与任务导入" (map and mission import) | Register map packages, edit names/modes/servers, compile, install the client package, check and apply the server rows |
 | Map package protocol | `map.json` describes a map; `missions/*.json` describe missions. See below |
 
@@ -24,7 +25,7 @@ The feature only imports. It reads protocol data, generates the records and reso
 6. Click **Check server** to see the rows that will be added or updated and any conflicts; with no conflicts click **Apply to server**, then **Read back**.
 7. Restart the World/Battle services and the client.
 
-**Example map.** The **示例地图** (example maps) card downloads *Twin Valley Fortress · Operation Odessa* from the framework's public repository, checks every file against the SHA-256 in its `map.json` and registers it like any other package; then compile, install and apply as usual. The map has a south valley arena, a fortress line with a gate on the ridge and a mining base in the north valley, and comes with a six-phase PvE mission (opening, mid-mission and ending cutscenes, banners, a boss group and a countdown). Its files are in the repository under [`examples/maps/twin-valley-fortress`](../examples/maps/twin-valley-fortress) as a reference for writing your own packages; [`CREDITS.md`](../examples/maps/twin-valley-fortress/CREDITS.md) lists the CC0 sources of its textures and scans. It uses the game's own NPC templates, models, music and sounds by name, so it compiles only against a client and server that have them.
+**Example map.** The **示例地图** (example maps) card downloads *Twin Valley Fortress · Operation Odessa* from the framework's public repository, checks every file against the SHA-256 in its `map.json` and registers it like any other package; then compile, install and apply as usual. The map has a south valley arena, a fortress line with a gate on the ridge and a mining base in the north valley, and comes with an eight-phase PvE mission (opening, mid-mission and ending cutscenes, native unit illustration strips, a boss group and a countdown). Its files are in the repository under [`examples/maps/twin-valley-fortress`](../examples/maps/twin-valley-fortress) as a reference for writing your own packages; [`CREDITS.md`](../examples/maps/twin-valley-fortress/CREDITS.md) lists the CC0 sources of its textures and scans. It uses the game's own NPC templates, models, music and sounds by name, so it compiles only against a client and server that have them.
 
 Numbers are assigned at compile time: map numbers continue after the client's own maps, and every kind of mission record continues after the original mission records, without gaps (the game reads these lists as contiguous numbers). Removing or moving a map therefore renumbers the maps and missions after it; compile, install and apply again and the server updates and removes the rows this workspace wrote earlier.
 
@@ -64,14 +65,16 @@ Mission files live under `missions/` in the map package and are listed in `files
 
 | Field | Meaning |
 | --- | --- |
-| `schema`, `schema_version` | Always `sdgo.map-mission`, `1` |
+| `schema`, `schema_version` | `sdgo.map-mission`, `2`; existing v1 missions remain readable. Native illustration strips and immediate phase transitions require v2 so older compilers reject them instead of silently omitting features |
 | `mission_key`, `name`, `description` | Mission identifier, name and description |
+| `transition_delay` | Phase-change pacing: `native` (default) keeps the stock fixed wait between ordinary phases; `immediate` removes only that fixed wait between non-final phases. A phase's `SceneTime` cutscene still plays in full, and final settlement keeps the native timing |
 | `briefing.zh` | Briefing panel: up to 5 lines of 49 characters |
 | `difficulties` | Per difficulty: `level`, `required_rank`, `time_limit` (seconds), `lives` |
 | `bgm` | Mission music (same form as the map's `presentation.bgm`) |
-| `npcs` | Units: `template` (an NPC the target server already has), or `unit` + `base` (any unit using an NPC template); `hp`, `boss`, `name` and `ai` (an AI script name such as the battle AI's `VSAI_Infighter_01`) can be changed. `label` sets the name shown above the unit (for example a pilot name, up to 49 characters without `(`); `attack` and `special_attack` (0.25–4) multiply the damage of the unit's weapons and of its special attack (`special_attack` defaults to `attack`). Both give the NPC a client-only copy of its unit; the server keeps the original unit and uses `hp` |
+| `npcs` | Units: `template` (an NPC the target server already has), or `unit` + `base` (any unit using an NPC template); `hp`, `boss`, `name` and `ai` (an AI script name such as the battle AI's `VSAI_Infighter_01`) can be changed. `label` sets the name shown above the unit (for example a pilot name, up to 49 characters without `(`); `attack` and `special_attack` (0.25–4) multiply the damage of the unit's weapons and of its special attack (`special_attack` defaults to `attack`). Labels use a client presentation copy. Damage changes generate matching client and server NPC unit and weapon definitions, including matching NPC and kill-goal unit IDs. Apply the paired server plan and restart World/Battle before publishing client content |
 | `lines` | Character dialogue: `portrait` (a client portrait `sprs\\NNNN.spr`), `speaker`, `text` |
-| `banners` | Banners: `image` (512×128 PNG), shown as an effect in cutscenes |
+| `npcs.<key>.cutin` | Native unit illustration strip: `native_sprite` references an existing unit SPR in the target client; `line` references mission dialogue. NPC arrival uses the game's own illustration strip, animation and resolution scaling. It does not generate a text effect. Do not substitute another unit's artwork when the requested unit has no illustration |
+| `banners` | World-space image effects: `image` (512×128 PNG); separate from native unit illustration strips |
 | `presentation` | Optional mission list artwork in PNG, each replacing the template mission's image: `list_banner` (155×68), `room_icon` (120×83; like the shipped icons, keep rows 0..18 for the title lettering), `room_poster` (250×120), `title` (155×22, white lettering on a transparent background) and `loading` (1024×1024 loading screen poster). `loading_screen` chooses the battle loading screen: `poster` shows `loading` (the default when `loading` is given), `random` keeps the game's random loading pictures |
 | `area` | Movable area at the start: `[left x, top z, right x, bottom z]` (north is top). Players are kept inside it with the same call the shipped multi-area missions use. It is set when the `opening` cutscene starts, so it needs an opening. Without it the whole `terrain.play_area` is movable |
 | `drops` | Optional mission drops, rolled at the end like the shipped missions: `normal` (default `true`) keeps the shipped drops of the difficulty's level (levels 1–5); `blueprints` is `"mission"` (default: every blueprint whose unit appears in the mission, including the player unit of the same name for an NPC-only unit) or a list of unit ids; `blueprint_per_mille` (1–50, default 2) is each blueprint's chance in 1000 clears (at most 500 in total). Drops arrive in the player's drop box |
@@ -107,11 +110,13 @@ Mission files live under `missions/` in the map package and are listed in `files
 
 Players cannot move during a cutscene; control returns when it ends.
 
+Declare an illustration strip in the matching NPC's `cutin`; the native NPC-arrival flow plays it. `image` may reference a package PNG/JPEG instead of `native_sprite`; its default size is 1024×156. Other sizes declare `crop: [left,top,right,bottom]`: the native SPR clips that pixel rectangle and preserves its aspect, removing white margins without squeezing the unit. Source dimensions are at most 2048 and the selected logical height is 64..512. Choose one artwork source and provide `line` in either case. A text title image does not replace a unit illustration strip.
+
 The compiler checks placement and camera work: spawn points, mission spawns, cutscene actors and warp points must not be inside an object; a cutscene camera must not be below the ground or inside an object, and its view toward the target must not be blocked by terrain or objects (models the client already has are tested with their own collision, so open structures such as gate frames and arches stay open). Errors name the cutscene, the time and the camera position.
 
 ## Activation and compatibility
 
-- Enable the client Mod `map_catalog` and install the same publication on both the client and the server; updating only one side leaves maps or missions missing.
+- Enable the client Mod `map_catalog` and the Battle server Mod `map_catalog_server`, and install the same publication on both sides; updating only one side leaves maps or missions missing. New builds always emit `sdgo.map-import-server-plan/2`; v1 plans remain readable but cannot declare pacing policy or paired unit/weapon tables. The compiler sorts the MissionIDs of missions that declare `transition_delay: "immediate"` into `server-plan.json` at `runtime_policy.immediate_transition_missions` and includes that policy in the publication revision. When Manager applies the server plan, it writes the list only to BattleServer hosts that already have `map_catalog_server`, preserving unrelated configuration. A missing programme is reported as pending deployment and retains native pacing; it is never reported as active. Writing and reading back the configuration reports only `configured`; native runtime observation after restart is still required to prove that the policy loaded. The public framework package carries no server-specific IDs.
 - Servers read these tables at startup: restart the World/Battle services after applying, and restart the client after installing the client package.
 - Imported missions run in mission rooms as native missions; character dialogue uses the game's own character dialogue panel (portrait and name), and a mission with a `loading` poster shows it on the battle loading screen.
 - NPC registration is part of the mission protocol: `npcs` entries become the server's NPC data and the client's NPC templates for that mission; no separate Mod is needed.

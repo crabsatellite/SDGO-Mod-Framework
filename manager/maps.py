@@ -15,10 +15,10 @@ from .providers import Provider, Binary
 EXAMPLES = {
     'twin-valley-fortress': {
         'name': {'zh': '双谷要塞 · 奥德萨作战', 'en': 'Twin Valley Fortress · Operation Odessa'},
-        'description': '南谷对战场、山脊要塞闸门和北谷基地，附 6 阶段 PvE 任务（过场、横幅、首领、核弹倒计时）。',
+        'description': '南谷对战场、山脊要塞闸门和北谷基地，附 8 阶段 PvE 任务（过场、机体图片横幅、首领、核弹倒计时）。',
         'path': 'examples/maps/twin-valley-fortress',
-        'commit': '0a243a23a80c8322298b9aeba3fd89d37910a929',
-        'map_json': '19786ed196bdba21a1c2ea168da23e9b9659e5b6ab98d7ed380244c66702c882',
+        'commit': 'cf46dd8675646c4112ae8a0cbe40ad54469056c2',
+        'map_json': '340b170807de30355d6926a5060caea0305141ed8bb2a5271034ef5fbdc06f82',
     },
 }
 EXAMPLE_FILE_LIMIT = 16 * 1024 * 1024
@@ -169,14 +169,35 @@ class Maps(Provider):
                 return {'result': result, 'state': self._state(), 'changes_applied': True,
                         'message': '客户端地图包已安装，重启客户端生效。'}
             if path == '/api/maps/server/preflight':
-                summary = server.preflight(self._plan(), self._server_ini())
+                from owner.maps.workspace import OWNER_KEY
+                plan = self._plan()
+                summary = server.preflight(plan, self._server_ini(), OWNER_KEY)
                 summary.pop('_changes', None)
+                summary['runtime_policy'] = server.runtime_policy_state(plan, self._server_ini())
                 return {'preflight': summary, 'changes_applied': False}
             if path == '/api/maps/server/apply':
                 from owner.maps.workspace import OWNER_KEY
-                result = server.apply(self._plan(), self._server_ini(), OWNER_KEY)
-                return {'result': result, 'state': self._state(), 'changes_applied': True,
-                        'message': '服务端地图与任务行已写入并读回。请重启 World/Battle 服务使地图表生效。'}
+                plan = self._plan()
+                result = server.apply(plan, self._server_ini(), OWNER_KEY)
+                runtime = server.apply_runtime_policy(plan, self._server_ini())
+                result['runtime_policy'] = runtime
+                if runtime['status'] == 'topology_error':
+                    message = ('服务端地图与任务行已写入；无法检查 BattleServer 拓扑，未改动节奏策略配置：' +
+                               runtime['topology_error'])
+                elif runtime['status'] == 'pending_programme_deployment':
+                    message = ('服务端地图与任务行已写入；导入任务节奏仍为原生等待。请先在 ' +
+                               '、'.join(runtime['missing_hosts']) + ' 部署 map_catalog_server，再重新应用。')
+                elif runtime['status'] == 'activation_required':
+                    message = ('服务端地图、任务行和节奏名单已写入，但全局 Mod/功能开关仍关闭；'
+                               '启用后重启 World/Battle 服务。')
+                elif runtime['status'] == 'native':
+                    message = '服务端地图与任务行已写入；本发布保留原生阶段等待。请重启 World/Battle 服务使其生效。'
+                else:
+                    message = '服务端地图、任务行和节奏策略已写入并读回。请重启 World/Battle 服务使其生效。'
+                return {'result': result, 'state': self._state(), 'changes_applied': True, 'message': message}
             if path == '/api/maps/server/readback':
-                return {'readback': server.readback(self._plan(), self._server_ini()), 'changes_applied': False}
+                plan = self._plan()
+                return {'readback': server.readback(plan, self._server_ini()),
+                        'runtime_policy': server.runtime_policy_state(plan, self._server_ini()),
+                        'changes_applied': False}
         raise ValueError('地图导入操作未登记')

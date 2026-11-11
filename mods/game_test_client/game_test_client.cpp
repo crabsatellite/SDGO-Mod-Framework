@@ -782,7 +782,11 @@ bool LoadPlan() {
             else return false;
         }
         if(missionBehaviorProfile && missionRespawns)return false;
-        if(expectedAi!=3 || level!=2 || sprintf_s(roomTitle,missionRespawns==2?"%s !ai3 lv2 inf":"%s !ai3 lv2",narrowNonce)<0)return false;
+        if((expectedAi!=0 && expectedAi!=3) || level!=2)return false;
+        if(expectedAi==0) {
+            if(missionRespawns || missionBehaviorProfile || !missionGameModeId ||
+               sprintf_s(roomTitle,"%s lv2",narrowNonce)<0)return false;
+        } else if(sprintf_s(roomTitle,missionRespawns==2?"%s !ai3 lv2 inf":"%s !ai3 lv2",narrowNonce)<0)return false;
         wchar_t actualTitle[32]{};GetPrivateProfileStringW(L"run",L"room_title",L"",actualTitle,32,job.c_str());
         const std::wstring expectedTitle(roomTitle,roomTitle+strlen(roomTitle));
         if(expectedTitle!=actualTitle)return false;
@@ -5292,11 +5296,19 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
         const auto& p=s.participants[i];if(!p.mapping_valid || !p.valid_registered_object)continue;
         if(p.movement_observed)++moved;if(p.target_valid && p.target_hp>0)++targets;
     }
-    if(context->elapsed_ms<15000 || !moved || !targets)return SDGO_GAME_TEST_WAIT;
-    char message[192];sprintf_s(message,"native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u lua=%u tick=%u",
-        s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,s.lua_pcall_error_count,s.lua_tick_count);context->Observe(message);
+    const bool soloImportedMission=expectedAi==0 && missionGameModeId && !missionBehaviorProfile && !missionRespawns;
+    if(context->elapsed_ms<15000 || (!soloImportedMission && (!moved || !targets)))return SDGO_GAME_TEST_WAIT;
+    char message[224];sprintf_s(message,"native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u humans=%u lua=%u tick=%u solo=%u",
+        s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,s.human_participant_count,
+        s.lua_pcall_error_count,s.lua_tick_count,soloImportedMission?1u:0u);context->Observe(message);
     nativePlayerCombat.Finish(context,scoreboardInput);
-    context->Assert(moved && targets && s.lua_successful_tick_count>0,"real mission wingmen move and acquire living native targets across ordinary updates with zero cumulative Lua error");
+    if(soloImportedMission) {
+        context->Assert(s.ai_record_count==0 && s.spawned_wingman_count==0 && s.local_wingman_count==0 &&
+            s.human_participant_count==1 && s.unit_manager_player_count==1 && s.lua_successful_tick_count>0,
+            "the exact imported mission runs with only the genuine human participant while native mission updates remain active");
+    } else {
+        context->Assert(moved && targets && s.lua_successful_tick_count>0,"real mission wingmen move and acquire living native targets across ordinary updates with zero cumulative Lua error");
+    }
     context->Observe(
         missionBehaviorProfile
             ? "bounded wingman smoke is complete; profile activation and one genuine Boss special event are checked next, while the full repeated pattern remains a manual acceptance"

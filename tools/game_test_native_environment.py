@@ -654,7 +654,7 @@ def start_native_services(driver,lease,template,client,account):
             cfg=gt.ini_parser()
             cfg['run']={'id':client['run_id'],'role':'server','suite':'pvp-ai'}
             cfg['observer']={'nonce':client['plan']['title_nonce'],'host_pilot_id':str(account['account_id']),
-                'mode':'0','minimum_ai':str(client['plan'].get('expected_ai',3)),'require_end':'1'}
+                'mode':'0','minimum_ai':str(client['plan'].get('expected_ai',client['plan'].get('mission_ai_count',3))),'require_end':'1'}
             gt.write_ini(job/'run.ini',cfg)
             env.update(SDGO_GAME_TEST_RUN=client['run_id'],SDGO_GAME_TEST_ROLE='server')
             settings=gt.read_ini(folder/'sdgo/sdgo.ini')

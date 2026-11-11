@@ -772,8 +772,11 @@ def serve(work,client_run,lifetime,stage,startup_xml,startup_timeout,host_pilot_
                         'mission_behavior_profile':client['plan']['mission_behavior_profile'],
                         'mission_game_mode_id':str(client['plan']['mission_game_mode_id']),
                     })
+                observer_mode=client['plan'].get('mission_mode',0)
                 cfg['observer']={'nonce':client['plan']['title_nonce'],'host_pilot_id':str(host_pilot_id),
-                    'mode':'0','minimum_ai':str(client['plan'].get('expected_ai',client['plan'].get('mission_ai_count',3))),'require_end':'1'}
+                    'mode':str(observer_mode),'minimum_ai':str(client['plan'].get('expected_ai',client['plan'].get('mission_ai_count',3))),'require_end':'1'}
+                if not mission_behavior_suite and observer_mode:
+                    cfg['observer']['mission_game_mode_id']=str(client['plan']['mission_game_mode_id'])
                 if respawn_policy:
                     cfg['mission_respawn_probe']={
                         'output':str(Path(client['client']['root'])/'sdgo/gametest'/('mission-respawn-server-'+client['run_id']+'.ini')),

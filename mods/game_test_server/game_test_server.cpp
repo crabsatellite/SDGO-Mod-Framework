@@ -16,11 +16,13 @@
 #include <vector>
 
 #include "sdgo/battle_rewards_damage_observer.h"
+#include "sdgo/battle_reward_mission.h"
 #include "sdgo/mission_behavior_profile.h"
 #include "sdgo/mission_behavior_server_observer.h"
 #include "sdgo/oc_custom_battle_observer.h"
 #include "sdgo/newcomer_protection_observer.h"
 #include "sdgo/pvp_ai_observer.h"
+#include "sdgo/room_titles_lookup.h"
 #include "sdgo/sdgo_api.h"
 
 namespace
@@ -33,6 +35,7 @@ namespace
     constexpr size_t kRoomTitleLength = 0x79;
     constexpr size_t kRoomTitle = 0x7A;
     constexpr size_t kRoomHost = 0x4CE;
+    constexpr size_t kRoomMissionId = 0x1B;
     constexpr size_t kSlotInfo = 0x533;
     constexpr size_t kSlotInfoStride = 0x48E;
     constexpr size_t kSlotPilotId = 0x429;
@@ -44,7 +47,10 @@ namespace
     constexpr size_t kUnitMaxHp = 0x04;
     constexpr size_t kUnitHp = 0x34;
     constexpr size_t kUnitData = 0x6C;
+    constexpr size_t kBattlePilotNpcData = 0x1CEC;
+    constexpr size_t kNpcDataId = 0x00;
     constexpr int kBattleSlots = 12;
+    constexpr int kNativeBattlePilots = 22;
 
     enum class DamageSource
     {
@@ -88,6 +94,8 @@ namespace
         uint32_t victimPilotId = 0;
         uint32_t attackerSlotPilotId = 0;
         uint32_t victimSlotPilotId = 0;
+        uint32_t missionId = 0;
+        uint32_t attackerNpcDataId = 0;
         uint32_t victimUnitKey = 0;
         uint32_t victimHp = 0;
         uint32_t victimMaxHp = 0;
@@ -100,6 +108,7 @@ namespace
         uint8_t attackerTeam = 0;
         uint8_t victimTeam = 0;
         uint8_t attackerIsAi = 0;
+        uint8_t attackerNativeNpc = 0;
         uint8_t victimIsAi = 0;
         uint8_t samePilot = 0;
         uint8_t sameSlot = 0;
@@ -112,6 +121,7 @@ namespace
         uint32_t effectiveLoss, int32_t deathFlag);
 
     const SdgoApi* g_api = nullptr;
+    const SdgoRoomTitleApi* g_titleApi = nullptr;
     SdgoMod* g_mod = nullptr;
     RunConfig g_config;
     std::wstring g_directory;
@@ -316,8 +326,8 @@ namespace
 
         number = 1;
         result = ReadNumber(g_runIni, L"observer", L"minimum_ai", &number);
-        if (result == NumberResult::Invalid || number == 0 || number > 11) {
-            *error = "observer minimum_ai must be between 1 and 11";
+        if (result == NumberResult::Invalid || number > 11) {
+            *error = "observer minimum_ai must be between 0 and 11";
             return false;
         }
         if (result == NumberResult::Valid)
@@ -352,6 +362,23 @@ namespace
                 return false;
             }
             g_config.missionGameModeId = number;
+        } else {
+            number = 0;
+            result = ReadNumber(
+                g_runIni, L"observer", L"mission_game_mode_id", &number);
+            if (result == NumberResult::Invalid) {
+                *error = "observer mission_game_mode_id is invalid";
+                return false;
+            }
+            if (result == NumberResult::Valid) {
+                if (number == 0 ||
+                    (g_config.mode != 5 && g_config.mode != 8 &&
+                     g_config.mode != 10)) {
+                    *error = "observer mission identity is invalid";
+                    return false;
+                }
+                g_config.missionGameModeId = number;
+            }
         }
         return true;
     }
@@ -362,13 +389,16 @@ namespace
             InterlockedCompareExchange(&g_expectedHost, 0, 0));
     }
 
-    bool TitleContainsNonce(const char title[21])
+    bool TextContainsNonce(const char* title, size_t capacity)
     {
+        if (!title || capacity == 0)
+            return false;
         const size_t nonceLength = strlen(g_config.nonce);
-        for (size_t offset = 0; offset + nonceLength <= 20; ++offset) {
+        for (size_t offset = 0; offset + nonceLength <= capacity; ++offset) {
             bool equal = true;
             for (size_t i = 0; i < nonceLength; ++i) {
-                if (title[offset + i] == '\0' || title[offset + i] != g_config.nonce[i]) {
+                if (title[offset + i] == '\0' ||
+                    title[offset + i] != g_config.nonce[i]) {
                     equal = false;
                     break;
                 }
@@ -379,6 +409,11 @@ namespace
                 break;
         }
         return false;
+    }
+
+    bool TitleContainsNonce(const char title[21])
+    {
+        return TextContainsNonce(title, 20);
     }
 
     template <typename T>
@@ -395,14 +430,14 @@ namespace
         }
     }
 
-    int PilotSlot(const void* room, const void* pilot)
+    int NativePilotSlot(const void* room, const void* pilot)
     {
         if (!room || !pilot)
             return -1;
         const uintptr_t first =
             reinterpret_cast<uintptr_t>(room) + kBattlePilots;
         const uintptr_t candidate = reinterpret_cast<uintptr_t>(pilot);
-        for (int slot = 0; slot < kBattleSlots; ++slot)
+        for (int slot = 0; slot < kNativeBattlePilots; ++slot)
             if (candidate ==
                 first + static_cast<uintptr_t>(slot) * kBattlePilotStride)
                 return slot;
@@ -423,19 +458,41 @@ namespace
     }
 
     bool MatchingDamageRoom(
-        const void* room, uint32_t* hostPilotId, uint8_t* mode)
+        const void* room, uint32_t* hostPilotId, uint8_t* mode,
+        uint32_t* missionId)
     {
-        if (!g_deathEnabled || !room || !hostPilotId || !mode)
+        if (!g_deathEnabled || !room || !hostPilotId || !mode || !missionId)
             return false;
         const uint32_t expectedHost = ExpectedHost();
-        uint8_t titleLength = 0;
-        char title[21] = {};
         if (expectedHost == 0 ||
             !SafeRead(room, kRoomHost, hostPilotId) ||
             *hostPilotId != expectedHost ||
             !SafeRead(room, kRoomMode, mode) ||
-            (g_config.mode != 0 && *mode != g_config.mode) ||
-            !SafeRead(room, kRoomTitleLength, &titleLength) ||
+            (g_config.mode != 0 && *mode != g_config.mode)) {
+            return false;
+        }
+        if (g_config.missionGameModeId != 0) {
+            if (!SafeRead(room, kRoomMissionId, missionId) ||
+                *missionId != g_config.missionGameModeId || !g_titleApi) {
+                return false;
+            }
+            char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
+            uint32_t titleLength = 0;
+            __try {
+                titleLength = g_titleApi->QueryForPilot(
+                    expectedHost, title, sizeof(title));
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                return false;
+            }
+            return titleLength != 0 &&
+                titleLength <= SDGO_ROOM_TITLE_MAX_UTF8_BYTES &&
+                title[titleLength] == '\0' &&
+                TextContainsNonce(title, titleLength);
+        }
+
+        uint8_t titleLength = 0;
+        char title[21] = {};
+        if (!SafeRead(room, kRoomTitleLength, &titleLength) ||
             titleLength > 20) {
             return false;
         }
@@ -454,13 +511,12 @@ namespace
         void* room, void* victimPilot, void* attackerPilot, void* victimUnit,
         uint32_t effectiveLoss, int32_t deathFlag, DamageEvent* output)
     {
-        if (!output || !victimPilot || !attackerPilot || !victimUnit ||
-            effectiveLoss == 0) {
+        if (!output || !victimPilot || !attackerPilot || effectiveLoss == 0) {
             return false;
         }
         DamageEvent event = {};
         if (!MatchingDamageRoom(
-                room, &event.hostPilotId, &event.mode))
+                room, &event.hostPilotId, &event.mode, &event.missionId))
             return false;
         event.sequence = static_cast<uint32_t>(
             InterlockedIncrement(&g_damageSequence));
@@ -472,8 +528,8 @@ namespace
             static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room));
         event.effectiveLoss = effectiveLoss;
         event.deathFlag = deathFlag;
-        event.attackerSlot = PilotSlot(room, attackerPilot);
-        event.victimSlot = PilotSlot(room, victimPilot);
+        event.attackerSlot = NativePilotSlot(room, attackerPilot);
+        event.victimSlot = NativePilotSlot(room, victimPilot);
         if (!SafeRead(
                 attackerPilot, kPilotEntity, &event.attackerPilotId) ||
             !SafeRead(
@@ -484,12 +540,22 @@ namespace
                 victimPilot, kPilotTeam, &event.victimTeam)) {
             return false;
         }
+        event.attackerNativeNpc =
+            event.attackerSlot >= kBattleSlots ? 1 : 0;
         event.attackerSlotPilotId =
             RoomSlotPilotId(room, event.attackerSlot);
         event.victimSlotPilotId =
             RoomSlotPilotId(room, event.victimSlot);
         event.attackerIsAi =
             (event.attackerPilotId & 0x80000000u) != 0 ? 1 : 0;
+        if (event.attackerNativeNpc) {
+            const void* npcData = nullptr;
+            if (SafeRead(
+                    attackerPilot, kBattlePilotNpcData, &npcData) &&
+                npcData) {
+                SafeRead(npcData, kNpcDataId, &event.attackerNpcDataId);
+            }
+        }
         event.victimIsAi =
             (event.victimPilotId & 0x80000000u) != 0 ? 1 : 0;
         event.samePilot =
@@ -507,16 +573,22 @@ namespace
                     event.attackerTeam == event.victimTeam
                 ? 1
                 : 0;
-        event.identityValid =
-            event.attackerSlot >= 0 && event.victimSlot >= 0 &&
-                    event.attackerSlotPilotId == event.attackerPilotId &&
-                    event.victimSlotPilotId == event.victimPilotId
-                ? 1
-                : 0;
-        SafeRead(victimUnit, kUnitKey, &event.victimUnitKey);
-        SafeRead(victimUnit, kUnitHp, &event.victimHp);
-        SafeRead(victimUnit, kUnitMaxHp, &event.victimMaxHp);
-        SafeRead(victimUnit, kUnitData, &event.victimUnitData);
+        const bool attackerIdentity =
+            event.attackerNativeNpc
+                ? event.attackerIsAi && event.attackerNpcDataId != 0
+                : event.attackerSlot >= 0 &&
+                    event.attackerSlot < kBattleSlots &&
+                    event.attackerSlotPilotId == event.attackerPilotId;
+        const bool victimIdentity =
+            event.victimSlot >= 0 && event.victimSlot < kBattleSlots &&
+            event.victimSlotPilotId == event.victimPilotId;
+        event.identityValid = attackerIdentity && victimIdentity ? 1 : 0;
+        if (victimUnit) {
+            SafeRead(victimUnit, kUnitKey, &event.victimUnitKey);
+            SafeRead(victimUnit, kUnitHp, &event.victimHp);
+            SafeRead(victimUnit, kUnitMaxHp, &event.victimMaxHp);
+            SafeRead(victimUnit, kUnitData, &event.victimUnitData);
+        }
         *output = event;
         return true;
     }
@@ -828,6 +900,8 @@ namespace
             ",\"host_pilot_id\":" +
             std::to_string(event.hostPilotId) +
             ",\"mode\":" + std::to_string(event.mode) +
+            ",\"mission_game_mode_id\":" +
+            std::to_string(event.missionId) +
             ",\"attacker_slot\":" +
             std::to_string(event.attackerSlot) +
             ",\"victim_slot\":" + std::to_string(event.victimSlot) +
@@ -844,6 +918,10 @@ namespace
             ",\"victim_team\":" + std::to_string(event.victimTeam) +
             ",\"attacker_is_ai\":" +
             std::string(event.attackerIsAi ? "true" : "false") +
+            ",\"attacker_native_npc\":" +
+            std::string(event.attackerNativeNpc ? "true" : "false") +
+            ",\"attacker_npc_data_id\":" +
+            std::to_string(event.attackerNpcDataId) +
             ",\"victim_is_ai\":" +
             std::string(event.victimIsAi ? "true" : "false") +
             ",\"same_pilot\":" +
@@ -904,6 +982,8 @@ namespace
             "\",\"expected_host_pilot_id\":" +
             std::to_string(ExpectedHost()) +
             ",\"mode\":" + std::to_string(g_config.mode) +
+            ",\"mission_game_mode_id\":" +
+            std::to_string(g_config.missionGameModeId) +
             ",\"minimum_ai\":" +
             std::to_string(g_config.minimumAi) +
             ",\"require_end\":" +
@@ -961,6 +1041,43 @@ namespace
             return;
         lifecycle->outcome = Lifecycle::Fail;
         lifecycle->reason = reason;
+    }
+
+    void ProcessMissionDamage(Lifecycle* lifecycle, const DamageEvent& event)
+    {
+        if (!lifecycle || g_config.missionGameModeId == 0)
+            return;
+        ++lifecycle->eventCount;
+        if (lifecycle->outcome == Lifecycle::Fail)
+            return;
+        const bool qualifying =
+            event.missionId == g_config.missionGameModeId &&
+            event.hostPilotId == ExpectedHost() &&
+            event.mode == g_config.mode && event.attackerNativeNpc &&
+            event.attackerIsAi && event.attackerNpcDataId != 0 &&
+            !event.victimIsAi &&
+            event.victimPilotId == ExpectedHost() && event.identityValid &&
+            !event.samePilot && !event.sameSlot && !event.friendly &&
+            event.effectiveLoss != 0;
+        if (!qualifying)
+            return;
+        if (lifecycle->roomCookie != 0 &&
+            lifecycle->roomCookie != event.roomCookie) {
+            Fail(lifecycle, "mission damage moved to another room identity");
+            return;
+        }
+        lifecycle->roomCookie = event.roomCookie;
+        lifecycle->hostPilotId = event.hostPilotId;
+        lifecycle->mode = event.mode;
+        lifecycle->phase = event.deathFlag == 1 ? 4u : 3u;
+        if (event.deathFlag == 1) {
+            lifecycle->outcome = Lifecycle::Pass;
+            lifecycle->reason =
+                "mission-native NPC caused effective HP loss and human death";
+        } else {
+            lifecycle->reason =
+                "mission-native NPC caused effective HP loss to the human host";
+        }
     }
 
     bool SameBattle(const Lifecycle& lifecycle, const SdgoPvpAiObserverEventV1& event)
@@ -1429,6 +1546,17 @@ namespace
                             "native damage receipt could not be flushed");
                         statusChanged = true;
                     }
+                    if (g_config.missionGameModeId != 0) {
+                        const Lifecycle before = lifecycle;
+                        ProcessMissionDamage(&lifecycle, damageBatch[i]);
+                        if (before.outcome != lifecycle.outcome ||
+                            before.phase != lifecycle.phase ||
+                            before.eventCount != lifecycle.eventCount ||
+                            before.reason != lifecycle.reason ||
+                            before.roomCookie != lifecycle.roomCookie) {
+                            statusChanged = true;
+                        }
+                    }
                 }
             }
             if (statusChanged && !WriteStatus(lifecycle))
@@ -1452,6 +1580,15 @@ SDGO_MOD_ENTRY
     }
     const bool missionBehaviorRun =
         strcmp(g_config.suite, "native-mission-behavior") == 0;
+    if (g_config.missionGameModeId != 0 && !missionBehaviorRun) {
+        g_titleApi = sdgo::FindRoomTitleApi(api->ModDirectory(mod));
+        if (!g_titleApi) {
+            api->Log(
+                mod, SDGO_LOG_ERROR,
+                "GameTest server observer inactive: room title provider is unavailable for sealed mission identity");
+            return 0;
+        }
+    }
     if (missionBehaviorRun && !BindMissionProfileObserver(&error)) {
         api->Log(
             mod,

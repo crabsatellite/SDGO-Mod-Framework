@@ -138,6 +138,7 @@ MISSION_BEHAVIOR_FIELDS = (
     "mission_game_mode_id",
 )
 MISSION_AI_COUNT = 3
+MISSION_AI_COUNTS = (0, MISSION_AI_COUNT)
 MISSION_AI_LEVEL = 2
 MISSION_EXISTING_ACCOUNT_STATES = frozenset(("registered", "existing_account"))
 MISSION_CLAIM_FIELDS = (
@@ -1834,8 +1835,35 @@ def validate_ai_layout(value: str | None) -> str | None:
     return value
 
 
-def mission_room_title(title_nonce: str, respawns: str | None = None) -> str:
-    return f"{title_nonce} !ai{MISSION_AI_COUNT} lv{MISSION_AI_LEVEL}" + (' inf' if respawns == 'infinite' else '')
+def validate_mission_ai_count(
+    value: int,
+    mission_mode: int | None,
+    mission_behavior_profile: str | None,
+    mission_game_mode_id: int | None,
+    mission_respawns: str | None,
+) -> int:
+    if type(value) is not int or value not in MISSION_AI_COUNTS:
+        raise GameTestError("mission_ai_count must be 0 or 3")
+    if value == 0 and (
+        mission_mode is None
+        or mission_game_mode_id is None
+        or mission_behavior_profile is not None
+        or mission_respawns is not None
+    ):
+        raise GameTestError(
+            "mission_ai_count=0 is only for an exact ordinary imported mission without respawn or behavior fixtures"
+        )
+    return value
+
+
+def mission_room_title(
+    title_nonce: str,
+    respawns: str | None = None,
+    mission_ai_count: int = MISSION_AI_COUNT,
+) -> str:
+    if mission_ai_count == 0:
+        return f"{title_nonce} lv{MISSION_AI_LEVEL}"
+    return f"{title_nonce} !ai{mission_ai_count} lv{MISSION_AI_LEVEL}" + (' inf' if respawns == 'infinite' else '')
 
 
 def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
@@ -2050,8 +2078,13 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         )
         if (
             plan["mission_scope"] != expected_scope
-            or type(plan["mission_ai_count"]) is not int
-            or plan["mission_ai_count"] != MISSION_AI_COUNT
+            or validate_mission_ai_count(
+                plan["mission_ai_count"],
+                plan.get("mission_mode"),
+                behavior_profile,
+                plan.get("mission_game_mode_id"),
+                plan.get("mission_respawns"),
+            ) != plan["mission_ai_count"]
             or type(plan["mission_ai_level"]) is not int
             or plan["mission_ai_level"] != MISSION_AI_LEVEL
             or any(type(plan[field]) is not bool or plan[field] for field in MISSION_CLAIM_FIELDS)
@@ -2198,6 +2231,7 @@ def make_plan(
     mission_respawns: str | None = None,
     mission_behavior_profile: str | None = None,
     mission_game_mode_id: int | None = None,
+    mission_ai_count: int = MISSION_AI_COUNT,
     review_footage: bool = False,
 ) -> dict:
     if mission_respawns is not None and (mission_mode is None or mission_respawns not in ('player','infinite')):
@@ -2219,6 +2253,13 @@ def make_plan(
     mission_mode = validate_mission_mode(mission_mode)
     mission_behavior_profile, mission_game_mode_id = validate_mission_behavior(
         mission_behavior_profile, mission_game_mode_id, mission_mode
+    )
+    mission_ai_count = validate_mission_ai_count(
+        mission_ai_count,
+        mission_mode,
+        mission_behavior_profile,
+        mission_game_mode_id,
+        mission_respawns,
     )
     if mission_mode is not None:
         if ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None:
@@ -2277,12 +2318,12 @@ def make_plan(
                 if mission_behavior_profile is not None
                 else MISSION_SCOPE
             ),
-            "mission_ai_count": MISSION_AI_COUNT,
+            "mission_ai_count": mission_ai_count,
             "mission_ai_level": MISSION_AI_LEVEL,
             "mission_clear_claim": False,
             "mission_result_claim": False,
             "mission_active_exit_claim": False,
-            "room_title": mission_room_title(title_nonce, mission_respawns),
+            "room_title": mission_room_title(title_nonce, mission_respawns, mission_ai_count),
         })
         if mission_behavior_profile is not None:
             plan.update({
@@ -2714,11 +2755,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             )
             if run['mission_scope'] != expected_mission_scope:
                 raise ValueError('invalid mission smoke scope')
-            if (
-                run['mission_ai_count'] != str(MISSION_AI_COUNT)
-                or run['mission_ai_level'] != str(MISSION_AI_LEVEL)
-            ):
-                raise ValueError('mission AI count or level differs from the sealed native plan')
+            raw_mission_ai_count = run['mission_ai_count']
+            if raw_mission_ai_count not in tuple(str(value) for value in MISSION_AI_COUNTS):
+                raise ValueError('mission AI count differs from the sealed native plan')
+            mission_ai_count = int(raw_mission_ai_count)
+            if run['mission_ai_level'] != str(MISSION_AI_LEVEL):
+                raise ValueError('mission AI level differs from the sealed native plan')
             if any(run[field] != '0' for field in MISSION_CLAIM_FIELDS):
                 raise ValueError('mission smoke cannot claim clear, result, or active exit')
             if run['retry_count'] != '1' or run['expect_first_fail'] != '0':
@@ -2735,7 +2777,19 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 raise ValueError(
                     "mission behavior plan cannot add the respawn fixture"
                 )
-            if run['room_title'] != mission_room_title(run['title_nonce'], mission_respawns):
+            try:
+                validate_mission_ai_count(
+                    mission_ai_count,
+                    mission_mode,
+                    behavior_profile,
+                    behavior_mission_id,
+                    mission_respawns,
+                )
+            except GameTestError as error:
+                raise ValueError(str(error)) from error
+            if run['room_title'] != mission_room_title(
+                run['title_nonce'], mission_respawns, mission_ai_count
+            ):
                 raise ValueError('mission room title differs from the sealed native plan')
             expected_cases = required_flow_cases(
                 '1', play_unit_uid=play_unit_uid, mission_mode=mission_mode,
@@ -2937,7 +2991,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     if behavior_profile is not None
                     else MISSION_SCOPE
                 ),
-                'mission_ai_count': MISSION_AI_COUNT,
+                'mission_ai_count': mission_ai_count,
                 'mission_ai_level': MISSION_AI_LEVEL,
                 'mission_clear_claim': False,
                 'mission_result_claim': False,
@@ -3338,6 +3392,7 @@ def prepare(
     mission_respawns: str | None = None,
     mission_behavior_profile: str | None = None,
     mission_game_mode_id: int | None = None,
+    mission_ai_count: int = MISSION_AI_COUNT,
     launcher_path: str | None = None,
     account_profile: Path | None = None,
     create_test_account: bool = False,
@@ -3570,6 +3625,13 @@ def prepare(
         mission_behavior_profile, mission_game_mode_id = validate_mission_behavior(
             mission_behavior_profile, mission_game_mode_id, mission_mode
         )
+        mission_ai_count = validate_mission_ai_count(
+            mission_ai_count,
+            mission_mode,
+            mission_behavior_profile,
+            mission_game_mode_id,
+            mission_respawns,
+        )
         if mission_behavior_profile is not None:
             extra_mods=tuple(dict.fromkeys((
                 *extra_mods,
@@ -3767,6 +3829,7 @@ def prepare(
             mission_respawns,
             mission_behavior_profile,
             mission_game_mode_id,
+            mission_ai_count,
             review_footage=review_footage,
         )
         if oc_allocate is not None:
@@ -5306,6 +5369,7 @@ def build_report(run_dir: Path) -> dict:
     if 'mission_mode' in metadata['plan']:
         native['mission_mode'] = metadata['plan']['mission_mode']
         native['mission_scope'] = metadata['plan']['mission_scope']
+        native['mission_ai_count'] = metadata['plan']['mission_ai_count']
         if "mission_behavior_profile" in metadata["plan"]:
             native["mission_behavior_profile"] = metadata["plan"][
                 "mission_behavior_profile"
@@ -5433,6 +5497,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mission-game-mode-id",
         type=int,
         help="exact native GameModeID: a sealed mission behavior target, or an imported mission (map import range)",
+    )
+    prepare_parser.add_argument(
+        "--mission-ai-count",
+        type=int,
+        choices=MISSION_AI_COUNTS,
+        default=MISSION_AI_COUNT,
+        help="mission wingmen: default 3; 0 only for an exact ordinary imported-mission fixture",
     )
     prepare_parser.add_argument("--retry-count", type=int, choices=(1, 2))
     prepare_parser.add_argument("--expected-ai", type=int, default=3)
@@ -5590,6 +5661,7 @@ def main(argv: list[str] | None = None) -> int:
                 mission_respawns=args.mission_respawns,
                 mission_behavior_profile=args.mission_behavior_profile,
                 mission_game_mode_id=args.mission_game_mode_id,
+                mission_ai_count=args.mission_ai_count,
                 launcher_path=args.launcher_path,
                 account_profile=args.account_profile,
                 create_test_account=args.create_test_account,

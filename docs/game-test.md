@@ -477,6 +477,16 @@ target acquisition and native combat observations. These cases do not cover
 mission clear, settlement or active exit. Unavailable native missions or
 channels fail without fabricated admission data.
 
+An explicitly selected imported mission can use sealed `--mission-ai-count 0`
+to observe native enemy NPCs against the human without friendly wingmen. The
+default remains three, and zero is not supported for revival/profile suites.
+Zero omits the AI-summoning command; it does not use `!ai0`.
+When mission data changes, pass its matching `--client-package` explicitly and
+verify the installed payload and server-plan revision before starting. Enemy
+damage acceptance requires bound native HP-loss/death receipts for the human;
+a natural mission failure or empty observer output does not prove a clear or
+a damage result.
+
 For `--gift-requests-only`, the private account profile may specify existing
 owner mail commands in `[gift] body0` through `body3`, or use `page0/position0`
 for unit gifts. The recipient must be an actual native pilot nickname. Native
