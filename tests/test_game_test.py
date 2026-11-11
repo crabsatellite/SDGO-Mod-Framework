@@ -773,6 +773,29 @@ rva=state
         self.assertNotIn('ai_layout', baseline_meta['plan'])
         self.assertNotIn('ai_layout', baseline_run)
 
+    def test_plain_mission_ai_difficulty_is_sealed_and_tamper_checked(self):
+        self.account_profile.write_text('[account]\nusername=ReuseA1234\npassword=ReusePass123\n[registration]\nstate=existing_account\n')
+        run = self.prepare('mission-hard-ace', mission_mode=5, mission_ai_difficulty='Hard')
+        metadata = self.metadata(run)
+        self.assertEqual('Hard', metadata['plan']['mission_ai_difficulty'])
+        self.assertEqual(metadata['plan']['title_nonce']+' !ai hard', metadata['plan']['room_title'])
+        self.assertEqual('Hard', game_test.read_public_plan(run/'client')['mission_ai_difficulty'])
+        game_test.validate_metadata(run)
+        config = game_test.read_ini(run/'client/sdgo/gametest/run.ini')
+        config['run']['mission_ai_difficulty'] = 'Easy'
+        game_test.write_ini(run/'client/sdgo/gametest/run.ini', config)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run)
+
+    def test_mission_ai_difficulty_rejects_other_scopes_and_preserves_default_title(self):
+        with self.assertRaisesRegex(game_test.GameTestError, 'requires --mission-mode'):
+            game_test.make_plan('127.0.0.1', 5001, '1', '1', '1', 1, False, 3, None,
+                                mission_ai_difficulty='Hard')
+        self.assertEqual('abc !ai3 lv2', game_test.mission_room_title('abc'))
+        self.assertEqual('abc !ai hard inf', game_test.mission_room_title('abc','infinite','Hard'))
+        with self.assertRaisesRegex(game_test.GameTestError, 'twenty-byte'):
+            game_test.mission_room_title('x'*15, difficulty='Medium')
+
     def test_ai_difficulty_seals_native_full_room_command(self):
         for difficulty in ('Easy', 'Medium', 'Hard'):
             with self.subTest(ai_difficulty=difficulty):

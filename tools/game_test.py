@@ -1805,8 +1805,19 @@ def validate_ai_layout(value: str | None) -> str | None:
     return value
 
 
-def mission_room_title(title_nonce: str, respawns: str | None = None) -> str:
-    return f"{title_nonce} !ai{MISSION_AI_COUNT} lv{MISSION_AI_LEVEL}" + (' inf' if respawns == 'infinite' else '')
+def mission_room_title(
+    title_nonce: str,
+    respawns: str | None = None,
+    difficulty: str | None = None,
+) -> str:
+    command = (
+        f"!ai {difficulty.lower()}" if difficulty is not None
+        else f"!ai{MISSION_AI_COUNT} lv{MISSION_AI_LEVEL}"
+    )
+    title = f"{title_nonce} {command}" + (' inf' if respawns == 'infinite' else '')
+    if len(title.encode('ascii')) > 20:
+        raise GameTestError('sealed mission AI title exceeds the native twenty-byte limit')
+    return title
 
 
 def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
@@ -2161,6 +2172,7 @@ def make_plan(
     mission_respawns: str | None = None,
     mission_behavior_profile: str | None = None,
     mission_game_mode_id: int | None = None,
+    mission_ai_difficulty: str | None = None,
     review_footage: bool = False,
 ) -> dict:
     if mission_respawns is not None and (mission_mode is None or mission_respawns not in ('player','infinite')):
@@ -2174,6 +2186,7 @@ def make_plan(
     ai_pool_level = validate_ai_pool_level(ai_pool_level)
     ai_difficulty = validate_ai_difficulty(ai_difficulty)
     ai_layout = validate_ai_layout(ai_layout)
+    mission_ai_difficulty = validate_ai_difficulty(mission_ai_difficulty)
     if ai_pool_level is not None and ai_difficulty is not None:
         raise GameTestError("ai_pool_level and ai_difficulty cannot be combined")
     if any(value is not None for value in (ai_pool_level,ai_difficulty,ai_layout)) and (
@@ -2183,6 +2196,10 @@ def make_plan(
     mission_behavior_profile, mission_game_mode_id = validate_mission_behavior(
         mission_behavior_profile, mission_game_mode_id, mission_mode
     )
+    if mission_mode is None and mission_ai_difficulty is not None:
+        raise GameTestError('mission_ai_difficulty requires --mission-mode')
+    if mission_ai_difficulty is not None and mission_game_mode_id is not None:
+        raise GameTestError('mission_ai_difficulty is limited to the plain mission smoke')
     if mission_mode is not None:
         if ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None:
             raise GameTestError('custom PvP AI teams cannot be used in a mission smoke plan')
@@ -2245,8 +2262,12 @@ def make_plan(
             "mission_clear_claim": False,
             "mission_result_claim": False,
             "mission_active_exit_claim": False,
-            "room_title": mission_room_title(title_nonce, mission_respawns),
+            "room_title": mission_room_title(
+                title_nonce, mission_respawns, mission_ai_difficulty
+            ),
         })
+        if mission_ai_difficulty is not None:
+            plan['mission_ai_difficulty'] = mission_ai_difficulty
         if mission_behavior_profile is not None:
             plan.update({
                 "mission_behavior_profile": mission_behavior_profile,
@@ -2411,6 +2432,8 @@ def write_job(
             "mission_result_claim": "0",
             "mission_active_exit_claim": "0",
         })
+        if 'mission_ai_difficulty' in plan:
+            run['run']['mission_ai_difficulty'] = plan['mission_ai_difficulty']
         if "mission_behavior_profile" in plan:
             run["run"].update({
                 "mission_behavior_profile": plan["mission_behavior_profile"],
@@ -2682,6 +2705,14 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 raise ValueError('mission AI count or level differs from the sealed native plan')
             if any(run[field] != '0' for field in MISSION_CLAIM_FIELDS):
                 raise ValueError('mission smoke cannot claim clear, result, or active exit')
+            mission_ai_difficulty = run.get('mission_ai_difficulty')
+            if mission_ai_difficulty is not None:
+                try:
+                    mission_ai_difficulty = validate_ai_difficulty(mission_ai_difficulty)
+                except GameTestError as error:
+                    raise ValueError(str(error)) from error
+                if behavior_mission_id is not None:
+                    raise ValueError('mission AI difficulty is limited to the plain mission smoke')
             if run['retry_count'] != '1' or run['expect_first_fail'] != '0':
                 raise ValueError('mission smoke requires one existing-account login attempt')
             canonical_run_id = str(uuid.UUID(run['id']))
@@ -2696,7 +2727,9 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 raise ValueError(
                     "mission behavior plan cannot add the respawn fixture"
                 )
-            if run['room_title'] != mission_room_title(run['title_nonce'], mission_respawns):
+            if run['room_title'] != mission_room_title(
+                run['title_nonce'], mission_respawns, mission_ai_difficulty
+            ):
                 raise ValueError('mission room title differs from the sealed native plan')
             expected_cases = required_flow_cases(
                 '1', play_unit_uid=play_unit_uid, mission_mode=mission_mode,
@@ -2711,7 +2744,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 'first_unit_draw', 'acknowledge_game_windows', 'process_entry',
                 'account_path', 'retry_count', 'expect_first_fail',
                 'required_cases', 'mission_mode', 'mission_scope',
-                'mission_ai_count', 'mission_ai_level', 'mission_respawns', *MISSION_CLAIM_FIELDS,
+                'mission_ai_count', 'mission_ai_level', 'mission_respawns',
+                'mission_ai_difficulty', *MISSION_CLAIM_FIELDS,
                 *MISSION_BEHAVIOR_FIELDS,
                 'play_unit_uid', 'network_policy',
                 *ROUTE_PLAN_FIELDS, 'quiet', 'quiet_loopback', 'review_footage',
@@ -2903,6 +2937,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 'mission_result_claim': False,
                 'mission_active_exit_claim': False,
             })
+            if mission_ai_difficulty is not None:
+                plan['mission_ai_difficulty'] = mission_ai_difficulty
             if behavior_profile is not None:
                 plan.update({
                     "mission_behavior_profile": behavior_profile,
@@ -3288,6 +3324,7 @@ def prepare(
     mission_respawns: str | None = None,
     mission_behavior_profile: str | None = None,
     mission_game_mode_id: int | None = None,
+    mission_ai_difficulty: str | None = None,
     launcher_path: str | None = None,
     account_profile: Path | None = None,
     create_test_account: bool = False,
@@ -3487,6 +3524,7 @@ def prepare(
             or ai_pool_level is not None
             or ai_difficulty is not None
             or ai_layout is not None
+            or mission_ai_difficulty is not None
             or room_style_preview is not None
             or operator_flow is not None
         ):
@@ -3697,6 +3735,7 @@ def prepare(
             mission_respawns,
             mission_behavior_profile,
             mission_game_mode_id,
+            mission_ai_difficulty,
             review_footage=review_footage,
         )
         if oc_allocate is not None:
@@ -4215,7 +4254,8 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
                     raise GameTestError(f"run.json mission plan disagrees with run.ini for {key}")
         elif any(field in plan for field in (
             "mission_mode", "mission_scope", "mission_ai_count",
-            "mission_ai_level", "mission_respawns", *MISSION_CLAIM_FIELDS,
+            "mission_ai_level", "mission_respawns", "mission_ai_difficulty",
+            *MISSION_CLAIM_FIELDS,
             *MISSION_BEHAVIOR_FIELDS,
         )):
             raise GameTestError("run.json cannot add mission scope to a non-mission plan")
@@ -5377,6 +5417,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "AI spawn and combat only; no clear, result, or active-exit claim"
         ),
     )
+    prepare_parser.add_argument(
+        '--mission-ai-difficulty',
+        choices=('Easy', 'Medium', 'Hard'),
+        help='seal the plain mission room title with the native AI difficulty token',
+    )
     prepare_parser.add_argument('--mission-respawns',choices=('player','infinite'),help='native mission repeated-death acceptance with the isolated server combat probe')
     prepare_parser.add_argument(
         "--mission-behavior-profile",
@@ -5546,6 +5591,7 @@ def main(argv: list[str] | None = None) -> int:
                 mission_respawns=args.mission_respawns,
                 mission_behavior_profile=args.mission_behavior_profile,
                 mission_game_mode_id=args.mission_game_mode_id,
+                mission_ai_difficulty=args.mission_ai_difficulty,
                 launcher_path=args.launcher_path,
                 account_profile=args.account_profile,
                 create_test_account=args.create_test_account,
