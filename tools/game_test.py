@@ -587,6 +587,24 @@ def validate_observer_stage(
 
 
 
+def staged_authored_files(folder: Path) -> set[str]:
+    """Programme staging must not replace a separately installed content package."""
+    manifest = read_ini(folder / 'mod.ini')
+    normalize = lambda name: name.replace('\\', '/').strip('/').casefold()
+    authored = {normalize(name.strip()) for name in
+                manifest.get('mod', 'config_files', fallback='').split(',') if name.strip()}
+    contract_path = folder / 'manager.json'
+    if contract_path.is_file():
+        contract = read_json(contract_path)
+        authored.update(normalize(name) for name in contract.get('configuration_files', [])
+                        if isinstance(name, str))
+    programmes = {'mod.ini', 'manager.json', normalize(manifest.get('mod', 'dll', fallback=folder.name + '.dll'))}
+    for key in ('files', 'runtime_files'):
+        programmes.update(normalize(name.strip()) for name in
+                          manifest.get('mod', key, fallback='').split(',') if name.strip())
+    return authored - programmes
+
+
 def overlay_observer(
     root: Path,
     stage: Path,
@@ -697,7 +715,12 @@ def overlay_observer(
         destination.mkdir(parents=True,exist_ok=True)
         from tools.game_test_environment import no_reparse_tree
         no_reparse_tree(source)
-        shutil.copytree(source,destination,dirs_exist_ok=True)
+        authored = staged_authored_files(source)
+        def ignore_authored(directory, names):
+            relative = Path(directory).relative_to(source)
+            return {name for name in names
+                    if (relative / name).as_posix().casefold() in authored}
+        shutil.copytree(source,destination,dirs_exist_ok=True,ignore=ignore_authored)
         current=read_ini(destination/'mod.ini');current['mod']['enabled']='1'
         write_ini(destination/'mod.ini',current)
         settings=read_ini(root/'sdgo/sdgo.ini')
@@ -723,7 +746,10 @@ def overlay_observer(
             for key,value in previous.items('settings',raw=True):current['settings'][key]=value
         write_ini(installed_manifest,current)
         updated_manifests.append(installed_manifest)
+        authored = staged_authored_files(staged_manifest.parent)
         for payload in staged_manifest.parent.iterdir():
+            if payload.name.casefold() in authored:
+                continue
             if payload.is_file() and (payload.suffix.lower() in ('.dll','.lua') or payload.name=='symbols.fragment.ini'):
                 shutil.copy2(payload,destination/payload.name)
     if disabled_mods:

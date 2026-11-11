@@ -382,21 +382,29 @@ rva=state
     def test_client_content_package_does_not_replace_selected_staged_programme(self):
         package=self.root/'map-content.zip';package.write_bytes(b'content package fixture')
         installed=self.template/'sdgo/mods/map_catalog';installed.mkdir()
-        manifest=b'[mod]\nid=map_catalog\ncategory=gameplay\nfeature=map-import\nversion=0.2.0\ndll=map_catalog.dll\nhosts=*\nenabled=1\n'
+        manifest=('[mod]\nid=map_catalog\ncategory=gameplay\nfeature=map-import\nversion=0.2.0\ndll=map_catalog.dll\n'
+                  f'hosts={game_test.HOST_KEY}\nenabled=1\nconfig_files=catalog.bin\n').encode()
         (installed/'mod.ini').write_bytes(manifest)
         (installed/'map_catalog.dll').write_bytes(b'formal programme')
         staged=self.stage/'client/sdgo/mods/map_catalog';staged.mkdir()
         (staged/'mod.ini').write_bytes(manifest.replace(b'0.2.0',b'0.3.0'))
         (staged/'map_catalog.dll').write_bytes(b'selected candidate programme')
+        (staged/'catalog.bin').write_bytes(b'stale staged authored records')
+        (staged/'missions.lua').write_bytes(b'stale staged authored mission')
+        (staged/'manager.json').write_text(json.dumps({'configuration_files': ['missions.lua']}))
         def import_content(workspace,host,_payload):
             target=Path(workspace.host(host)['path'])/'sdgo/mods/map_catalog'
             target.joinpath('map_catalog.dll').write_bytes(b'authoring programme')
             target.joinpath('definitions.json').write_bytes(b'authored map records')
+            target.joinpath('catalog.bin').write_bytes(b'new package native records')
+            target.joinpath('missions.lua').write_bytes(b'new package mission script')
         with mock.patch('manager.packages.import_client',side_effect=import_content):
-            run=self.prepare(client_packages=(package,))
+            run=self.prepare(client_packages=(package,), extra_mods=('map_catalog',))
         target=run/'client/sdgo/mods/map_catalog'
         self.assertEqual(b'selected candidate programme',(target/'map_catalog.dll').read_bytes())
         self.assertEqual(b'authored map records',(target/'definitions.json').read_bytes())
+        self.assertEqual(b'new package native records',(target/'catalog.bin').read_bytes())
+        self.assertEqual(b'new package mission script',(target/'missions.lua').read_bytes())
         self.assertEqual(
             game_test.sha256(target/'map_catalog.dll'),
             self.metadata(run)['client']['immutable_hashes']['sdgo/mods/map_catalog/map_catalog.dll'])
