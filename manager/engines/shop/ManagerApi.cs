@@ -17,26 +17,28 @@ namespace Sdgo.Manager
         {
             return new {catalog=service.Catalog,revision=Model.FileHash(service.CatalogFile),demo=service.Demo,
                 items=service.Snapshot==null?new List<Item>():service.Snapshot.Items,
+                active_products=service.Snapshot==null?new List<ActiveProduct>():service.Snapshot.ActiveProducts,
+                active_products_source=service.Demo?"demo_visible_readback":"store_billing_visible_readback",
                 products=service.Catalog.products.Select(p=>new {product=p,status=service.Status(p)}).ToArray(),
                 search_index=searchIndex};
         }
-        static void Open(Dictionary<string,object> request)
+        static void Open(Dictionary<string,object> request,bool persistSettings)
         {
             string d=Text(request,"workspace"),w=Text(request,"world"),c=Text(request,"client");bool useDemo=Text(request,"demo")=="1";
             if(service!=null&&d==directory&&w==world&&c==client&&useDemo==demo)return;
             if(service!=null)service.Dispose();
             service=new ShopService(d,useDemo);directory=d;world=w;client=c;demo=useDemo;
             service.Settings.WorldDirectory=w;service.Settings.ClientDirectory=c;
-            service.Connect();
+            service.Connect(persistSettings);
         }
         public static string Execute(string input)
         {
             try
             {
-                var request=Model.Json().Deserialize<Dictionary<string,object>>(input);Open(request);
-                string action=Text(request,"action");
+                var request=Model.Json().Deserialize<Dictionary<string,object>>(input);string action=Text(request,"action");
+                Open(request,action!="read-effective");
                 var body=request.ContainsKey("body")?(Dictionary<string,object>)request["body"]:new Dictionary<string,object>();
-                if(action=="read") {service.Connect();return Model.Json().Serialize(new {ok=true,value=State()});}
+                if(action=="read"||action=="read-effective") {service.Connect(action!="read-effective");return Model.Json().Serialize(new {ok=true,value=State()});}
                 if(Text(request,"revision")!=Model.FileHash(service.CatalogFile))throw new InvalidOperationException("商城配置已改变，请刷新后重试。");
                 if(action=="create")
                 {

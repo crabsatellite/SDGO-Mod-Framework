@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import struct
 import subprocess
 import sys
@@ -597,6 +598,30 @@ class CollectionClientPackageTests(unittest.TestCase):
                 (output / "client/sdgo/mods/capsule_catalog/capsule_catalog.dll").read_bytes(),
                 b"CURRENT CAPSULE SUPPORT SDGO_CAPSULE_REGISTRY_6TABLE_V2 SDGO_COLLECTION_ACQUISITION_V1",
             )
+            packaged_mod = packaging._parse_sections(
+                (output / "client/sdgo/mods/capsule_catalog/mod.ini").read_bytes(),
+                "packaged capsule mod.ini",
+            )["mod"]
+            programme_mod = packaging._parse_sections(
+                (ROOT / "mods/capsule_catalog/mod.ini").read_bytes(),
+                "programme capsule mod.ini",
+            )["mod"]
+            self.assertEqual(packaged_mod["version"], programme_mod["version"])
+            required = set(packaged_mod["requires"].split(","))
+            shared_source = (ROOT / "support/capsule_registry/capsule_catalog.cpp").read_text(
+                encoding="utf-8"
+            )
+            used_symbols = {
+                symbol
+                for match in re.findall(
+                    r'BindCode\([^,]+,\s*"([^"]+)"\)|HookCode\(mod,\s*"([^"]+)"',
+                    shared_source,
+                )
+                for symbol in match
+                if symbol
+            }
+            self.assertTrue(used_symbols)
+            self.assertTrue(used_symbols.issubset(required), used_symbols - required)
             manifest = json.loads(
                 (output / "package-manifest.json").read_text(encoding="utf-8")
             )

@@ -28,9 +28,11 @@ The **机体导入** panel runs only inside Manager; the game never loads it. Bo
 and the game does not load a Mod that is off. Server publication switches on `unit_catalog_server`; installing the
 unit client package switches on `unit_catalog`.
 
-After a unit enters a published activity pool, the capsule publication automatically
-updates its completed-unit sources in the native encyclopedia. Machine numbers match
+After a unit enters a published activity or custom pool, the capsule publication automatically
+updates its source data for the native encyclopedia. Machine numbers match
 the game's display; later pool changes do not require another unit import.
+
+Published blueprint synthesis links follow unit-content updates; disabling the family or blueprint stops advertising that link. The optional [unit acquisition sources](acquisition-sources.md) also combines applied shop unit and blueprint offers with officer blueprint drops. Missing provider Mods omit only their own information.
 
 Unit, weapon and skill names and descriptions belong to unit content. Edit them in the content authoring source and distribute them with the custom-unit package; public interface dictionaries do not carry those dedicated translations. The runtime reports content ownership to optional localization consumers so matching stock phrases do not replace authored wording.
 

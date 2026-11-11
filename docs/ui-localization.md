@@ -2,9 +2,11 @@
 
 [简体中文](ui-localization.zh-CN.md) · [Back to the feature index](../README.md)
 
-Displays reviewed Thai buttons and explanations, plus selected longer English system messages from the supported original client, in Chinese. This includes the draw, initialize, close and auto-start buttons in the native custom capsule configuration window. Those controls belong to the original client layout.
+Displays reviewed Thai/Korean controls, acquisition descriptions and selected longer English system messages from the supported original client in Chinese. This includes the draw, initialize, close and auto-start buttons in the native custom capsule configuration window and the reset button on the factory's Over Custom page. Those controls belong to the original client layouts.
 
 ![Chinese text on native capsule controls](ui-localization-demo.webp)
+
+![Chinese stock acquisition descriptions](ui-localization-acquisition.png)
 
 ## Use
 
@@ -16,8 +18,8 @@ Unit names and shop descriptions use [shop localization](shop-localization.md). 
 
 ## Scope
 
-Static phrases require an exact match at a verified layout-loading caller. System messages additionally require a matching record ID and source. Player names, chat, room titles and dynamic input do not pass through this static replacement. Unsupported client signatures refuse to load.
+Static phrases require an exact match at a verified layout-loading caller. System messages additionally require a matching record ID and source. Acquisition descriptions require matching stock record and unit IDs plus the original prose; only native display callers receive a text copy. Historical dates retain their meaning, and appended owner-authored acquisition hints retain their text. Player names, chat, room titles and dynamic input do not pass through this static replacement. Unsupported client signatures refuse to load.
 
-The current dictionary contains 187 static interface phrases and 43 system messages. Dictionary coverage does not imply that every legacy layout is used by the current game. Image buttons without confirmed use are left intact.
+The current dictionary contains 201 static interface phrases, 43 system messages and 148 stock acquisition descriptions. Dictionary coverage does not imply that every legacy layout is used by the current game. Image buttons without confirmed use are left intact.
 
 Manager exposes caller tracing as a developer diagnostic setting. It is off by default and unnecessary for normal use.

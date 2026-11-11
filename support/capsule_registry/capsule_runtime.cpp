@@ -449,6 +449,29 @@ const capsule_catalog::OverlayEntry* capsule_catalog::Bundle::Find(const std::ws
     return found == entries.end() ? nullptr : &found->second;
 }
 
+uint32_t capsule_catalog::EmitAcquisitionSources(
+    const Bundle& bundle,
+    const SdgoAcquisitionRequestV1* request,
+    const SdgoAcquisitionSinkV1* sink)
+{
+    if (!request || !sink || request->size < sizeof(*request) || request->version != 1 ||
+        sink->size < sizeof(*sink) || sink->version != 1 || !sink->Emit)
+        return SDGO_ACQUISITION_INCOMPLETE;
+    if (request->subject != SDGO_ACQUISITION_UNIT || request->id == 0)
+        return SDGO_ACQUISITION_UNAVAILABLE;
+
+    const auto capsule = bundle.capsuleAcquisition.units.find(request->id);
+    if (capsule != bundle.capsuleAcquisition.units.end() &&
+        !sink->Emit(sink->context, "capsule.catalog", capsule->second.display.c_str(),
+                    static_cast<uint32_t>(capsule->second.display.size())))
+        return SDGO_ACQUISITION_INCOMPLETE;
+    if (bundle.acquisition.units.count(request->id) != 0 &&
+        !sink->Emit(sink->context, "capsule.collection", bundle.acquisition.text.c_str(),
+                    static_cast<uint32_t>(bundle.acquisition.text.size())))
+        return SDGO_ACQUISITION_INCOMPLETE;
+    return SDGO_ACQUISITION_READY;
+}
+
 bool capsule_catalog::LoadBundle(const std::wstring& modDirectory, Bundle& out, std::string& error)
 {
     const std::wstring ini = Join(modDirectory, L"runtime.ini");

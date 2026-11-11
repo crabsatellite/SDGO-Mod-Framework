@@ -5,8 +5,11 @@
 #include <cwchar>
 #include <cmath>
 #include <cstdio>
+#include <string_view>
 #include "native_actions.h"
 #include "hangar_navigation.h"
+#include "sdgo/acquisition_sources.h"
+#include "../acquisition_sources/source_list.h"
 
 // Drives the original encyclopedia controls. All selected IDs, model slots
 // and form states are read back; no list/profile/model state is written here.
@@ -283,6 +286,58 @@ private:
     bool Match(void* root,uint8_t* control,const wchar_t* name,uint32_t kind)const {
         return root && control && Read<void*>(control+0x15C)==root && FindControl(root,name,kind)==control;
     }
+    bool ObserveAcquisitionDisplay(Result* result) {
+        const auto consumer = GetModuleHandleW(L"acquisition_sources.dll");
+        const auto installed = consumer ? reinterpret_cast<SdgoAcquisitionDisplayInstalledV1Fn>(
+            GetProcAddress(consumer, SDGO_ACQUISITION_DISPLAY_EXPORT)) : nullptr;
+        const auto read = consumer ? reinterpret_cast<SdgoAcquisitionDisplayTextV1Fn>(
+            GetProcAddress(consumer, SDGO_ACQUISITION_DISPLAY_TEXT_EXPORT)) : nullptr;
+        if (!read || !sdgo::acquisition_sources::DisplayInstalled(installed)) return false;
+        std::vector<std::wstring> expected;
+        const auto add = [&](const wchar_t* moduleName, uint32_t subject, uint32_t id) {
+            const auto module = GetModuleHandleW(moduleName);
+            const auto query = module ? reinterpret_cast<SdgoAcquisitionSourcesV1Fn>(
+                GetProcAddress(module, SDGO_ACQUISITION_SOURCES_EXPORT)) : nullptr;
+            auto texts = sdgo::acquisition_sources::Query(query, subject, id);
+            expected.insert(expected.end(), texts.begin(), texts.end());
+        };
+        for (const auto* module : {L"capsule_catalog.dll", L"shop_localization.dll", L"operator_catalog.dll"})
+            add(module, SDGO_ACQUISITION_UNIT, state_.unit);
+        const uint8_t* index = nullptr;
+        if (state_.index_id && find_(grid_(), &index, state_.index_id, 85, 0) && index) {
+            const auto recipe = Read<uint32_t>(index + 10);
+            const auto provider = GetModuleHandleW(L"unit_catalog.dll");
+            const auto query = provider ? reinterpret_cast<SdgoBlueprintAcquisitionStateV1Fn>(
+                GetProcAddress(provider, SDGO_BLUEPRINT_ACQUISITION_STATE_EXPORT)) : nullptr;
+            const auto state = provider ? sdgo::acquisition_sources::BlueprintState(query, recipe, state_.unit) : 0;
+            const uint8_t* definition = nullptr;
+            if (recipe && state <= 1 && find_(grid_(), &definition, recipe, 33, 0) && definition &&
+                !definition[4] && Read<uint32_t>(definition + 229) == state_.unit)
+                for (const auto* module : {L"shop_localization.dll", L"operator_catalog.dll"})
+                add(module, SDGO_ACQUISITION_BLUEPRINT, recipe);
+        }
+        state_.capsule_hint_visible = 0;
+        state_.capsule_numbers_visible = 0;
+        if (expected.empty()) { *result = Ready; return true; }
+        for (unsigned slot = 0; slot < 10; ++slot) {
+            wchar_t name[64]{}; swprintf_s(name, L"FinishedProduct%u", slot);
+            auto* source = Resolve(name);
+            if (!source || Read<uint32_t>(source + 0x44) != state_.unit) continue;
+            wchar_t text[16385]{};
+            const auto size = read(source, text, 16385);
+            if (!size) continue;
+            const std::wstring_view shown(text, size);
+            bool complete = true;
+            for (const auto& phrase : expected) complete = complete && shown.find(phrase) != std::wstring_view::npos;
+            if (complete) {
+                state_.capsule_hint_visible = 1;
+                state_.capsule_numbers_visible = static_cast<uint32_t>(expected.size());
+                *result = Ready; return true;
+            }
+        }
+        *result = Waiting;
+        return true;
+    }
     Result ReadDetail(uint8_t* detail) {
         if(!detail)return Waiting;
         state_.detail=reinterpret_cast<uintptr_t>(detail);state_.detail_unit=DetailUnit(detail);
@@ -301,6 +356,8 @@ private:
         if(!model)return Waiting;
         state_.detail=reinterpret_cast<uintptr_t>(detail);state_.model=reinterpret_cast<uintptr_t>(model);
         state_.form=form;state_.animation_state=Read<float>(detail+0x1E4);
+        Result acquisition = Waiting;
+        if (ObserveAcquisitionDisplay(&acquisition)) return acquisition;
         using Expected=const wchar_t*(__cdecl*)(uint32_t);
         auto module=GetModuleHandleW(L"capsule_catalog.dll");
         auto expected=module?reinterpret_cast<Expected>(GetProcAddress(module,"SdgoCollectionAcquisitionExpectedV1")):nullptr;

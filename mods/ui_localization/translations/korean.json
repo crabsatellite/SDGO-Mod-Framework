@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "language": "ko",
+  "entries": [
+    {
+      "source": "초 기 화",
+      "target": "重置",
+      "status": "ready"
+    },
+    {
+      "source": "초기화",
+      "target": "重置",
+      "status": "ready"
+    },
+    {
+      "source": "커스텀 슬롯 초기화",
+      "target": "自定义槽重置",
+      "status": "ready"
+    },
+    {
+      "source": "스킬 슬롯 초기화",
+      "target": "技能槽重置",
+      "status": "ready"
+    },
+    {
+      "source": "전체 스킬 슬롯 초기화",
+      "target": "全部技能槽重置",
+      "status": "ready"
+    },
+    {
+      "source": "현재",
+      "target": "当前",
+      "status": "ready"
+    },
+    {
+      "source": "초기화 비용은 10회까지 증가합니다.",
+      "target": "重置费用在前10次内逐次增加。",
+      "status": "ready"
+    },
+    {
+      "source": "초기화비용",
+      "target": "重置费用",
+      "status": "ready"
+    },
+    {
+      "source": "취 소",
+      "target": "取消",
+      "status": "ready"
+    },
+    {
+      "source": "커스텀 파츠 교체",
+      "target": "更换自定义配件",
+      "status": "ready"
+    },
+    {
+      "source": "교 체",
+      "target": "更换",
+      "status": "ready"
+    },
+    {
+      "source": "교체 비용",
+      "target": "更换费用",
+      "status": "ready"
+    },
+    {
+      "source": "커스텀 캡슐머신",
+      "target": "自定义扭蛋机",
+      "status": "ready"
+    },
+    {
+      "source": "슬롯초기화",
+      "target": "重置槽位",
+      "status": "ready"
+    }
+  ]
+}

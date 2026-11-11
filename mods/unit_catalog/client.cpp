@@ -8,6 +8,7 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/collection_acquisition.h"
 #include "sdgo/unit_catalog_format.h"
+#include "sdgo/acquisition_sources_file.h"
 #include "content_localization_boundary_index.h"
 #include "preview_runtime.h"
 #include "skill_presentation.h"
@@ -58,7 +59,9 @@ RegisterRecord g_registerRecord = nullptr;
 MapFind g_mapFind = nullptr;
 bool g_attempted = false;
 bool g_recordsReady = false;
+bool g_modReady = false;
 uint32_t g_addedThisAttempt = 0;
+sdgo::acquisition_sources_file::AvailabilityFile g_blueprintAvailability;
 std::shared_ptr<const ContentLocalizationBoundaryIndex>
     g_localizationBoundary;
 
@@ -447,6 +450,25 @@ bool CopyBoundarySource(const wchar_t* source, uint32_t chars,
 }
 } // namespace
 
+extern "C" __declspec(dllexport) std::uint32_t __cdecl
+SdgoBlueprintAcquisitionStateV1(std::uint32_t recipe, std::uint32_t unit)
+{
+    if (!g_modReady || !g_recordsReady)
+        return sdgo::acquisition_sources_file::kBlueprintIndeterminate;
+    const std::size_t index = g_catalog.Find(recipe);
+    if (index == g_catalog.records.size() ||
+        g_catalog.records[index].kind != kBlueprintType)
+        return sdgo::acquisition_sources_file::kBlueprintUnclaimed;
+    const auto& record = g_catalog.records[index].bytes;
+    if (record.size() < kBlueprintOutputOffset + sizeof(std::uint32_t))
+        return sdgo::acquisition_sources_file::kBlueprintIndeterminate;
+    const std::uint32_t ownedUnit = U32(record.data() + kBlueprintOutputOffset);
+    if (!unit || ownedUnit != unit)
+        return sdgo::acquisition_sources_file::kBlueprintIndeterminate;
+    return g_blueprintAvailability.State(recipe, unit);
+}
+
+
 extern "C" __declspec(dllexport) uint32_t __cdecl
 SdgoUnitCatalogLocalizationBoundaryV1(uint32_t recordKind, uint32_t recordId,
                                       const wchar_t* source,
@@ -488,6 +510,7 @@ SdgoUnitCatalogLocalizationBoundaryV1(uint32_t recordKind, uint32_t recordId,
 }
 
 SDGO_MOD_ENTRY {
+    g_modReady = false;
     std::atomic_store_explicit(
         &g_localizationBoundary,
         std::shared_ptr<const ContentLocalizationBoundaryIndex>{},
@@ -497,10 +520,19 @@ SDGO_MOD_ENTRY {
     if (!api || api->version != SDGO_API_VERSION || !api->SettingInt(mod, "Enabled", 1)) return 0;
 
     std::string error;
-    if (!g_catalog.Load(std::wstring(api->ModDirectory(mod)) + L"\\catalog.bin", error)) {
+    const std::wstring modDirectory = api->ModDirectory(mod);
+    if (!g_catalog.Load(modDirectory + L"\\catalog.bin", error)) {
         api->Log(mod, SDGO_LOG_ERROR, "%s", error.c_str());
         return 0;
     }
+    std::string availabilityError;
+    g_blueprintAvailability.Load(
+        modDirectory + L"\\blueprint-availability.bin", g_catalog.payloadHash,
+        &availabilityError);
+    if (!g_blueprintAvailability.ready())
+        api->Log(mod, SDGO_LOG_WARN,
+                 "blueprint availability is unavailable; imported blueprint claims remain indeterminate: %s",
+                 availabilityError.c_str());
     std::shared_ptr<ContentLocalizationBoundaryIndex> boundary;
     try {
         auto candidate =
@@ -552,5 +584,6 @@ SDGO_MOD_ENTRY {
              "registration deferred to final data table",
              static_cast<unsigned>(g_catalog.records.size()),
              protectedTextCount);
+    g_modReady = true;
     return 1;
 }

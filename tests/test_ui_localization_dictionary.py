@@ -16,6 +16,17 @@ class UiPhraseCatalogTests(unittest.TestCase):
         root=Path(__file__).resolve().parents[1]/'mods/ui_localization'
         result=catalog.render(catalog.load(sorted((root/'translations').glob('*.json'))))
         self.assertEqual((root/'phrases.generated.h').read_bytes(),result)
+        self.assertEqual((root/'acquisition.generated.h').read_bytes(),
+                         catalog.render_acquisition(catalog.load_acquisition(root/'acquisition.json')))
+
+    def test_acquisition_requires_exact_id_unit_and_bounded_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'acquisition.json'
+            valid={'id':1,'unit_id':2,'source':'native','target':'中文','status':'ready'}
+            for rows in [[valid,valid], [{**valid,'unit_id':0}], [{**valid,'target':'中'*200}],
+                         [{**valid,'source':'Count %u','target':'数量 %s'}]]:
+                path.write_text(json.dumps({'schema_version':1,'entries':rows}),encoding='utf-8')
+                with self.assertRaises(ValueError):catalog.load_acquisition(path)
 
     def test_review_and_kept_labels_are_not_rewritten(self):
         with tempfile.TemporaryDirectory() as tmp:

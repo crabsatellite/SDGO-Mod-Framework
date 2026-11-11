@@ -6,6 +6,9 @@ int main() {
     using namespace sdgo::ui_localization;
     const auto* cancel=Find(L"ยกเลิก");
     assert(cancel && std::wstring_view(cancel->target)==L"取消");
+    const auto* reset=Find(L"초 기 화");
+    assert(reset && std::wstring_view(reset->target)==L"重置");
+    assert(!Find(L"초  기  화") && !Find(L"초 기 화 "));
     assert(!Find(L"Search") && !Find(L"All") && !Find(L"GAME START") && !Find(L"EXIT"));
     assert(!Find(L"Search ") && !Find(L" Search"));
     assert(!Find(L"User-authored room title") && !Find(L"player_104"));

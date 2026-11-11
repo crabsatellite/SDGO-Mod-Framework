@@ -9,6 +9,7 @@
 #include <vector>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/operator_model.h"
+#include "sdgo/acquisition_sources_file.h"
 #include "../../support/native_resource_overlay/native_resource_overlay.h"
 
 namespace {
@@ -44,7 +45,9 @@ DeleteFn g_delete = nullptr;
 MakeFn g_make = nullptr;
 InsertFn g_insert = nullptr;
 std::vector<Entry> g_entries;
+sdgo::acquisition_sources_file::SourceFile g_acquisitionSources;
 bool g_applied = false;
+bool g_ready = false;
 constexpr std::array<uint32_t, 4> kCategoryTemplateCandidates = {
     1210017, 1210012, 1210006, 1220008
 };
@@ -468,11 +471,27 @@ bool RegisterResourceOverlays()
 }
 }
 
+extern "C" __declspec(dllexport) std::uint32_t __cdecl
+SdgoAcquisitionSourcesV1(const SdgoAcquisitionRequestV1* request,
+                         const SdgoAcquisitionSinkV1* sink)
+{
+    return g_ready ? g_acquisitionSources.Query(request, sink)
+                   : SDGO_ACQUISITION_UNAVAILABLE;
+}
+
 SDGO_MOD_ENTRY
 {
+    g_ready = false;
     g_api = api;
     g_mod = mod;
     if (!api || api->version != SDGO_API_VERSION || !api->SettingInt(mod, "Enabled", 1)) return 0;
+    std::string acquisitionError;
+    g_acquisitionSources.Load(
+        std::wstring(api->ModDirectory(mod)) + L"\\acquisition-sources.bin",
+        sdgo::acquisition_sources_file::kOperatorProvider, &acquisitionError);
+    if (g_acquisitionSources.status() == SDGO_ACQUISITION_INCOMPLETE)
+        api->Log(mod, SDGO_LOG_WARN, "operator acquisition sources ignored: %s",
+                 acquisitionError.c_str());
     g_data = reinterpret_cast<DataFn>(api->Symbol(mod, "operator.grid_data"));
     g_find = reinterpret_cast<FindFn>(api->Symbol(mod, "operator.grid_find"));
     g_make = reinterpret_cast<MakeFn>(api->Symbol(mod, "operator.grid_make_node"));
@@ -481,7 +500,7 @@ SDGO_MOD_ENTRY
     g_delete = reinterpret_cast<DeleteFn>(api->Symbol(mod, "operator.native_delete"));
     if (!g_data || !g_find || !g_make || !g_insert || !g_new || !g_delete ||
         !ReadConfig(api->ModDirectory(mod))) return 0;
-    if (g_entries.empty()) { api->Log(mod, SDGO_LOG_INFO, "no operator overrides configured"); return 1; }
+    if (g_entries.empty()) { api->Log(mod, SDGO_LOG_INFO, "no operator overrides configured"); g_ready = true; return 1; }
     if (!RegisterResourceOverlays()) return 0;
     for (const Entry& entry:g_entries) {
         if (!entry.fixedName) continue;
@@ -492,5 +511,9 @@ SDGO_MOD_ENTRY
                              reinterpret_cast<void**>(&g_convert))) return 0;
         break;
     }
-    return api->HookCode(mod, "operator.load_data", reinterpret_cast<void*>(&Load), reinterpret_cast<void**>(&g_originalLoad));
+    const int loaded = api->HookCode(mod, "operator.load_data",
+                                     reinterpret_cast<void*>(&Load),
+                                     reinterpret_cast<void**>(&g_originalLoad));
+    g_ready = loaded != 0;
+    return loaded;
 }

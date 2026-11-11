@@ -83,6 +83,18 @@ def write_bundle(folder, *, duplicate=False, bad_range=False, asset_id=60000,
     (folder / "runtime.ini").write_text("\n".join(lines) + "\n", encoding="ascii")
 
 
+def provider_dll():
+    override = os.environ.get("CAPSULE_CATALOG_DLL")
+    candidates = [
+        Path(override) if override else None,
+        ROOT / "build" / "RelWithDebInfo" / "capsule_catalog.dll",
+        ROOT / "build" / "Release" / "capsule_catalog.dll",
+        ROOT / "build" / "Debug" / "capsule_catalog.dll",
+        ROOT / "build" / "capsule_registry_support" / "RelWithDebInfo" / "capsule_catalog.dll",
+    ]
+    return next((candidate for candidate in candidates if candidate and candidate.is_file()), None)
+
+
 def harness():
     override = os.environ.get("CAPSULE_RUNTIME_HARNESS")
     candidates = [
@@ -98,6 +110,16 @@ def harness():
 
 
 class CapsuleClientRuntimeTests(unittest.TestCase):
+    def test_uninitialized_or_declined_provider_export_stays_unavailable(self):
+        dll = provider_dll()
+        if dll is None:
+            self.skipTest("capsule_catalog.dll has not been built")
+        result = subprocess.run(
+            [str(harness()), "--idle-provider", str(dll)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("IDLE_PROVIDER_UNAVAILABLE 1", result.stdout)
+
     def test_declared_capsule_ui_overlay_is_loaded_without_expanding_checksum_gate(self):
         with tempfile.TemporaryDirectory() as temp:
             write_bundle(temp, with_ui=True)

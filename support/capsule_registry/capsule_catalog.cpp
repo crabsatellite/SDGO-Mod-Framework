@@ -28,6 +28,7 @@ namespace
     SdgoMod* g_mod = nullptr;
     capsule_catalog::Bundle g_bundle;
     volatile LONG g_priceUiOpened = 0;
+    volatile LONG g_acquisitionReady = 0;
 
     using VerifyChecksumFn = bool(__thiscall*)(void*, const wchar_t*, void*);
     VerifyChecksumFn g_verifyChecksum = nullptr;
@@ -320,11 +321,18 @@ extern "C" __declspec(dllexport) const wchar_t* __cdecl SdgoCollectionAcquisitio
     return g_bundle.acquisition.units.count(unit)?g_bundle.acquisition.text.c_str():nullptr;
 }
 extern "C" __declspec(dllexport) const wchar_t* __cdecl SdgoCapsuleAcquisitionExpectedV1(uint32_t unit) {
-    return g_bundle.capsuleAcquisition.Expected(unit);
+    return g_bundle.capsuleAcquisition.LegacyExpected(unit);
+}
+extern "C" __declspec(dllexport) uint32_t __cdecl SdgoAcquisitionSourcesV1(
+    const SdgoAcquisitionRequestV1* request, const SdgoAcquisitionSinkV1* sink) {
+    if (InterlockedCompareExchange(&g_acquisitionReady, 0, 0) == 0)
+        return SDGO_ACQUISITION_UNAVAILABLE;
+    return capsule_catalog::EmitAcquisitionSources(g_bundle, request, sink);
 }
 
 SDGO_MOD_ENTRY
 {
+    InterlockedExchange(&g_acquisitionReady, 0);
     g_api = api;
     g_mod = mod;
     g_receiptPath = std::wstring(api->ModDirectory(mod)) + L"\\runtime-receipt.ini";
@@ -367,16 +375,16 @@ SDGO_MOD_ENTRY
                        &g_sourceFormatter)) {
         return 0;
     }
-    // Publish the broker only after every other capsule hook has registered.
-    // If any earlier load step is rolled back while the DLL remains referenced
-    // by another host, the getter must still return null rather than advertise
-    // a provider whose OpenFile hook was never activated.
+    // Publish acquisition sources only after every capsule hook and the local
+    // overlay provider are active. A retained DLL from a declined or rolled-back
+    // load must remain unavailable to optional consumers.
     if (!provider.Start(api, mod, &ObserveOverlayOpen, nullptr, error)) {
         api->Log(mod, SDGO_LOG_ERROR,
                  "capsule resource broker rejected: %s; stock catalog remains active",
                  error.c_str());
         return 0;
     }
+    InterlockedExchange(&g_acquisitionReady, 1);
     api->Log(mod, SDGO_LOG_INFO, "%s capsule catalog %s ready: %u overlay resources",
              kProviderMarker, g_bundle.catalogRevision.c_str(),
              static_cast<unsigned>(g_bundle.entries.size()));

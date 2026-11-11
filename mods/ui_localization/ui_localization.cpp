@@ -1,5 +1,6 @@
 #include "dictionary.h"
 #include "system_text.h"
+#include "acquisition_text.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/content_localization_boundary.h"
 #include "sdgo/ui_localization_observer.h"
@@ -112,14 +113,18 @@ extern "C" __declspec(dllexport) int __cdecl SdgoUiLocalizationGetSnapshotV1(Sdg
 }
 
 SDGO_MOD_ENTRY {
+    InterlockedExchange(&installed,0);
+    sdgo::ui_localization::acquisition_text::Deactivate();
     if(!api || api->version!=SDGO_API_VERSION || !api->Symbol || !api->HookCode || !api->ModDirectory)return 0;
     ownerApi=api;ownerMod=mod;hostBase=reinterpret_cast<std::uintptr_t>(api->host_base);
     const std::wstring ini=std::wstring(api->ModDirectory(mod))+L"\\mod.ini";
     traceKnown=GetPrivateProfileIntW(L"settings",L"TraceKnownSources",0,ini.c_str())!=0;
     itemCaller=api->Symbol(mod,"ui_localization.control_item_layout_caller");
     if(!itemCaller || !sdgo::ui_localization::system_text::Install(api,mod) ||
+       !sdgo::ui_localization::acquisition_text::Install(api,mod) ||
        !api->HookCode(mod,"ui_localization.control_item",reinterpret_cast<void*>(&SetItem),reinterpret_cast<void**>(&originalItem)))return 0;
     InterlockedExchange(&installed,1);
+    sdgo::ui_localization::acquisition_text::Activate();
     api->Log(mod,SDGO_LOG_INFO,"native UI localization: %u layout phrases, %u system text rows",
              static_cast<unsigned>(sdgo::ui_localization::kPhraseCount),
              static_cast<unsigned>(sdgo::ui_localization::kSystemPhraseCount));

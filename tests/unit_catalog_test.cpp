@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "sdgo/acquisition_sources.h"
 #include "sdgo/content_localization_boundary.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/unit_catalog_format.h"
@@ -390,6 +391,42 @@ void WriteOverlayFixture(const fs::path& root) {
     Check(static_cast<bool>(ini), "sealed overlay manifest written");
 }
 
+struct AvailabilityHeader {
+    char magic[8];
+    uint32_t version;
+    uint32_t headerBytes;
+    uint32_t count;
+    uint32_t payloadBytes;
+    uint32_t payloadHash;
+    uint32_t catalogPayloadHash;
+};
+struct AvailabilityRow { uint32_t recipe, unit, enabled; };
+static_assert(sizeof(AvailabilityHeader) == 32);
+static_assert(sizeof(AvailabilityRow) == 12);
+
+void WriteAvailabilityFixture(const fs::path& root,
+                              const std::vector<uint8_t>& catalogBytes,
+                              bool enabled) {
+    Header catalogHeader{};
+    Check(catalogBytes.size() >= sizeof(catalogHeader),
+          "availability fixture receives a complete catalog header");
+    std::memcpy(&catalogHeader, catalogBytes.data(), sizeof(catalogHeader));
+    const AvailabilityRow row{200001u, 25060u, enabled ? 1u : 0u};
+    AvailabilityHeader header{};
+    std::memcpy(header.magic, "SDGOBP1", 8);
+    header.version = 1;
+    header.headerBytes = sizeof(header);
+    header.count = 1;
+    header.payloadBytes = sizeof(row);
+    header.payloadHash = Hash32(&row, sizeof(row));
+    header.catalogPayloadHash = catalogHeader.payloadHash;
+    std::ofstream file(root / "blueprint-availability.bin",
+                       std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    file.write(reinterpret_cast<const char*>(&row), sizeof(row));
+    Check(static_cast<bool>(file), "blueprint availability fixture written");
+}
+
 std::vector<uint8_t> MakeNativeFixture(const std::string& scenario) {
     Entry first = MakeRecord(kUnitType, 25060);
     Entry second = MakeRecord(kUnitType, 25061);
@@ -491,12 +528,15 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
     fs::create_directories(root);
     g_diagnosticPath = suppliedRoot.empty() ? fs::path{} : root / "unit_catalog.log";
     g_modDirectory = root.wstring();
+    const auto catalogBytes = MakeNativeFixture(scenario);
     {
-        const auto bytes = MakeNativeFixture(scenario);
         std::ofstream file(root / "catalog.bin", std::ios::binary | std::ios::trunc);
-        file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        file.write(reinterpret_cast<const char*>(catalogBytes.data()),
+                   static_cast<std::streamsize>(catalogBytes.size()));
         Check(static_cast<bool>(file), "native fixture catalog written");
     }
+    if (scenario == "success")
+        WriteAvailabilityFixture(root, catalogBytes, true);
     WriteOverlayFixture(root);
 
     const HMODULE module = LoadLibraryW(dll.c_str());
@@ -508,6 +548,13 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
                 SDGO_UNIT_CATALOG_LOCALIZATION_BOUNDARY_V1_EXPORT));
     Check(localizationBoundary != nullptr,
           "production unit_catalog exports the optional localization boundary");
+    const auto blueprintState =
+        reinterpret_cast<SdgoBlueprintAcquisitionStateV1Fn>(
+            GetProcAddress(module, SDGO_BLUEPRINT_ACQUISITION_STATE_EXPORT));
+    Check(blueprintState != nullptr,
+          "production unit_catalog exports blueprint acquisition state");
+    Check(blueprintState(200001, 25060) == 3,
+          "blueprint ownership is indeterminate before successful Mod initialization");
     Check(localizationBoundary(kUnitType, 25060, nullptr, 0) ==
               SDGO_CONTENT_LOCALIZATION_INDETERMINATE &&
           sdgo::content_localization_boundary::Query(
@@ -525,6 +572,8 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
     api.SettingInt = &SettingInt;
     api.ModDirectory = &ModDirectory;
     Check(load(&api, reinterpret_cast<SdgoMod*>(1)) != 0, "production unit_catalog accepts native fixture");
+    Check(blueprintState(200001, 25060) == 3,
+          "blueprint ownership remains indeterminate before native record readback");
     if (scenario == "conflict") {
         Check(localizationBoundary(kUnitType, 25060, nullptr, 0) ==
                   SDGO_CONTENT_LOCALIZATION_INDETERMINATE &&
@@ -601,6 +650,17 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
                               scenario=="large_catalog" ? static_cast<size_t>(kMaxRecords) : 7u;
         Check(g_nodes.size() == expected && static_cast<size_t>(g_integrityRecords) == expected,
                "all unit, weapon, blueprint, item-category and encyclopedia records entered the native tree");
+        if (scenario == "success") {
+            Check(blueprintState(200001, 25060) == 1,
+                  "catalog-bound enabled recipe is published after native readback");
+            Check(blueprintState(200001, 25061) == 3,
+                  "owned recipe rejects a mismatched output unit");
+            Check(blueprintState(999999, 25060) == 0,
+                  "unowned recipe remains unclaimed after successful initialization");
+        } else {
+            Check(blueprintState(200001, 25060) == 3,
+                  "missing optional availability sidecar keeps owned recipe indeterminate");
+        }
         Catalog parsed;
         std::string error;
         Check(parsed.Parse(MakeNativeFixture(scenario), error),
@@ -979,8 +1039,13 @@ int ParserFixture() {
         Check(static_cast<bool>(file), "catalog fixture written");
     }
     Check(catalog.Load(temporary.wstring(), error), "file loader accepts read-back fixture");
+    Check(catalog.payloadHash != 0 && !catalog.records.empty(),
+          "successful file load publishes catalog metadata");
     std::error_code ignored;
     fs::remove(temporary, ignored);
+    Check(!catalog.Load(temporary.wstring(), error), "missing catalog is rejected after a successful load");
+    Check(catalog.payloadHash == 0 && catalog.records.empty(),
+          "failed file reload clears stale catalog metadata");
 
     std::printf("unit_catalog_test: %d checks passed\n", g_checks);
     return 0;

@@ -10,7 +10,7 @@ from pathlib import Path
 import struct
 import zipfile
 
-from . import model
+from . import model, acquisition_sources
 
 ROOT=Path(__file__).resolve().parents[2]
 HOST='GOnline-54BE1568-00C97000'
@@ -267,13 +267,24 @@ def publish(workspace,state,selected,transaction):
     text=mod_manifest.decode('utf-8-sig')
     import re
     text=re.sub(r'(?m)^enabled\s*=.*$','enabled=1',text)
-    text=re.sub(r'(?m)^files\s*=.*$','files=symbols.fragment.ini,catalog.bin,definitions.json,resource-overlay.ini,resources.zdx,resources.zpk',text)
+    text=re.sub(r'(?m)^files\s*=.*$','files=symbols.fragment.ini,catalog.bin,definitions.json,blueprint-availability.json,blueprint-availability.bin,resource-overlay.ini,resources.zdx,resources.zpk',text)
+    availability={str(recipe['id']):{
+        'state':1 if (recipe['enabled'] and
+            state['drafts'][family['id']]['status']!='disabled') else 2,
+        'item_category_id':recipe['item_category_id'],'unit_id':family['root_unit_id']}
+        for family in published for recipe in family.get('blueprints',[])}
+    availability_document={'schema_version':1,'provider':'unit_catalog',
+        'revision':content_revision,'blueprints':availability}
+    catalog_payload_fnv=struct.unpack_from('<I',catalog,24)[0]
     files={prefix+'unit_catalog.dll':binary,prefix+'mod.ini':text.encode(),prefix+'catalog.bin':catalog,
         prefix+'manager.json':(ROOT/'mods/unit_catalog/manager.json').read_bytes(),
         prefix+'symbols.fragment.ini':symbols,
         prefix+'resource-overlay.ini':overlay_config,prefix+'resources.zdx':zdx,prefix+'resources.zpk':zpk,
         prefix+'definitions.json':json.dumps({'protocol':'sdgo.unit-family','schema_version':1,'revision':content_revision,
             'families':published,'registrations':registrations},ensure_ascii=False,indent=2).encode(),
+        prefix+'blueprint-availability.json':json.dumps(availability_document,ensure_ascii=False,indent=2).encode(),
+        prefix+'blueprint-availability.bin':acquisition_sources.encode_availability(
+            availability_document,catalog_payload_fnv),
         'symbols.fragment.ini':symbols,'Install-UnitCatalog.ps1':installer,
         'registrations.json':json.dumps({'schema_version':1,'provider':'unit_catalog','revision':content_revision,'items':registrations},ensure_ascii=False,indent=2).encode(),
         'blueprint-template-receipts.json':json.dumps({

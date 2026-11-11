@@ -6,6 +6,7 @@ from pathlib import Path
 
 INPUT = 'inputs/unit-scenario.json'
 SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0','UnitPresentationTarget':'0',
+    'UnitPresentationDetailOnly':'0',
     'CaptureNativeFrames':'0','CollectionPreviewOnly':'0','EarlyNavigationTarget':'off',
     'EarlyNavigationBeforeInventory':'0',
     'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
@@ -21,7 +22,7 @@ INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
 
 def validate(value, plan):
-    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','presentation_target','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe','native_record_lifecycle','early_navigation','early_navigation_before_inventory'}:
+    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','presentation_target','detail_only','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe','native_record_lifecycle','early_navigation','early_navigation_before_inventory'}:
         raise ValueError('invalid native unit scenario fields')
     if type(value.get('schema')) is not int or value['schema']!=1:
         raise ValueError('unsupported native unit scenario schema')
@@ -41,6 +42,11 @@ def validate(value, plan):
         if field!='activity_draw' or field in value:result[field]=flag
     if result['portraits'] and not result['capture_frames']:
         raise ValueError('native portraits require genuine frame capture')
+    if 'detail_only' in value:
+        if value['detail_only'] is not True or result['portraits'] or result['collection_preview'] or result.get('activity_draw') or any(
+                field in value for field in ('acquisition','activity_target','reward_pairs','blueprint','native_id_probe','native_record_lifecycle')):
+            raise ValueError('detail-only encyclopedia inspection cannot mix other unit-page scopes')
+        result['detail_only']=True
     early_fields=tuple(field for field in
         ('early_navigation','early_navigation_before_inventory') if field in value)
     if len(early_fields)>1:
@@ -155,6 +161,7 @@ def settings(value=None):
     result=dict(SETTINGS)
     if value is None:return result
     result.update(UnitPagesOnly='1',UnitPresentations='1',
+        UnitPresentationDetailOnly=str(int(value.get('detail_only',False))),
         UnitPresentationTarget=str(value.get('presentation_target',0)),
         UnitPortraits=str(int(value['portraits'])),CaptureNativeFrames=str(int(value['capture_frames'])),
         CollectionPreviewOnly=str(int(value['collection_preview'])),
@@ -206,6 +213,7 @@ def cases(value):
     if value.get('acquisition',{}).get('ui_preview_only'):
         return result+('pages.unit_acquisition',)
     result+=INDEX_CASES[:2]
+    if value.get('detail_only'):return result+INDEX_CASES[-1:]
     if value.get('native_id_probe'):return result[:4]+('catalog.native_id_occupancy',)
     if value.get('native_record_lifecycle'):return result[:4]
     if value.get('blueprint'):
@@ -242,7 +250,8 @@ def read(root, digest, plan, read_ini):
                 (key=='EarlyNavigationBeforeInventory' and
                  'early_navigation_before_inventory' not in value) or
                 (key=='UnitAcquisitionUiPreviewOnly' and
-                 not value.get('acquisition',{}).get('ui_preview_only'))):
+                 not value.get('acquisition',{}).get('ui_preview_only')) or
+                (key=='UnitPresentationDetailOnly' and not value.get('detail_only'))):
             fallback=SETTINGS.get(key)
         if config.get('settings',key,fallback=fallback)!=expected:
             raise ValueError('native unit observer settings disagree with sealed scenario: '+key)

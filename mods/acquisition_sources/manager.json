@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "acquisition_sources",
+  "title": "机体获得方式",
+  "category": "fixes",
+  "hosts": ["client"],
+  "settings": [],
+  "description": "在原生机体一览中汇总当前启用内容提供的获得方式。",
+  "mechanism": "保留原生说明，读取已加载功能提供的机体或设计图来源。未安装、停用或不支持联动的功能不提供对应来源。修改配置或内容后按提供方的应用方式生效。",
+  "presentation": "configurable"
+}

@@ -24,9 +24,10 @@ class ManagerGuiStartupContracts(unittest.TestCase):
             self.assertTrue((root/'manager-session.json').is_file())
 
     def test_existing_instance_can_reopen_with_invalid_gui_stdout(self):
-        lease=SimpleNamespace(file=None,existing_url=lambda:'http://127.0.0.1:12345/')
+        lease=SimpleNamespace(file=None,existing_url=lambda:'http://127.0.0.1:12345/',close=Mock())
         with patch.object(mod_manager,'Lease',return_value=lease),patch.object(mod_manager.sys,'stdout',InvalidGuiStdout()):
             mod_manager.main(['--no-browser'])
+        lease.close.assert_called_once()
 
 
 if __name__=='__main__':unittest.main()

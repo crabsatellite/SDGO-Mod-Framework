@@ -273,6 +273,7 @@ bool captureNativeFrames=false;
 bool unitPagesOnly=false;
 bool activityDrawOnce=false;
 bool testUnitPresentations=false;
+bool unitPresentationDetailOnly=false;
 uint32_t unitPresentationTarget=0;
 bool captureUnitPortraits=false;
 UnitPresentationsActions unitPresentations;
@@ -481,6 +482,8 @@ bool LoadPlan() {
     operatorSessionConfig.capture_frames=captureNativeFrames || testOperatorFlow;
     testUnitPresentations=GetPrivateProfileIntW(L"settings",L"UnitPresentations",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
+    unitPresentationDetailOnly=GetPrivateProfileIntW(L"settings",L"UnitPresentationDetailOnly",0,
+        (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str())==1;
     unitPresentationTarget=GetPrivateProfileIntW(L"settings",L"UnitPresentationTarget",0,
         (sdgo_test::directory+L"\\..\\mods\\game_test_client\\mod.ini").c_str());
     captureUnitPortraits=GetPrivateProfileIntW(L"settings",L"UnitPortraits",0,
@@ -669,6 +672,9 @@ bool LoadPlan() {
     if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
     if(ocPanel && (!playUnitUid || (ocAllocateStat<0 && !hangarPagesOnly)))return false;
     if(testUnitPresentations && !playUnitUid)return false;
+    if(unitPresentationDetailOnly && (!pagesOnly || !unitPagesOnly || !testUnitPresentations || captureUnitPortraits ||
+        collectionPreviewOnly || unitAcquisitionConfig.machine_kind || blueprintConfig.recipe ||
+        !nativeIdProbeIds.empty() || !nativeRecordLifecycleIds.empty()))return false;
     if(unitAcquisitionUiPreviewOnly && (!unitPagesOnly || !playUnitUid))return false;
     if(unitPagesOnly && (!pagesOnly || (!testUnitPresentations && !blueprintConfig.recipe &&
         nativeIdProbeIds.empty() && nativeRecordLifecycleIds.empty() &&
@@ -5061,6 +5067,7 @@ int __cdecl ImportedIndex(const SdgoGameTestContextV1* context) {
 }
 int __cdecl ImportedDetail(const SdgoGameTestContextV1* context) {
     const auto result=unitPresentations.OpenDetail();
+    if(result==UnitPresentationsActions::Ready && HoldReviewPage(context))return SDGO_GAME_TEST_WAIT;
     static bool requested=false;
     if(captureNativeFrames && result==UnitPresentationsActions::Ready) {
         if(!requested) {
@@ -5909,6 +5916,9 @@ std::vector<SdgoGameTestCaseV1> plannedCases;
 void AppendUnitPresentations() {
     if(!testUnitPresentations)return;
     plannedCases.insert(plannedCases.end(),std::begin(unitPresentationCases),std::begin(unitPresentationCases)+2);
+    if(unitPresentationDetailOnly) {
+        plannedCases.push_back(unitPresentationCases[4]);return;
+    }
     if(captureUnitPortraits)plannedCases.insert(plannedCases.end(),std::begin(portraitCases),std::end(portraitCases));
     plannedCases.insert(plannedCases.end(),std::begin(unitPresentationCases)+2,std::end(unitPresentationCases));
 }

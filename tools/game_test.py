@@ -4004,6 +4004,11 @@ def prepare(
         except ValueError as error:
             raise GameTestError(str(error)) from error
     if unit_scenario is not None:
+        if isinstance(unit_scenario,dict) and unit_scenario.get('detail_only'):
+            observer=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
+            match=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',observer)
+            if not match or tuple(map(int,match.groups()))<(0,1,34):
+                raise GameTestError('detail-only encyclopedia inspection requires native observer 0.1.34 or newer')
         try:plan.update(unit_scenarios.bind(unit_scenario,plan))
         except ValueError as error:raise GameTestError(str(error)) from error
     run_dir.parent.mkdir(parents=True, exist_ok=True)
