@@ -163,7 +163,7 @@ class CatalogTests(unittest.TestCase):
         selected=catalog.select_catalog(source,features=['operator-assistant'])
         mod=next(m for m in selected['mods'] if m['id']=='operator_catalog')
         self.assertEqual(mod['target'],'client')
-        self.assertEqual(set(mod['config_files']),{'display.ini','definitions.json','manifest.json'})
+        self.assertEqual(set(mod['config_files']),{'display.ini','definitions.json','manifest.json','acquisition-sources.json','acquisition-sources.bin'})
         self.assertTrue(all(m['category']=='fixes' or m['id'] in {'operator_catalog','operator_catalog_server'} for m in selected['mods']))
         self.assertNotIn('operator_catalog',{m['id'] for m in catalog.select_catalog(source,'base')['mods']})
 

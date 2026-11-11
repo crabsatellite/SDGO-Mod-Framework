@@ -35,6 +35,10 @@ _MODULE_REQUIRED = {
     "operator_catalog.dll", "mod.ini", "manager.json", "display.ini",
     "definitions.json", "display.example.ini", "manifest.json",
 }
+_ACQUISITION_FILES = {
+    "acquisition-sources.json", "acquisition-sources.bin",
+}
+_MODULE_ALLOWED = _MODULE_REQUIRED | _ACQUISITION_FILES
 _GENERATED_EXCLUDED = {
     "operator_catalog.dll", "mod.ini", "manager.json", "manifest.json",
 }
@@ -341,6 +345,9 @@ def _validate_package(revision, payload):
     if not set(module).issuperset(_MODULE_REQUIRED):
         missing = sorted(_MODULE_REQUIRED - set(module))
         raise ValueError("副官模块包缺少客户端文件：" + "、".join(missing))
+    acquisition_files = set(module).intersection(_ACQUISITION_FILES)
+    if acquisition_files not in (set(), _ACQUISITION_FILES):
+        raise ValueError("副官获得方式文件必须成对提供")
     dlls = [name for name in module if Path(name).suffix.casefold() == ".dll"]
     if dlls != ["operator_catalog.dll"]:
         raise ValueError("副官模块 DLL 名称无效")
@@ -378,8 +385,12 @@ def _validate_package(revision, payload):
     config_files = set(_csv(mod, "config_files"))
     if declared_files != {"display.example.ini", "manager.json", "manifest.json"}:
         raise ValueError("副官 Mod 运行文件声明无效")
-    if config_files != {"display.ini", "definitions.json", "manifest.json"}:
+    base_config_files = {"display.ini", "definitions.json", "manifest.json"}
+    expected_config_files = base_config_files | acquisition_files
+    if config_files != expected_config_files:
         raise ValueError("副官 Mod 配置文件声明无效")
+    if not acquisition_files and mod.get("mod", "version", fallback="") != "0.2.0":
+        raise ValueError("当前副官模块包缺少获得方式文件")
     expected_resources, expected_packs = _resource_declarations(
         module["definitions.json"]
     )
@@ -387,7 +398,7 @@ def _validate_package(revision, payload):
     source_packs = set()
     for relative, data in module.items():
         if not relative.startswith("assets/"):
-            if relative not in _MODULE_REQUIRED:
+            if relative not in _MODULE_ALLOWED:
                 raise ValueError("副官模块包包含未知客户端文件：" + relative)
             continue
         if relative.startswith("assets/imports/"):

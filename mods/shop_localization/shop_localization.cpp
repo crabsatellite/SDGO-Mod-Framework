@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "sdgo/sdgo_api.h"
+#include "sdgo/acquisition_sources_file.h"
 #include "sdgo/content_localization_boundary.h"
 #include "dictionary.h"
 #include "sites.h"
@@ -25,6 +26,7 @@ Dictionary g_words;
 std::vector<uintptr_t> g_returns, g_optionReturns, g_productReturns;
 bool g_names = true, g_descriptions = true, g_options = true;
 bool g_interfaces = true, g_ready = false, g_searchChinese = true;
+sdgo::acquisition_sources_file::SourceFile g_acquisitionSources;
 thread_local std::wstring g_optionText;
 CustomProducts g_custom;
 const SdgoApi* g_api=nullptr;SdgoMod* g_mod=nullptr;
@@ -249,6 +251,14 @@ bool WriteTranslation(wchar_t* output, const std::wstring& value)
 
 // Optional C ABI for other Mods. Required capacity includes NUL; a query or
 // undersized buffer is never written. No C++ object crosses the DLL boundary.
+extern "C" __declspec(dllexport) std::uint32_t __cdecl
+SdgoAcquisitionSourcesV1(const SdgoAcquisitionRequestV1* request,
+                         const SdgoAcquisitionSinkV1* sink)
+{
+    return g_ready ? g_acquisitionSources.Query(request, sink)
+                   : SDGO_ACQUISITION_UNAVAILABLE;
+}
+
 extern "C" __declspec(dllexport) uint32_t __cdecl SdgoLocalizationLookupV1(
     uint32_t kind, uint32_t stableId, const wchar_t* source, uint32_t sourceChars,
     wchar_t* output, uint32_t outputChars)
@@ -270,8 +280,16 @@ SDGO_MOD_ENTRY
     g_ready = false;
     if (!api || api->version != 1 || !api->Symbol || !api->HookCode || !api->ModDirectory || !api->SettingInt || !api->Log) return 0;
     try {
-        g_words = Load(api->ModDirectory(mod));
-        g_api=api;g_mod=mod;g_custom.Read(api->ModDirectory(mod));
+        const wchar_t* directory = api->ModDirectory(mod);
+        std::string acquisitionError;
+        g_acquisitionSources.Load(
+            std::wstring(directory) + L"\\acquisition-sources.bin",
+            sdgo::acquisition_sources_file::kShopProvider, &acquisitionError);
+        if (g_acquisitionSources.status() == SDGO_ACQUISITION_INCOMPLETE)
+            api->Log(mod, SDGO_LOG_WARN, "shop acquisition sources ignored: %s",
+                     acquisitionError.c_str());
+        g_words = Load(directory);
+        g_api=api;g_mod=mod;g_custom.Read(directory);
         if(!g_custom.Empty()&&!g_custom.Bind(api,mod))return 0;
         g_names = api->SettingInt(mod, "TranslateNames", 1) != 0;
         g_descriptions = api->SettingInt(mod, "TranslateDescriptions", 1) != 0;

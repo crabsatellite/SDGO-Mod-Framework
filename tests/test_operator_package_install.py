@@ -107,6 +107,7 @@ def package(
     manager_overrides=None,
     symbol_fragment=None,
     tamper=None,
+    acquisition="both",
 ):
     if assets is None:
         assets, default_operator = resource_files()
@@ -114,6 +115,16 @@ def package(
     else:
         assets = dict(assets)
         operators = [] if operators is None else operators
+    if acquisition not in ("both", "none", "json", "bin"):
+        raise ValueError("invalid acquisition fixture mode")
+    acquisition_names = {
+        "both": ["acquisition-sources.json", "acquisition-sources.bin"],
+        "none": [],
+        "json": ["acquisition-sources.json"],
+        "bin": ["acquisition-sources.bin"],
+    }[acquisition]
+    config_files = ["display.ini", "definitions.json", "manifest.json"]
+    config_files.extend(acquisition_names)
     mod = {
         "distribution": "public",
         "id": "operator_catalog",
@@ -121,7 +132,8 @@ def package(
         "hosts": HOST,
         "requires": ",".join(sorted(install_package.TRUSTED_SYMBOLS)),
         "files": "display.example.ini,manager.json,manifest.json",
-        "config_files": "display.ini,definitions.json,manifest.json",
+        "config_files": ",".join(config_files),
+        "version": "0.2.0" if acquisition == "none" else "0.2.1",
         "enabled": "1",
     }
     for key, value in (mod_overrides or {}).items():
@@ -149,6 +161,14 @@ def package(
         "display.example.ini": b"[catalog]\nVersion=2\n",
         **assets,
     }
+    source_files = {
+        "acquisition-sources.json": b'{"schema_version":1,"blueprints":{}}\n',
+        "acquisition-sources.bin": (
+            b"SDGOAS1\0" + struct.pack("<6I", 1, 32, 0, 0, 2166136261, 2)
+        ),
+    }
+    for name in acquisition_names:
+        module[name] = source_files[name]
     generated = {
         name: {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
         for name, raw in module.items()
@@ -277,6 +297,13 @@ class OperatorPackageInstallTests(unittest.TestCase):
 
         result = self.install(raw)
 
+        self.assertTrue((module / "acquisition-sources.json").is_file())
+        self.assertTrue((module / "acquisition-sources.bin").is_file())
+        ownership = install_package._inner_manifest(
+            (module / "manifest.json").read_bytes())
+        self.assertTrue(
+            {"acquisition-sources.json", "acquisition-sources.bin"}.issubset(
+                ownership["files"]))
         installed = storage.ini_values((module / "mod.ini").read_bytes())
         self.assertEqual(installed["mod"]["enabled"], "0")
         self.assertEqual(installed["settings"]["enabled"], "0")
@@ -310,6 +337,25 @@ class OperatorPackageInstallTests(unittest.TestCase):
         self.assertEqual(result["activation"], "restart_required")
         self.assertEqual(result["state"]["fixture"], "state")
         self.assertFalse((self.root / "Install-Operator.ps1").exists())
+
+    def test_accepts_legacy_020_package_without_optional_acquisition_sources(self):
+        raw, _revision = package(acquisition="none")
+        result = self.install(raw)
+        module = self.root / "sdgo/mods/operator_catalog"
+        self.assertGreater(result["installed_files"], 0)
+        self.assertFalse((module / "acquisition-sources.json").exists())
+        self.assertFalse((module / "acquisition-sources.bin").exists())
+        manifest = install_package._inner_manifest(
+            (module / "manifest.json").read_bytes())
+        self.assertNotIn("acquisition-sources.json", manifest["files"])
+        self.assertNotIn("acquisition-sources.bin", manifest["files"])
+
+    def test_rejects_packages_with_only_one_acquisition_source_file(self):
+        for mode in ("json", "bin"):
+            with self.subTest(mode=mode):
+                raw, _revision = package(acquisition=mode)
+                with self.assertRaisesRegex(ValueError, "获得方式文件必须成对提供"):
+                    self.install(raw)
 
     def test_accepts_current_workspace_legacy_public_pairing(self):
         raw, _revision = package(mod_overrides={"distribution": None})

@@ -14,6 +14,8 @@ currency, quantity or rental days and listing, then **保存商品** (save). Cha
 **应用到游戏** (apply to game). Retired offers keep their IDs and purchase history. JSON import/export
 contains no credentials or local paths.
 
+After a successful apply, the selected client receives acquisition data for actually visible unit and blueprint offers, distinguishing purchases from rentals and removing unlisted sources. Distribute that data with the client update; players with [unit acquisition sources](acquisition-sources.md) enabled can see it in the encyclopedia. This integration is optional and does not affect shop purchases when the acquisition Mod is absent.
+
 The WorldServer module (`548A86E3-0010C000`) starts disabled until configured and is installed once with
 the standalone `Install.ps1`. It updates only its own single-item offers in a transaction and keeps native
 listing, billing and delivery; accounts, balances, inventory and history are untouched. Prices must be

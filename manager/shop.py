@@ -7,11 +7,14 @@ import json
 import os
 from pathlib import Path
 import re
+import struct
 import subprocess
 import threading
 import zipfile
 from .providers import Provider, Binary
 from . import storage
+from .engines.operators import assets as native_assets
+from owner.units import acquisition_sources as acquisition_protocol
 
 
 PACKAGE_FILES = {
@@ -21,6 +24,176 @@ PACKAGE_FILES = {
 }
 MAX_PACKAGE_FILE = 32 * 1024 * 1024
 INT_MAX = 2147483647
+ACQUISITION_MAXIMUM_BYTES = 8 * 1024 * 1024
+
+
+def _shop_category_details(client: Path):
+    units = {}
+    blueprints = {}
+    try:
+        rows = native_assets.Assets(client).records('gdrs/0031.gdt', native_assets.ITEM_SIZE)
+        for category_id, raw in rows.items():
+            category_class = int(category_id) // 100000
+            stable_id = int.from_bytes(raw[105:109], 'little')
+            if stable_id <= 0:
+                continue
+            if category_class == 11 and raw[109] in (0, 1):
+                units[int(category_id)] = (stable_id, int(raw[109]))
+            elif category_class == 15 and raw[109] == 0:
+                blueprints[int(category_id)] = stable_id
+    except (OSError, ValueError, KeyError, TypeError, UnicodeDecodeError, struct.error):
+        pass
+    definitions = client / 'sdgo/mods/unit_catalog/definitions.json'
+    try:
+        if definitions.is_symlink() or not definitions.is_file():
+            return units, blueprints
+        resolved = definitions.resolve()
+        if not resolved.is_relative_to(client) or resolved.stat().st_size > ACQUISITION_MAXIMUM_BYTES:
+            return units, blueprints
+        value = json.loads(resolved.read_text(encoding='utf-8-sig'))
+        if not isinstance(value, dict) or value.get('protocol') != 'sdgo.unit-family' or value.get('schema_version') != 1:
+            return units, blueprints
+        registrations = value.get('registrations')
+        if not isinstance(registrations, list):
+            return units, blueprints
+        for registration in registrations:
+            if not isinstance(registration, dict) or registration.get('enabled') is not True:
+                continue
+            category_id = registration.get('category_id')
+            unit_id = registration.get('unit_id')
+            if (type(category_id) is int and type(unit_id) is int and
+                    0 < category_id <= 0xffffffff and category_id // 100000 == 11 and
+                    0 < unit_id <= 0xffffffff):
+                units[category_id] = (unit_id, 0)
+            for blueprint in registration.get('blueprints', ()):
+                if not isinstance(blueprint, dict) or blueprint.get('enabled') is not True:
+                    continue
+                recipe_id = blueprint.get('id')
+                item_category_id = blueprint.get('item_category_id')
+                if (type(recipe_id) is int and type(item_category_id) is int and
+                        0 < recipe_id <= 0xffffffff and
+                        0 < item_category_id <= 0xffffffff and
+                        item_category_id // 100000 == 15):
+                    blueprints[item_category_id] = recipe_id
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return units, blueprints
+
+
+def _shop_category_maps(client: Path) -> tuple[dict[int, int], dict[int, int]]:
+    unit_details, blueprints = _shop_category_details(client)
+    return {category: value[0] for category, value in unit_details.items()}, blueprints
+
+
+def _blueprint_category_map(client: Path) -> dict[int, int]:
+    return _shop_category_maps(client)[1]
+
+
+def _shop_acquisition_sources(client: Path, active_products, source: str) -> bytes:
+    if source not in ('store_billing_visible_readback', 'demo_visible_readback'):
+        raise ValueError('商城有效商品来源无效')
+    if not isinstance(active_products, list) or len(active_products) > 100000:
+        raise ValueError('商城有效商品 readback 无效或超过容量')
+    normalized = []
+    seen = set()
+    for product in active_products:
+        if not isinstance(product, dict):
+            raise ValueError('商城有效商品条目无效')
+        values = tuple(product.get(key) for key in ('ProductId', 'OptionId', 'Category', 'Validity'))
+        if any(type(value) is not int or not 0 < value <= INT_MAX for value in values):
+            raise ValueError('商城有效商品编号或有效期无效')
+        identity = values[:2]
+        if identity in seen:
+            raise ValueError('商城有效商品 readback 含重复选项')
+        seen.add(identity)
+        normalized.append({
+            'product_id': values[0], 'option_id': values[1],
+            'category_id': values[2], 'validity': values[3],
+        })
+    normalized.sort(key=lambda row: (row['product_id'], row['option_id']))
+    revision = hashlib.sha256(storage.json_bytes({
+        'source': source, 'products': normalized,
+    })).hexdigest()
+
+    unit_categories, blueprint_categories = _shop_category_details(client)
+    units = {}
+    recipes = set()
+    mapped = 0
+    for product in normalized:
+        category_id = product['category_id']
+        unit = unit_categories.get(category_id)
+        if unit is not None:
+            unit_id, time_limit = unit
+            mode = 'rental' if time_limit == 1 else 'purchase'
+            units.setdefault(unit_id, {})[mode] = {
+                'key': f'shop:unit:{unit_id}:{mode}',
+                'text': '商城租用' if mode == 'rental' else '商城购买',
+            }
+            mapped += 1
+        recipe_id = blueprint_categories.get(category_id)
+        if recipe_id is not None:
+            recipes.add(recipe_id)
+            mapped += 1
+    value = {
+        'schema_version': 1,
+        'provider': 'shop_localization',
+        'revision': revision,
+        'provenance': {
+            'source': source,
+            'active_product_options': len(normalized),
+            'mapped_unit_or_blueprint_options': mapped,
+        },
+        'units': {
+            str(unit_id): [modes[key] for key in sorted(modes)]
+            for unit_id, modes in sorted(units.items())
+        },
+        'blueprints': {
+            str(recipe_id): [{
+                'key': 'shop:blueprint:' + str(recipe_id),
+                'text': '商城购买',
+            }]
+            for recipe_id in sorted(recipes)
+        },
+    }
+    return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
+
+
+def _install_acquisition_sidecars(folder: Path, source_json: bytes, provider: int):
+    folder = Path(folder)
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError('客户端获得方式目录无效')
+    source_document = json.loads(source_json)
+    files = {
+        folder / 'acquisition-sources.json': source_json,
+        folder / 'acquisition-sources.bin': acquisition_protocol.encode_sources(
+            source_document, provider),
+    }
+    previous = {}
+    written = []
+    with storage.LOCK:
+        for path in files:
+            if path.is_symlink():
+                raise ValueError('客户端获得方式文件不能使用链接')
+            previous[path] = path.read_bytes() if path.is_file() else None
+        try:
+            for path, raw in files.items():
+                storage.atomic(path, raw)
+                written.append(path)
+        except Exception as error:
+            rollback = []
+            for path in reversed(written):
+                try:
+                    if previous[path] is None:
+                        storage.remove(path)
+                    else:
+                        storage.atomic(path, previous[path])
+                except Exception as rollback_error:
+                    rollback.append(str(rollback_error))
+            message = '客户端获得方式文件更新失败：' + str(error)
+            if rollback:
+                message += '；回滚未完成：' + '；'.join(rollback)
+            raise ValueError(message) from None
+    return source_document
 
 
 def _read_file(path: Path, label: str, client: Path) -> bytes:
@@ -192,7 +365,8 @@ def _symbol_fragment(client: Path, manifests: dict[str, object], host: str) -> b
         raise ValueError('所选客户端的符号表包含非 ASCII 数据') from None
 
 
-def client_package(client_value: str, shop_revision: str) -> bytes:
+def client_package(client_value: str, shop_revision: str, active_products,
+                   active_products_source: str, preflight_only: bool = False) -> bytes:
     if not client_value:
         raise ValueError('请先选择已安装商城 Mod 的客户端')
     if not re.fullmatch(r'[0-9a-f]{64}', shop_revision or ''):
@@ -223,7 +397,16 @@ def client_package(client_value: str, shop_revision: str) -> bytes:
         _validate_dictionary(payload['client/sdgo/mods/shop_localization/zh-CN.ini'])
         published_revision = _validate_display(payload['client/sdgo/mods/shop_labels/display.ini'])
         host = next(iter(hosts))
-        payload['symbols.fragment.ini'] = _symbol_fragment(client, manifests, host)
+        symbols = _symbol_fragment(client, manifests, host)
+        if preflight_only:
+            return b''
+        source_json = _shop_acquisition_sources(
+            client, active_products, active_products_source)
+        source_document = json.loads(source_json)
+        payload['client/sdgo/mods/shop_localization/acquisition-sources.json'] = source_json
+        payload['client/sdgo/mods/shop_localization/acquisition-sources.bin'] = acquisition_protocol.encode_sources(
+            source_document, acquisition_protocol.SHOP_PROVIDER)
+        payload['symbols.fragment.ini'] = symbols
     versions = {identity: manifests[identity].get('mod', 'version', fallback='') for identity in manifests}
     hashes = {name: hashlib.sha256(data).hexdigest() for name, data in sorted(payload.items())}
     package_revision = hashlib.sha256(storage.json_bytes(hashes)).hexdigest()
@@ -234,6 +417,8 @@ def client_package(client_value: str, shop_revision: str) -> bytes:
         'host': host,
         'shop_revision': shop_revision,
         'published_revision': published_revision,
+        'acquisition_revision': source_document['revision'],
+        'acquisition_provenance': source_document['provenance'],
         'package_revision': package_revision,
         'mods': versions,
         'files': hashes,
@@ -424,6 +609,41 @@ def _decorate_shop_state(value, operator_registrations, unit_imports):
 class Shop(Provider):
     id, title = 'shop', '商城商品'
     fields = {'workspace':'现有商城配置目录','world':'WorldServer 目录','client':'客户端目录（显示标签更新）','demo':'演示模式（仅测试时填 1）'}
+
+    def _effective_applied(self):
+        bridge = self.workspace.services.resource('shop.bridge', Bridge)
+        return bridge.call({**self.config, 'action':'read-effective', 'body':{}, 'revision':''})
+
+    def applied_acquisition_sources(self, client_value=None):
+        client_value = client_value if client_value is not None else self.config.get('client', '')
+        if not client_value:
+            raise ValueError('请先选择客户端以解析商城物品类别')
+        client = Path(client_value).resolve()
+        if not client.is_dir() or not (client / 'GOnline.exe').is_file():
+            raise ValueError('所选目录不是可用的游戏客户端')
+        applied = self._effective_applied()
+        return json.loads(_shop_acquisition_sources(
+            client, applied.get('active_products'),
+            applied.get('active_products_source')))
+
+    def _install_applied_acquisition_sources(self, value):
+        client_value = self.config.get('client', '')
+        if not client_value:
+            return None
+        client = Path(client_value).resolve()
+        source_json = _shop_acquisition_sources(
+            client, value.get('active_products'),
+            value.get('active_products_source'))
+        document = _install_acquisition_sidecars(
+            client / 'sdgo/mods/shop_localization', source_json,
+            acquisition_protocol.SHOP_PROVIDER)
+        return {
+            'revision': document['revision'],
+            'provenance': document['provenance'],
+            'client_installed': True,
+            'restart_required': True,
+        }
+
     def request(self, method, path, body, headers):
         with self.lock:
             return self._request_locked(method, path, body, headers)
@@ -431,8 +651,16 @@ class Shop(Provider):
     def _request_locked(self, method, path, body, headers):
         if not self.config.get('workspace'): raise ValueError('请先选择商城配置工作区')
         if method=='GET' and path=='/api/shop/client-package':
-            return Binary(client_package(self.config.get('client',''),headers.get('X-Shop-Revision','')),
-                          'application/zip','SDGO-shop-client-update.zip')
+            client_value = self.config.get('client','')
+            revision = headers.get('X-Shop-Revision','')
+            # Validate all local package inputs before opening the read-only DB bridge.
+            client_package(client_value, revision, [],
+                           'store_billing_visible_readback', preflight_only=True)
+            applied = self._effective_applied()
+            return Binary(client_package(
+                client_value, revision, applied.get('active_products'),
+                applied.get('active_products_source')),
+                'application/zip','SDGO-shop-client-update.zip')
         bridge = self.workspace.services.resource('shop.bridge', Bridge)
         action = 'read' if method=='GET' else path.rsplit('/',1)[-1]
         if method == 'GET' and path.endswith('/export'):
@@ -503,6 +731,13 @@ class Shop(Provider):
                 raise update_error
         else:
             value=bridge.call({**self.config,'action':action,'body':body,'revision':headers.get('X-Shop-Revision','')})
+            if action == 'apply':
+                try:
+                    publication = self._install_applied_acquisition_sources(value)
+                except Exception as error:
+                    raise ValueError('商城服务器应用已完成，但客户端获得方式发布失败：' + str(error)) from None
+                if publication is not None:
+                    value['acquisition_sources'] = publication
         for item in value.get('items', []):
             if str(item['Id']) in unit_imports:
                 item['Name'] = unit_imports[str(item['Id'])]['display_name']

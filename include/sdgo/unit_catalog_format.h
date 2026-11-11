@@ -130,9 +130,11 @@ struct Entry {
 class Catalog {
 public:
     std::vector<Entry> records;
+    uint32_t payloadHash = 0;
 
     bool Parse(const std::vector<uint8_t>& file, std::string& error) {
         records.clear();
+        payloadHash = 0;
         if (file.size() < sizeof(Header)) return Fail(error, "short unit catalog header");
 
         Header header{};
@@ -189,10 +191,13 @@ public:
         }
         if (cursor != file.size()) return Fail(error, "unit catalog has trailing payload bytes");
         records.swap(parsed);
+        payloadHash = header.payloadHash;
         return true;
     }
 
     bool Load(const std::wstring& path, std::string& error) {
+        records.clear();
+        payloadHash = 0;
         FILE* stream = nullptr;
         if (_wfopen_s(&stream, path.c_str(), L"rb") || !stream)
             return Fail(error, "catalog.bin is missing or unreadable");

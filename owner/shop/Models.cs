@@ -51,10 +51,15 @@ namespace Sdgo.Shop
         public string Sku;
         public bool Visible;
     }
+    public sealed class ActiveProduct
+    {
+        public int ProductId,OptionId,Category,Validity;
+    }
     public sealed class Snapshot
     {
         public List<Item> Items=new List<Item>();
         public List<Template> Templates=new List<Template>();
+        public List<ActiveProduct> ActiveProducts=new List<ActiveProduct>();
         public HashSet<int> ProductIds=new HashSet<int>();
         public HashSet<string> Skus=new HashSet<string>();
     }

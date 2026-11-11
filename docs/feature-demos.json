@@ -161,6 +161,18 @@
       "title_en": "Mission Aces: pilot names and unchanged enemy labels",
       "guide_zh": "docs/ace-ai.zh-CN.md",
       "guide_en": "docs/ace-ai.md"
+    },
+    {
+      "id": "acquisition-sources",
+      "path": "docs/acquisition-sources-demo.webp",
+      "since": "1.16.22",
+      "mods": [
+        "acquisition_sources"
+      ],
+      "title_zh": "机体一览：商城、设计图与副官获得方式",
+      "title_en": "Unit encyclopedia: shop, blueprint and adjutant sources",
+      "guide_zh": "docs/acquisition-sources.zh-CN.md",
+      "guide_en": "docs/acquisition-sources.md"
     }
   ]
 }

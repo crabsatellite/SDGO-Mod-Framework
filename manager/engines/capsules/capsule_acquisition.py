@@ -10,6 +10,7 @@ FILE = 'capsule-acquisition.bin'
 MARKER = b'SDGO_CAPSULE_ACQUISITION_V1'
 MAGIC = b'SDGOCAS1'
 MAX_UNITS = 20000
+MAX_TEXT_CHARACTERS = 2048
 LABELS = {'activity': '活动扭蛋机', 'fixed': '普通扭蛋机',
           'coin': '代币扭蛋机', 'custom': '自定义扭蛋机'}
 
@@ -74,6 +75,21 @@ def _characters(text):
     return len(text.encode('utf-16-le')) // 2
 
 
+def _source_text(values):
+    parts = []
+    for kind in LABELS:
+        rows = [row for row in values if row['kind'] == kind]
+        numbers = [row['display_number'] for row in rows if row['display_number'] is not None]
+        if numbers:
+            parts.append(LABELS[kind] + _ranges(numbers) + '号')
+        parts.extend(LABELS[kind] + '：' + row['name']
+                     for row in rows if row['display_number'] is None)
+    first = next(row for kind in LABELS for row in values if row['kind'] == kind)
+    brief = LABELS[first['kind']] + (str(first['display_number']) + '号'
+            if first['display_number'] is not None else '：' + first['name'])
+    return '；'.join(parts), brief
+
+
 def encode(catalog, item_rows):
     """Use active pools, including every unit reward, without reading player state."""
     categories = {}
@@ -100,9 +116,11 @@ def encode(catalog, item_rows):
         sources[unit][kind, mid] = {'kind': kind, 'machine_id': mid,
             'display_number': number, 'name': name}
 
-    # The native panel already derives ordinary and custom-machine sources
-    # from their native tables. +214 is its event-source section: supplement
-    # activities there rather than duplicating ordinary sources as events.
+    # The native panel already derives numbered ordinary-machine sources from
+    # its native tables. Its custom-machine label is generic, so publish custom
+    # identities here as the actual player-visible machine numbers.
+    # +214 is its event-source section: supplement activities there rather than
+    # duplicating ordinary sources as events.
     # Drafts are deliberately absent: only applied activity declarations belong
     # to the capsule publication, and the full pool can contain several units.
     for machine in catalog.get('activity_machines', []):
@@ -113,30 +131,38 @@ def encode(catalog, item_rows):
                 unit = categories.get(reward['category_id'])
                 if unit is not None:
                     add(unit, 'activity', machine)
+    for machine in catalog.get('custom_machines', []):
+        if machine.get('retired', False) or machine.get('enabled') is False:
+            continue
+        for candidate in machine.get('candidates', []):
+            if candidate.get('basic_weight', 0) > 0:
+                add(candidate.get('unit_id'), 'custom', machine)
     if len(sources) > MAX_UNITS:
         raise ValueError('Capsule acquisition hints exceed the unit limit')
     entries = []
-    raw = bytearray(struct.pack('<8sII', MAGIC, 1, len(sources)))
+    raw = bytearray(struct.pack('<8sII', MAGIC, 2, len(sources)))
     for unit, found in sorted(sources.items()):
         values = sorted(found.values(), key=lambda r: (list(LABELS).index(r['kind']), r['machine_id']))
-        parts = []
-        for kind in LABELS:
-            rows = [r for r in values if r['kind'] == kind]
-            numbers = [r['display_number'] for r in rows if r['display_number'] is not None]
-            if numbers:
-                parts.append(LABELS[kind] + _ranges(numbers) + '号')
-            parts.extend(LABELS[kind] + '：' + r['name'] for r in rows if r['display_number'] is None)
-        first = next(r for kind in LABELS for r in values if r['kind'] == kind)
-        brief = LABELS[first['kind']] + (str(first['display_number']) + '号'
-                if first['display_number'] is not None else '：' + first['name'])
-        if _characters(brief) >= 100:
-            raise ValueError('Capsule acquisition name exceeds the native text field')
-        text = '；'.join(parts)
-        if _characters(text) >= 100:
-            text = brief
-        full, short = text.encode('utf-16-le'), brief.encode('utf-16-le')
-        raw += struct.pack('<III', unit, len(full) // 2, len(short) // 2) + full + short
-        entries.append({'unit_id': unit, 'text': text, 'brief': brief,
+        text, _ = _source_text(values)
+        if _characters(text) > MAX_TEXT_CHARACTERS:
+            raise ValueError('Capsule acquisition display text exceeds the protocol limit')
+        # The record patch remains the activity-only compatibility path. The
+        # native panel already contributes its generic custom label; concrete
+        # custom numbers belong to the optional display consumer so they are
+        # neither duplicated nor constrained by the 100-character GDT field.
+        legacy_values = [row for row in values if row['kind'] == 'activity']
+        if legacy_values:
+            legacy_text, brief = _source_text(legacy_values)
+            if _characters(brief) >= 100:
+                raise ValueError('Capsule acquisition name exceeds the native text field')
+            legacy = legacy_text if _characters(legacy_text) < 100 else brief
+        else:
+            legacy = brief = ''
+        display = text.encode('utf-16-le')
+        full, short = legacy.encode('utf-16-le'), brief.encode('utf-16-le')
+        raw += struct.pack('<IIII', unit, len(display) // 2, len(full) // 2,
+                           len(short) // 2) + display + full + short
+        entries.append({'unit_id': unit, 'text': text, 'legacy_text': legacy, 'brief': brief,
                         'sources': sorted(values, key=lambda r: (r['kind'], r['machine_id']))})
-    return bytes(raw), {'schema_version': 1, 'unit_count': len(entries), 'entries': entries,
-                       'scope': 'completed-product sources; existing sources and blueprint fields retained'}
+    return bytes(raw), {'schema_version': 2, 'unit_count': len(entries), 'entries': entries,
+                       'scope': 'completed-product capsule sources; existing sources and blueprint fields retained'}

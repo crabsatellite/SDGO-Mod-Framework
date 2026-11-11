@@ -21,6 +21,8 @@ registered on both client and server; blueprint aliases are deduplicated by reci
 or materials are excluded. Existing workspaces can add the default pack with a
 [command-line tool](#command-line-tools).
 
+Applied, enabled blueprint drop rules also contribute client acquisition data naming the officer. Once distributed with the client update, [unit acquisition sources](acquisition-sources.md) shows those drops alongside the corresponding unit's blueprint. Disabling the rule or officer removes its contribution. The integration is optional and preserves the officer's drop rules.
+
 The five use fixed Chinese names and skip the naming prompt. Existing names are backed up first, and
 other operators keep the native naming flow. Existing holdings are upgraded in place to permanent use
 while preserving operator IDs, slots, and equipped references. All five can equip mission parts. They
