@@ -951,6 +951,27 @@ void TestOperatorShopReturn(SdgoApi& api, NativeActions& native)
           "native hangar reply restores its unit viewer before inventory readback");
 }
 
+// A case that left the reached hangar for the Game Room (e.g. the OC create
+// window check) and a later one that needs the hangar again (the OC panel).
+void TestHangarReentryFromGameRoom(SdgoApi& api, NativeActions& native)
+{
+    ResetFixture(6);
+    HangarNavigation navigation;
+    Check(BindNavigation(navigation, api, native) &&
+              navigation.EnsureHangar() == HangarNavigation::kOpeningHangar && g_downmenuCalls == 1,
+          "the first hangar entry uses the original request");
+    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 5;
+    g_mainframeVisible = true;
+    g_unitManagerVisible = true;
+    Check(navigation.EnsureHangar() == HangarNavigation::kReady, "the first entry reached the hangar");
+    *reinterpret_cast<uint32_t*>(g_app + 0x4A0) = 6;
+    g_unitManagerVisible = false;
+    Check(navigation.EnsureHangar() == HangarNavigation::kOpeningHangar && g_downmenuCalls == 2,
+          "a later entry from the Game Room sends a new original hangar request");
+    Check(navigation.EnsureHangar() == HangarNavigation::kWaitingForHangar && g_downmenuCalls == 2,
+          "the new request is not repeated while it is pending");
+}
+
 void TestDefaultAndImmediateConstruction(
     SdgoApi& api,
     NativeActions& native)
@@ -1334,6 +1355,7 @@ int main()
         TestBottomRadioValidation(api,native);
         TestExplicitUnitViewerReentry(api,native);
         TestOperatorShopReturn(api,native);
+        TestHangarReentryFromGameRoom(api,native);
     }
 
     DestroyNativeString(

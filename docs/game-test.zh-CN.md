@@ -179,6 +179,36 @@ Windows 上若上一局 PID 的完整映像路径不可读，会结合系统提�
 同一开关也支持原生 SDK 协调会话中的各个角色。只有确认该角色绑定的房间、驾驶员、本次战斗和
 原生控制释放后才施加输入，结算后释放；默认仍关闭。
 
+`BattlePlayerSpecial=1` 配合 `BattlePlayerCombat=1` 和默认的 `BattlePlayerWeaponSlot=-1`，
+还会发动必杀技。在战斗中积满 SP 槽约需造成 27,300 伤害，短时间的测试战斗达不到，所以该模式是声明的
+测试夹具：程序等到有存活的敌方 AI 进入必杀武器自身的射程（至少 300；一分钟内没有目标时放宽为两倍），
+再把本机 SP 槽（`CUnit+0xBC8`）填到 30000，这是它唯一写入的游戏数值。随后把映射的必杀技槽输入交给
+原生选武器处理，原生处理只有在槽满时才会选中该槽，程序等待原生攻击 FSM 绑定该槽的必杀武器，然后按
+主武器（近战必杀技同时按锁定）发动，直到 OC 客户端 Mod 记录到本机必杀技的伤害计算。6 秒内没有绑定或
+20 秒内没有计算的尝试会重新等待目标；十次尝试后或战斗结束时仍未计算则判失败。HP、FSM 状态和武器数据
+只读不写。
+
+必杀技请求（`0x04BE`）到达时，Battle 主机会在 `0x4C3AEA` 再次检查 SP 槽。仅供开发测试的 Battle 夹具
+`oc_special_server_probe`（`tests/oc_special_server_probe.cpp`）在这次原生比较之前，只把已认证房主驾驶员
+的服务器 SP 槽填满，并把每次填充记录在客户端 `run.ini` 旁的 `oc-special-server-<run>.ini`。AI 驾驶员和
+其他真人仍按原生检查；受理、SP 消耗和伤害保持原生。该夹具不会进入任何发布包，只在标有 `TEST-ONLY.txt`
+的测试副本中、为 `SDGO_GAME_TEST_RUN` 指定的运行加载。`game_test_backend.py serve` 仅在客户端运行带
+`--oc-special` 时把它连同符号装入各 Battle 主机，此时须提供
+`--oc-special-probe <build>/Release/oc_special_server_probe.dll`。
+
+`prepare --oc-special` 把这项检查封存进 `--oc-allocate` 战斗，分配中须包含必杀技点（第 `5` 项），
+并指定已有的 `--play-unit-uid`。它把探针设为持续主武器加锁定，需要 GameTest 客户端 0.1.33。战斗对阵
+七个敌方 AI、没有友方 AI（`--expected-ai 7 --ai-allies 0`，该参数的默认值），敌人会接近唯一的真人。
+`oc.special` 在战斗中、`pvp.return` 之前等待，期间整场战斗的观察照常运行，并报告 Battle 夹具的记录。OC 战斗（`--oc-room`，
+或 OC 模式服务器上的任何房间）中，要求必杀技带有保存的必杀技分配，增量等于
+`min(携带值, 7950 - DamageSize)`，计算结果符合所在位置：近战为按原生 x87 运算的
+`trunc((DamageSize + 增量) × r)`，远程为 `(115 - 15c) × (DamageSize + 增量) / 100`，地图必杀技为原生
+附加值加增量。不加 `--oc-room` 时，房间模式的服务器按现行体系进行，该项即为对照组：必杀技必须保持原生。
+`oc.stats` 在同一场战斗中运行，也在每场分配了攻击（`2`）或防御（`3`）点的单场 `--oc-allocate` 战斗中运行：
+OC 战斗中，所分配属性携带的增量须等于保存的分配，本机战斗属性块须等于机体数据值加该增量，上限 169；
+非 OC 战斗不得携带增量。
+`--oc-special` 不能与 `--room-switch`、`--random-loadout` 或变形探针组合。
+
 验证收藏扭蛋限额拒绝时，使用 pages-only 的 collection-draw 场景，并在测试观察组件中设置
 `CollectionExpectedStatus=6006`。启动前明确准备隔离测试库中的已用尽限额；该次运行要求真实购买被拒绝且
 没有奖品，不算作成功抽取/领取。对比购买前后的原生钱包、限额和领取箱，确认退款；另以默认 `0`

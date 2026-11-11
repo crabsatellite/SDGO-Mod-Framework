@@ -743,6 +743,80 @@ __declspec(naked) void SpecialCompletionGate() {
         jmp dword ptr [g_specialCompletionGateOriginal]
     }
 }
+// The local adjutant's battle lines (BattleOperator UI message 0x1F51) follow the special-attack FSM of the
+// attacking unit: the ranged/melee special states speak for the local player and for any unit the client
+// simulates itself. AI pilots (NPC units with the AI pilot NpcData range) are simulated by the
+// host client, so their specials made the host's adjutant speak as if the player had fired. At each site the
+// detour takes the function's own "no line" branch when the speaking unit is an AI pilot.
+constexpr int kOperatorLineSites=3;
+constexpr uintptr_t kOperatorLineSkip[kOperatorLineSites]={0x2C0F80,0x2C1C67,0x2C20C6};
+void* g_operatorLineOriginal[kOperatorLineSites]={};
+uintptr_t g_operatorLineSkip[kOperatorLineSites]={};
+uint32_t g_operatorLineDecision=0;
+bool AiPilotUnit(uint8_t* unit) {
+    __try {
+        if(!unit||!ObjectIsA(unit,10)||!battle_ai::native::detail::Readable(unit,0x323C))return false;
+        const uint32_t npc=*reinterpret_cast<uint32_t*>(unit+0x3238);
+        return npc>=3604001&&npc<=3607000;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+uint32_t g_operatorLineSkips=0;
+uint32_t OperatorLineSkip(uint8_t* unit,const char* site) {
+    if(!AiPilotUnit(unit))return 0;
+    if(g_operatorLineSkips<16&&g_api)
+        g_api->Log(g_mod,SDGO_LOG_INFO,"adjutant line withheld for AI pilot npc=%u at %s",
+                   *reinterpret_cast<uint32_t*>(unit+0x3238),site);
+    ++g_operatorLineSkips;
+    return 1;
+}
+uint32_t __stdcall OperatorLineFromFsm(uint8_t* fsm) {
+    __try {
+        uint8_t* owner=nullptr;
+        return battle_ai::native::detail::ReadPointer(fsm,0xB2C,owner)?OperatorLineSkip(owner,"special"):0u;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+#define SDGO_OPERATOR_LINE_SITE(name,index,decide,saved)            \
+__declspec(naked) void name() {                                       \
+    __asm pushfd                                                      \
+    __asm pushad                                                      \
+    __asm mov ebx,esp                                                 \
+    __asm sub esp,210h                                                \
+    __asm and esp,0FFFFFFF0h                                          \
+    __asm fxsave [esp]                                                \
+    __asm fninit                                                      \
+    __asm cld                                                         \
+    __asm push dword ptr [ebx+saved]                                  \
+    __asm call decide                                                 \
+    __asm mov g_operatorLineDecision,eax                              \
+    __asm fxrstor [esp]                                               \
+    __asm mov esp,ebx                                                 \
+    __asm popad                                                       \
+    __asm popfd                                                       \
+    __asm cmp g_operatorLineDecision,0                                \
+    __asm jne skip                                                    \
+    __asm jmp dword ptr [g_operatorLineOriginal+index*4]              \
+    __asm skip:                                                       \
+    __asm jmp dword ptr [g_operatorLineSkip+index*4]                  \
+}
+// pushad frame: EDI +0, ESI +4, EBP +8, ESP +12, EBX +16 (the FSM sites keep the FSM in esi)
+SDGO_OPERATOR_LINE_SITE(OperatorLineSpecialStart,0,OperatorLineFromFsm,4)
+SDGO_OPERATOR_LINE_SITE(OperatorLineSpecialHit,1,OperatorLineFromFsm,4)
+SDGO_OPERATOR_LINE_SITE(OperatorLineSpecialEnd,2,OperatorLineFromFsm,4)
+#undef SDGO_OPERATOR_LINE_SITE
+void InstallOperatorLineSites(const SdgoApi* api,SdgoMod* mod) {
+    static const char* const names[kOperatorLineSites]={"combat.operator_line_special_start",
+        "combat.operator_line_special_hit","combat.operator_line_special_end"};
+    static void* const detours[kOperatorLineSites]={reinterpret_cast<void*>(&OperatorLineSpecialStart),
+        reinterpret_cast<void*>(&OperatorLineSpecialHit),reinterpret_cast<void*>(&OperatorLineSpecialEnd)};
+    const uintptr_t base=reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    int installed=0;
+    for(int i=0;i<kOperatorLineSites;++i) {
+        g_operatorLineSkip[i]=base+kOperatorLineSkip[i];
+        if(api->HookSite(mod,names[i],detours[i],&g_operatorLineOriginal[i]))++installed;
+        else api->Log(mod,SDGO_LOG_WARN,"%s unavailable: AI pilots may still trigger that adjutant line",names[i]);
+    }
+    api->Log(mod,SDGO_LOG_INFO,"adjutant lines separated from AI pilots at %d of %d sites",installed,kOperatorLineSites);
+}
 bool HurtState(uint8_t* unit) {
     uint8_t* movement=nullptr;
     if(!battle_ai::native::detail::ReadPointer(unit,0x9C8,movement)) return false;
@@ -4728,6 +4802,7 @@ SDGO_MOD_ENTRY {
         !api->HookCode(mod,"combat.projectile_update",reinterpret_cast<void*>(&ProjectileUpdate),reinterpret_cast<void**>(&g_projectile)) ||
         !api->HookSite(mod,"combat.special_melee_completion_gate",reinterpret_cast<void*>(&SpecialCompletionGate),
                        &g_specialCompletionGateOriginal)) return 0;
+    InstallOperatorLineSites(api,mod);
     api->Log(mod,SDGO_LOG_INFO,"ready: capability-driven local battle bots; native projectiles and collisions");
     return 1;
 }

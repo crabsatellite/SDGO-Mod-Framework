@@ -154,3 +154,4 @@ mission_ai: mission 1: 3 wingmen
 | 僚机死亡后不复活或消失 | 配套更新同版客户端与服务端 AI 组件，重启对应程序并开始新一局；`inf` 仅取消 AI 次数上限 |
 | 服务器加了僚机，某客户端日志没有 `AI participant` | 该客户端没装 `mission_ai` |
 | 客户端：`AI participant ...: creating NPC N failed` | 该客户端没有 NPC 记录 N（客户端 `0198` 表） |
+| 僚机放必杀时自己的副官也在说话 | 更新 `battle_ai`：1.16.20 起房主的副官不再为 AI 驾驶员的必杀发言；拦下台词时日志显示 `adjutant line withheld for AI pilot` |

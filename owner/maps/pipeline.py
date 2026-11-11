@@ -99,6 +99,12 @@ def mission_templates(baseline, server_ini) -> M.Templates:
             if isinstance(item.get('NpcName'), str):
                 item['NpcName'] = item['NpcName'].rstrip()
             npc_data[int(item['NpcDataID'])] = item
+        # blueprint items (item category -> recipe) and the unit each recipe produces, for mission drops
+        cursor.execute('SELECT i.CatalogueID, i.Name, m.OutUnitID FROM dbo.tbl_ItemCategory i '
+                       'JOIN dbo.tbl_MixTreeFile m ON m.Idx = i.RefIndex')
+        blueprints: dict[int, list[tuple[int, str]]] = {}
+        for category, name, unit in cursor.fetchall():
+            blueprints.setdefault(int(unit), []).append((int(category), str(name or '').rstrip()))
     finally:
         connection.rollback()
         connection.close()
@@ -112,7 +118,7 @@ def mission_templates(baseline, server_ini) -> M.Templates:
         spawn=records('gdrs/0053.gdt', 152)[620001],
         unit_exists=lambda unit: baseline.record('unit', unit) is not None,
         unit_labels=lambda unit: unit_labels(baseline, unit), unit_record=lambda unit: baseline.record('unit', unit),
-        weapon_record=lambda weapon: baseline.record('weapon', weapon))
+        weapon_record=lambda weapon: baseline.record('weapon', weapon), blueprints=blueprints)
 
 
 def occluders(package, baseline):

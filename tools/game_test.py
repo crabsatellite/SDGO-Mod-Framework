@@ -100,6 +100,15 @@ MODE_FLOW_STEPS = ("room", "start", "ai_spawn", "return")
 ROOM_SWITCH_SYSTEMS = ("oc", "g1", "g2")
 ROOM_SWITCH_SUFFIXES = {"oc": " !oc", "g1": " !g1", "g2": ""}
 ROOM_SWITCH_STEPS = ("room", "start", "ai_spawn", "system", "return")
+# OC special (--oc-special): the native player probe settings sealed into the
+# copied observer. BattlePlayerSpecial itself is always written (0 otherwise).
+OC_SPECIAL_EXPECTED_AI = 7
+OC_SPECIAL_OBSERVER_SETTINGS = {
+    "BattlePlayerCombat": "1",
+    "BattlePlayerCombatContinuous": "1",
+    "BattlePlayerSecondary": "1",
+    "BattlePlayerWeaponSlot": "-1",
+}
 
 
 def room_switch_titles(base: str) -> tuple[str, ...]:
@@ -1689,9 +1698,30 @@ def validate_oc_allocate(value: str | None) -> str | None:
     return value
 
 
+def oc_allocated_stats(oc_allocate: str | None) -> set[str]:
+    return {entry.split(':')[0] for entry in oc_allocate.split(',')} if oc_allocate is not None else set()
+
+
 def oc_mobility_selected(oc_allocate: str | None) -> bool:
     """The battle checks the OC speed/agility gains when speed (0) or agility (4) is allocated."""
-    return oc_allocate is not None and any(entry.split(':')[0] in ('0', '4') for entry in oc_allocate.split(','))
+    return bool(oc_allocated_stats(oc_allocate) & {'0', '4'})
+
+
+def oc_stats_selected(oc_allocate: str | None, oc_special: bool = False) -> bool:
+    """The battle checks the local battle stat block when attack (2) or defense (3) is allocated, and
+    observes it in the OC special battle."""
+    return oc_allocate is not None and (oc_special or bool(oc_allocated_stats(oc_allocate) & {'2', '3'}))
+
+
+def validate_oc_special(oc_special: bool, oc_allocate: str | None, *, room_switch: bool = False) -> bool:
+    """OC special: one ordinary PvP battle in which the native player probe fires the play unit's
+    special. The allocation must save special points (stat 5)."""
+    if type(oc_special) is not bool:
+        raise GameTestError('oc_special must be a boolean')
+    if oc_special and (oc_allocate is None or '5' not in oc_allocated_stats(oc_allocate) or room_switch):
+        raise GameTestError("oc_special fires the play unit's special in the --oc-allocate PvP battle and needs "
+                            'special (stat 5) points; it is not combined with room_switch')
+    return oc_special
 
 
 def validate_play_unit_uid(value: int | None) -> int | None:
@@ -1838,10 +1868,12 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          room_switch: bool = False,
                          mission_behavior_profile: str | None = None,
                          mission_game_mode_id: int | None = None,
-                         oc_panel: bool = False, oc_challenge: bool = False) -> tuple[str, ...]:
+                         oc_panel: bool = False, oc_challenge: bool = False,
+                         oc_special: bool = False) -> tuple[str, ...]:
     if mission_respawns is not None and (mission_respawns not in ('player','infinite') or mission_mode is None):
         raise GameTestError('mission_respawns requires a native mission and player or infinite policy')
     oc_allocate = validate_oc_allocate(oc_allocate)
+    oc_special = validate_oc_special(oc_special, oc_allocate, room_switch=room_switch is True)
     if type(room_switch) is not bool or (room_switch and (oc_allocate is None or oc_room or g1_room or same_room_rematch)):
         raise GameTestError('room_switch plays the --oc-allocate PvP battle once per room system (not with --oc-room or --g1-room)')
     if oc_allocate is not None and (play_unit_uid is None or mission_mode is not None or any((
@@ -1968,9 +2000,14 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         return prefix + tuple(f'pvp.{system}.{step}' for system in ROOM_SWITCH_SYSTEMS
                               for step in ROOM_SWITCH_STEPS) + panel
     if len(modes) == 1:
-        # OC speed/agility: the battle unit exists after the AI spawn check.
+        # OC battle stats, speed/agility and the special: the battle unit exists
+        # after the AI spawn check; the special waits inside the battle.
+        stats = ('oc.stats',) if oc_stats_selected(oc_allocate, oc_special) else ()
         mobility = ('oc.mobility',) if oc_mobility_selected(oc_allocate) else ()
-        return prefix + FLOW_CASES[3:6] + mobility + FLOW_CASES[6:] + panel
+        special = ('oc.special',) if oc_special else ()
+        return prefix + FLOW_CASES[3:6] + stats + mobility + special + FLOW_CASES[6:] + panel
+    if oc_special:
+        raise GameTestError('oc_special plays one ordinary PvP battle')
     return prefix + tuple(
         f"pvp.mode{mode}.{step}" for mode in modes for step in MODE_FLOW_STEPS
     ) + panel
@@ -2060,6 +2097,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         mission_game_mode_id=plan.get("mission_game_mode_id"),
         oc_panel=plan.get('oc_panel', False),
         oc_challenge=plan.get('oc_challenge', False),
+        oc_special=plan.get('oc_special', False),
     )
     if operator_fields:
         try:
@@ -2469,6 +2507,8 @@ def write_job(
         run['run']['oc_panel'] = '1'
     if plan.get('oc_challenge'):
         run['run']['oc_challenge'] = '1'
+    if plan.get('oc_special'):
+        run['run']['oc_special'] = '1'
     if 'unit_scenario_sha256' in plan:
         run['run']['unit_scenario_sha256'] = plan['unit_scenario_sha256']
     if 'operator_flow' in plan:
@@ -2866,6 +2906,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 room_switch=run.get('room_switch') == '1',
                 oc_panel=run.get('oc_panel') == '1',
                 oc_challenge=run.get('oc_challenge') == '1',
+                oc_special=run.get('oc_special') == '1',
             )
             if operator_present:
                 expected_cases = operator_scenarios.cases(expected_cases)
@@ -3002,6 +3043,16 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             plan['oc_panel'] = True
         if run.get('oc_challenge') == '1':
             plan['oc_challenge'] = True
+        if run.get('oc_special', '0') not in ('0', '1'):
+            raise ValueError('oc_special must be canonical boolean')
+        if run.get('oc_special') == '1':
+            # A reused client's earlier seal may predate the all-enemy layout.
+            if (not run.get('oc_allocate') or '5' not in oc_allocated_stats(run['oc_allocate']) or
+                    run.get('room_switch') == '1' or run.get('mode_sequence') != '1' or
+                    (not historical_cases and (run.get('expected_ai') != str(OC_SPECIAL_EXPECTED_AI) or
+                                               run.get('ai_allies') != '0'))):
+                raise ValueError('OC special run lacks its sealed special allocation in one all-enemy ordinary battle')
+            plan['oc_special'] = True
         plan.update(unit_binding)
         if shop_plan is not None:
             plan.update(shop_plan)
@@ -3363,6 +3414,7 @@ def prepare(
     oc_room: bool = False,
     g1_room: bool = False,
     room_switch: bool = False,
+    oc_special: bool = False,
     server_session: dict | None = None,
     rebind_existing_account: bool = False,
     fps_cap: int | None = None,
@@ -3493,6 +3545,25 @@ def prepare(
     if type(room_switch) is not bool or (room_switch and (oc_allocate is None or random_loadout or oc_room or g1_room)):
         raise GameTestError('--room-switch plays the --oc-allocate PvP battle in an OC, a G改 1.0 and a G改 2.0 room '
                             'back to back (not with --oc-room, --g1-room or --random-loadout)')
+    if type(oc_special) is not bool or (oc_special and (
+            oc_allocate is None or '5' not in oc_allocated_stats(oc_allocate) or room_switch or random_loadout or
+            apsalus_roundtrip or unit_transform_roundtrip or unit_transform_steps is not None)):
+        raise GameTestError('--oc-special fires the --play-unit-uid unit\'s special in the --oc-allocate PvP battle and needs '
+                            'special points (stat 5); with --oc-room the room plays OC, without it a room-mode server plays the '
+                            'current system (negative control); not with --room-switch, --random-loadout or transform probes')
+    if oc_special:
+        sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
+        parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
+        if not parsed or tuple(map(int,parsed.groups())) < (0,1,33):
+            raise GameTestError('--oc-special requires native GameTest client 0.1.33 or newer')
+        # The special needs enemies in reach: seven enemy AI and no allied AI hunt the only human.
+        if (ai_allies is None and expected_ai == 3 and not random_teams and
+                all(value is None for value in (ai_policy, ai_teams, ai_pool_level, ai_difficulty, ai_layout))):
+            expected_ai, ai_allies = OC_SPECIAL_EXPECTED_AI, 0
+        if (expected_ai != OC_SPECIAL_EXPECTED_AI or ai_allies != 0 or random_teams or
+                any(value is not None for value in (ai_policy, ai_teams, ai_pool_level, ai_difficulty, ai_layout))):
+            raise GameTestError('--oc-special plays against seven enemy AI and no allied AI '
+                                '(--expected-ai 7 --ai-allies 0, the default for this flag)')
     if review_footage and (not quiet or fps_cap is not None):
         raise GameTestError('review footage is a quiet-lane recording profile; it does not apply to visible or FPS runs')
     if capture_native_frames and (fps_cap is not None or mission_mode is not None or any((bootstrap_only,
@@ -3787,6 +3858,9 @@ def prepare(
             # The base title is the G改 2.0 round; the OC and G改 1.0 rounds add
             # their command to it.
             plan['room_switch']=True
+        if oc_special:
+            # The native player probe fires the play unit's special in the battle.
+            plan['oc_special']=True
         if any(len(title.encode('utf-8'))>20 for title in (
                 room_switch_titles(plan['room_title']) if room_switch else (plan['room_title'],))):
             raise GameTestError('Native GameTest room title exceeds twenty bytes; use a shorter rule or separate scenarios')
@@ -3904,6 +3978,11 @@ def prepare(
         observer_config['settings']['UnitDirectedTransforms']='1' if unit_transform_steps is not None else '0'
         observer_config['settings']['UnitTransformSteps']=str(unit_transform_steps or 3)
         observer_config['settings']['FpsGameplayCap']=str(fps_gameplay_cap or 0)
+        # OC special: the native player probe charges the real SP gauge with continuous primary fire
+        # and the lock action on AI targets, then selects and fires the special slot.
+        observer_config['settings']['BattlePlayerSpecial']='1' if oc_special else '0'
+        if oc_special:
+            observer_config['settings'].update(OC_SPECIAL_OBSERVER_SETTINGS)
         # PvP map number selected on the native room page; 0 keeps the quick-room random-map policy.
         if type(battle_map) is not int or not 0<=battle_map<=255:raise GameTestError('--battle-map must be a MapNo in 0..255')
         observer_config['settings']['BattleMap']=str(battle_map)
@@ -4233,6 +4312,18 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
         raise GameTestError('run.json cannot change the sealed room-style preview scope')
     if plan.get('page_group') != public_plan.get('page_group'):
         raise GameTestError('run.json cannot change the sealed page group')
+    if (type(plan.get('oc_special', False)) is not bool or
+            plan.get('oc_special', False) != public_plan.get('oc_special', False)):
+        raise GameTestError('run.json cannot change the sealed OC special battle')
+    observer_manifest = root / 'sdgo' / 'mods' / TEST_MOD / 'mod.ini'
+    if public_plan.get('oc_special') or observer_manifest.is_file():
+        observer_settings = read_ini(observer_manifest)
+        if observer_settings.get('settings', 'BattlePlayerSpecial', fallback='0') != (
+                '1' if public_plan.get('oc_special') else '0') or (
+                public_plan.get('oc_special') and any(
+                    observer_settings.get('settings', key, fallback='') != value
+                    for key, value in OC_SPECIAL_OBSERVER_SETTINGS.items())):
+            raise GameTestError('the copied observer settings disagree with the sealed OC special battle')
     if fps_only:
         if set(plan) != set(public_plan):
             raise GameTestError("run.json adds fields outside the native FPS plan")
@@ -5508,6 +5599,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--room-switch',action='store_true',help='room systems: play the --oc-allocate PvP battle three times in one client session, in an !oc room, a !g1 room and a plain (G改 2.0) room, checking the system each battle applied (World OC Mod in room mode with a G改 1.0 rule set)')
     prepare_parser.add_argument('--oc-room',action='store_true',help='room systems: add the !oc command to the --oc-allocate PvP room title so the battle plays OC (World OC Mod in room mode); without it the room plays the current custom skills')
     prepare_parser.add_argument('--oc-challenge',action='store_true',help='inside the OC panel check, also press the OC challenge (can change the unit\'s OC level)')
+    prepare_parser.add_argument('--oc-special',action='store_true',help='fire the --play-unit-uid unit\'s special in the --oc-allocate PvP battle (allocation with stat 5) through the native player probe and check the OC special damage (oc.special) and battle stats (oc.stats); with --oc-room the room plays OC, without it a room-mode server plays the current system as the negative control')
     prepare_parser.add_argument(
         "--fps-cap",
         type=int,
@@ -5631,6 +5723,7 @@ def main(argv: list[str] | None = None) -> int:
                 oc_room=args.oc_room,
                 g1_room=args.g1_room,
                 room_switch=args.room_switch,
+                oc_special=args.oc_special,
             )
         elif args.command == "run":
             result = run_prepared(args.run_dir, args.timeout, args.launch_timeout)

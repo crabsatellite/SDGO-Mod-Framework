@@ -178,6 +178,12 @@ std::vector<OcAllocationEntry> ocAllocations;
 int ocAllocateStat=-1,ocAllocatePoints=0; // first entry
 // The battle checks the local unit's OC speed/agility (stat 0 or 4 allocated).
 bool ocMobility=false;
+// The battle checks the local unit's battle stat block (attack 2 or defense 3
+// allocated, or with ocSpecial).
+bool ocStats=false;
+// The battle fires the play unit's special through the native player probe
+// (BattlePlayerSpecial) and checks the OC special damage (stat 5 allocated).
+bool ocSpecial=false;
 // Open the original factory upgrade page at the end and check the OC panel.
 bool ocPanel=false;
 // Room systems: the PvP room title carries !oc, so the battle plays OC.
@@ -634,6 +640,7 @@ bool LoadPlan() {
             if(points<1 || points>20 || ocAllocations.size()>=6)return false;
             ocAllocations.push_back({item[0]-L'0',points});
             if(item[0]==L'0' || item[0]==L'4')ocMobility=true;
+            if(item[0]==L'2' || item[0]==L'3')ocStats=true;
             if(comma==std::wstring::npos)break;
             at=comma+1;
         }
@@ -644,6 +651,18 @@ bool LoadPlan() {
     g1Room=GetPrivateProfileIntW(L"run",L"g1_room",0,job.c_str())!=0;
     roomSwitch=GetPrivateProfileIntW(L"run",L"room_switch",0,job.c_str())!=0;
     if(roomSwitch && (ocRoom || g1Room || ocAllocateStat<0 || !playUnitUid))return false;
+    ocSpecial=GetPrivateProfileIntW(L"run",L"oc_special",0,job.c_str())!=0;
+    if(ocSpecial) {
+        // One ordinary battle with special (stat 5) points saved, fired through
+        // the sealed special mode of the native player probe.
+        bool specialPoints=false;
+        for(const auto& entry:ocAllocations)specialPoints=specialPoints || entry.stat==5;
+        if(!specialPoints || !playUnitUid || roomSwitch || missionMode ||
+           GetPrivateProfileIntW(L"settings",L"BattlePlayerCombat",0,blueprintIni.c_str())!=1 ||
+           GetPrivateProfileIntW(L"settings",L"BattlePlayerSpecial",0,blueprintIni.c_str())!=1)return false;
+        ocStats=true;
+    }
+    if(roomSwitch)ocStats=false;
     ocChallenge=GetPrivateProfileIntW(L"run",L"oc_challenge",0,job.c_str())!=0;
     if((hangarConfirmGb || hangarSort) && (ocPanel || loginRecovery.Enabled()))return false;
     if(ocChallenge && !ocPanel && ocAllocateStat<0)return false;
@@ -816,6 +835,7 @@ bool LoadPlan() {
         if (*p++ != L',' || !*p) return false;
     }
     if (requestedModes.empty()) return false;
+    if (ocSpecial && (requestedModes.size()!=1 || sameRoomRematch)) return false;
     if (roomSwitch) {
         if (requestedModes.size()!=1 || requestedModes[0]!=1) return false;
         requestedModes.assign(3,1);
@@ -1385,48 +1405,53 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
     }
     return SDGO_GAME_TEST_PASS;
 }
+// Whole-battle observations of a running PvP battle, polled every tick from the
+// return case and from cases that wait inside the battle (oc.special), so the
+// native observers and the player probe keep running continuously.
+bool ObserveLiveBattle(const SdgoGameTestContextV1* context,const SdgoPvpAiClientSnapshotV1& live) {
+    battleAiPerformance.Observe(context,live);
+    // Review footage: the closing TAB press was delivered on the frame the spawn case passed; release
+    // the key now so the native roster animates shut and stays out of the recording.
+    if (reviewFootage && rosterClosedForReview) scoreboardInput.Hold(false);
+    if(!battleAiBehavior.Observe(context,live)) return false;
+    if(!nativeDeathProbe.Observe(context)) return false;
+    ObserveOptionalDialogue(context);
+    SdgoPvpAiClientStartStatusV1 nativeControl{};
+    nativeControl.size=sizeof(nativeControl);nativeControl.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+    if(getStartStatus) getStartStatus(&nativeControl);
+    // Review footage keeps the battle running on a failed combat-input observation: the
+    // failure is still recorded, but the recording is the point of such a run.
+    if(!nativePlayerCombat.Poll(context,live,nativeControl,scoreboardInput) && !reviewFootage) return false;
+    SdgoPvpAiClientScoreboardStatusV1 roster{};
+    roster.size = sizeof(roster); roster.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+    if (getScoreboardStatus && getScoreboardStatus(&roster) && roster.battle_start_sequence == activeBattleStartSequence) {
+        if (!nativeAiLives.Observe(context, live, roster, RequestedMode())) return false;
+        if (scoreboardCombatSequence != activeBattleStartSequence) {
+            scoreboardCombatSequence = activeBattleStartSequence; scoreboardCombatChanges = 0; scoreboardLast = {};
+        }
+        for (uint32_t i = 0; i < roster.bot_count && i < 12; ++i) {
+            const auto& row = roster.bots[i]; const auto& before = scoreboardLast.bots[i];
+            if (row.render_count && (row.kills != before.kills || row.assists != before.assists || row.points != before.points)) {
+                ++scoreboardCombatChanges;
+                char stats[192]; sprintf_s(stats, "native TAB stats mode=%u AI=%08X team=%u row=%u kills=%d assists=%d points=%d draws=%u",
+                    RequestedMode(),row.pilot_id,row.team,row.row_index,row.kills,row.assists,row.points,row.render_count);
+                context->Observe(stats);
+            }
+        }
+        scoreboardLast = roster;
+    }
+    const std::wstring title(roomTitle,roomTitle+strlen(roomTitle));
+    const auto result=battleCombat.Observe(live,{activeBattleStartSequence,authenticatedPilot,RequestedMode(),title.c_str()});
+    if(result==BattleCombatActions::kInvalidExpectation || result==BattleCombatActions::kInvalidSnapshot ||
+       result==BattleCombatActions::kForeignBattle || result==BattleCombatActions::kLuaError) {
+        context->Assert(0,"whole-battle target/HP observations must retain the genuine battle identity and error-free native snapshot");
+        return false;
+    }
+    return true;
+}
 int __cdecl Return(const SdgoGameTestContextV1* context) {
     SdgoPvpAiClientSnapshotV1 live{};
-    if(Snapshot(live) && live.native_app_state==22) {
-        battleAiPerformance.Observe(context,live);
-        // Review footage: the closing TAB press was delivered on the frame the spawn case passed; release
-        // the key now so the native roster animates shut and stays out of the recording.
-        if (reviewFootage && rosterClosedForReview) scoreboardInput.Hold(false);
-        if(!battleAiBehavior.Observe(context,live)) return SDGO_GAME_TEST_FAIL;
-        if(!nativeDeathProbe.Observe(context)) return SDGO_GAME_TEST_FAIL;
-        ObserveOptionalDialogue(context);
-        SdgoPvpAiClientStartStatusV1 nativeControl{};
-        nativeControl.size=sizeof(nativeControl);nativeControl.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
-        if(getStartStatus) getStartStatus(&nativeControl);
-        // Review footage keeps the battle running on a failed combat-input observation: the
-        // failure is still recorded, but the recording is the point of such a run.
-        if(!nativePlayerCombat.Poll(context,live,nativeControl,scoreboardInput) && !reviewFootage) return SDGO_GAME_TEST_FAIL;
-        SdgoPvpAiClientScoreboardStatusV1 roster{};
-        roster.size = sizeof(roster); roster.version = SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
-        if (getScoreboardStatus && getScoreboardStatus(&roster) && roster.battle_start_sequence == activeBattleStartSequence) {
-            if (!nativeAiLives.Observe(context, live, roster, RequestedMode())) return SDGO_GAME_TEST_FAIL;
-            if (scoreboardCombatSequence != activeBattleStartSequence) {
-                scoreboardCombatSequence = activeBattleStartSequence; scoreboardCombatChanges = 0; scoreboardLast = {};
-            }
-            for (uint32_t i = 0; i < roster.bot_count && i < 12; ++i) {
-                const auto& row = roster.bots[i]; const auto& before = scoreboardLast.bots[i];
-                if (row.render_count && (row.kills != before.kills || row.assists != before.assists || row.points != before.points)) {
-                    ++scoreboardCombatChanges;
-                    char stats[192]; sprintf_s(stats, "native TAB stats mode=%u AI=%08X team=%u row=%u kills=%d assists=%d points=%d draws=%u",
-                        RequestedMode(),row.pilot_id,row.team,row.row_index,row.kills,row.assists,row.points,row.render_count);
-                    context->Observe(stats);
-                }
-            }
-            scoreboardLast = roster;
-        }
-        const std::wstring title(roomTitle,roomTitle+strlen(roomTitle));
-        const auto result=battleCombat.Observe(live,{activeBattleStartSequence,authenticatedPilot,RequestedMode(),title.c_str()});
-        if(result==BattleCombatActions::kInvalidExpectation || result==BattleCombatActions::kInvalidSnapshot ||
-           result==BattleCombatActions::kForeignBattle || result==BattleCombatActions::kLuaError) {
-            context->Assert(0,"whole-battle target/HP observations must retain the genuine battle identity and error-free native snapshot");
-            return SDGO_GAME_TEST_FAIL;
-        }
-    }
+    if(Snapshot(live) && live.native_app_state==22 && !ObserveLiveBattle(context,live)) return SDGO_GAME_TEST_FAIL;
     SdgoPvpAiClientLuaStatusV1 lua{sizeof(lua), SDGO_PVP_AI_CLIENT_OBSERVER_VERSION, 0, 0, 0};
     if (!getLuaStatus || !getLuaStatus(&lua) || !lua.observer_available ||
         !activeBattleStartSequence || lua.battle_start_sequence != activeBattleStartSequence) {
@@ -3601,6 +3626,13 @@ struct OcObserver {
     }
 };
 OcObserver ocObserver;
+// The native player probe's special-event source: the OC client's count of
+// local special computations (needs the observer with the special fields).
+bool __cdecl ReadOcSpecialEvents(uint32_t* events) {
+    SdgoOcCustomClientSnapshotV2 s{};
+    if(!events || !ocObserver.Bind() || !ocObserver.Read(s) || s.size<sizeof(s))return false;
+    *events=s.special_events;return true;
+}
 void BeginRoomSwitchRound(size_t round) {
     roomSwitchRound=round;
     const size_t index=round%3;
@@ -4083,6 +4115,183 @@ int __cdecl OcMobility(const SdgoGameTestContextV1* context) {
     return SDGO_GAME_TEST_PASS;
 }
 const SdgoGameTestCaseV1 ocMobilityCase{"oc.mobility",60000,&OcMobility};
+// Whether the current battle plays OC: the room's own system on a server in
+// room mode (the !oc command), otherwise the server's OC mode.
+bool OcBattlePlaysOc(const SdgoOcCustomClientSnapshotV2& s) {
+    return s.server_room_rule ? ocRoom && !g1Room : s.server_oc_mode!=0;
+}
+uint32_t ExpectedRoomSystem() { return ocRoom ? 1u : g1Room ? 2u : 0u; }
+// Battle: the local unit's attack and defense in the server-built battle stat
+// block (form 0) as the client holds it, next to its unit data and the carried
+// OC deltas. In a battle that plays OC an allocated attack or defense point
+// lands in the block on top of the unit data, capped at 169; outside OC no OC
+// delta is carried.
+int __cdecl OcStats(const SdgoGameTestContextV1* context) {
+    if(!ocObserver.Bind()){context->Assert(0,"the OC client Mod exposes its observer exports");return SDGO_GAME_TEST_FAIL;}
+    SdgoOcCustomClientSnapshotV2 s{};
+    if(!ocObserver.Read(s)){context->Assert(0,"the OC client observer snapshot is readable");return SDGO_GAME_TEST_FAIL;}
+    if(s.size<sizeof(s)){context->Assert(0,"the OC client Mod reports the battle stat block and local special fields");return SDGO_GAME_TEST_FAIL;}
+    if(!s.battle_block_seen) {
+        if(context->elapsed_ms>45000){context->Assert(0,"the OC client recorded the local unit's battle stat block at its native stat setup");return SDGO_GAME_TEST_FAIL;}
+        return SDGO_GAME_TEST_WAIT;
+    }
+    const bool oc=OcBattlePlaysOc(s);
+    bool attack=false,defense=false;
+    for(const auto& entry:ocAllocations){attack=attack || entry.stat==2;defense=defense || entry.stat==3;}
+    const int attackProfile=s.normal[2]*s.normal_gain[2]+s.over[2]*s.over_gain[2];
+    const int defenseProfile=s.normal[3]*s.normal_gain[3]+s.over[3]*s.over_gain[3];
+    char message[360];sprintf_s(message,"oc battle stats seen=%u oc=%u room_rule=%u room_known=%u system=%u attack block=%d base=%d gain=%d (profile %d) defense block=%d base=%d gain=%d (profile %d)",
+        s.battle_block_seen,oc?1u:0u,s.server_room_rule,s.room_known,s.room_system,s.battle_block_attack,s.battle_base_attack,s.battle_attack_gain,attackProfile,
+        s.battle_block_defense,s.battle_base_defense,s.battle_defense_gain,defenseProfile);
+    context->Observe(message);
+    context->Assert(s.battle_block_seen>0,"the OC client recorded the local unit's battle stat block at its native stat setup");
+    if(s.server_room_rule)context->Assert(s.room_known && s.room_system==ExpectedRoomSystem(),"the client read the battle room's system from its room command");
+    if(!oc) {
+        context->Assert(s.battle_attack_gain==0 && s.battle_defense_gain==0,"a battle that does not play OC carries no OC attack or defense delta");
+        return SDGO_GAME_TEST_PASS;
+    }
+    if(attack) {
+        context->Assert(s.battle_attack_gain==attackProfile,"the battle carried the attack delta of the saved OC allocation (normal points x normal gain + Over points x Over gain)");
+        context->Assert(s.battle_block_attack==(std::min)(s.battle_base_attack+s.battle_attack_gain,169),
+            "the local unit's battle attack is its unit data attack plus the OC attack delta, capped at 169");
+    }
+    if(defense) {
+        context->Assert(s.battle_defense_gain==defenseProfile,"the battle carried the defense delta of the saved OC allocation (normal points x normal gain + Over points x Over gain)");
+        context->Assert(s.battle_block_defense==(std::min)(s.battle_base_defense+s.battle_defense_gain,169),
+            "the local unit's battle defense is its unit data defense plus the OC defense delta, capped at 169");
+    }
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 ocStatsCase{"oc.stats",60000,&OcStats};
+// The melee special store's arithmetic: fild the integer, fmul the float roll,
+// then the CRT's _ftol2 (fstp qword, cvttsd2si). It runs on the game thread
+// with that thread's x87 control word, as the native computation did.
+int32_t MeleeSpecialValue(int32_t base,float roll) {
+    double product=0.0;
+    __asm {
+        fild dword ptr [base]
+        fmul dword ptr [roll]
+        fstp qword ptr [product]
+    }
+    return static_cast<int32_t>(product);
+}
+uint16_t X87ControlWord() {
+    uint16_t control=0;
+    __asm fnstcw control
+    return control;
+}
+// The development-only Battle fixture's record of the host pilot's special
+// requests and SP fills (oc-special-server-<run>.ini next to run.ini).
+void ObserveOcSpecialServerFixture(const SdgoGameTestContextV1* context) {
+    const std::wstring id(sdgo_test::runId.begin(),sdgo_test::runId.end());
+    const std::wstring path=sdgo_test::directory+L"\\oc-special-server-"+id+L".ini";
+    wchar_t recorded[64]{};
+    GetPrivateProfileStringW(L"probe",L"run_id",L"",recorded,64,path.c_str());
+    char line[200];
+    if(id!=recorded) {
+        sprintf_s(line,"oc special server fixture: no record for this run");
+    } else {
+        sprintf_s(line,"oc special server fixture: host pilot %u special requests=%u SP fills=%u last SP before=%d",
+            GetPrivateProfileIntW(L"probe",L"host_pilot_id",0,path.c_str()),GetPrivateProfileIntW(L"probe",L"requests",0,path.c_str()),
+            GetPrivateProfileIntW(L"probe",L"fills",0,path.c_str()),static_cast<int>(GetPrivateProfileIntW(L"probe",L"last_sp_before",-1,path.c_str())));
+    }
+    context->Observe(line);
+}
+// Battle: the native player probe waits until a living enemy AI is within the
+// special weapon's reach, fills the SP gauge (a declared GameTest fixture, with
+// the matching development-only Battle fixture for the server's check), selects
+// the special slot with mapped action 17 and fires it. The OC client records
+// each computation of the local player's own special at its three sites; this
+// case waits for the first one in the battle, keeping every whole-battle
+// observation running meanwhile. In a battle that plays OC the special
+// continues with DamageSize + min(carried special, 7950 - DamageSize); outside
+// OC it stays native.
+int __cdecl OcSpecial(const SdgoGameTestContextV1* context) {
+    static uint32_t events0=0,raised0=0,native0=0;static uint64_t reportedAt=0;
+    if(!ocObserver.Bind()){context->Assert(0,"the OC client Mod exposes its observer exports");return SDGO_GAME_TEST_FAIL;}
+    SdgoOcCustomClientSnapshotV2 s{};
+    if(!ocObserver.Read(s)){context->Assert(0,"the OC client observer snapshot is readable");return SDGO_GAME_TEST_FAIL;}
+    if(s.size<sizeof(s)){context->Assert(0,"the OC client Mod reports the battle stat block and local special fields");return SDGO_GAME_TEST_FAIL;}
+    if(!context->tick){events0=s.special_events;raised0=s.special_raised;native0=s.special_native;reportedAt=0;}
+    if(!nativePlayerCombat.SpecialEnabled()){context->Assert(0,"the native player probe runs its special mode (BattlePlayerSpecial)");return SDGO_GAME_TEST_FAIL;}
+    if(s.special_events<=events0) {
+        const auto ended=rooms.BattleEndState();
+        if(ended.sequence>endSequence && ended.original_handler_completed) {
+            ObserveOcSpecialServerFixture(context);
+            char failure[220];sprintf_s(failure,"the play unit's special was fired and computed before the battle ended (sp=%d attempts=%u fills=%u nearest=%.0f)",
+                nativePlayerCombat.SpecialGauge(),nativePlayerCombat.SpecialAttempts(),nativePlayerCombat.SpecialFills(),
+                static_cast<double>(nativePlayerCombat.SpecialDistance()));
+            context->Assert(0,failure);return SDGO_GAME_TEST_FAIL;
+        }
+        SdgoPvpAiClientSnapshotV1 live{};
+        if(Snapshot(live) && live.native_app_state==22 && !ObserveLiveBattle(context,live))return SDGO_GAME_TEST_FAIL;
+        if(context->elapsed_ms>=reportedAt+30000) {
+            reportedAt=context->elapsed_ms;
+            char line[200];sprintf_s(line,"oc special waits for the local special sp=%d attempts=%u fills=%u nearest=%.0f events=%u",
+                nativePlayerCombat.SpecialGauge(),nativePlayerCombat.SpecialAttempts(),nativePlayerCombat.SpecialFills(),
+                static_cast<double>(nativePlayerCombat.SpecialDistance()),s.special_events);
+            context->Observe(line);
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
+    const bool oc=OcBattlePlaysOc(s);
+    const int32_t ds=s.special_damage_size,gain=s.special_gain,carried=s.special_carried;
+    const int32_t profile=s.normal[5]*s.normal_gain[5]+s.over[5]*s.over_gain[5];
+    const int32_t room=7950-ds;
+    char message[480];sprintf_s(message,"oc special events=%u->%u raised=%u->%u native=%u->%u family=%u weapon=%u damage_size=%d carried=%d (profile %d) gain=%d "
+        "native_value=%d value=%d random=%.7f targets=%d oc=%u room_rule=%u room_known=%u system=%u probe_weapon=%u probe_family=%u x87cw=%04X",
+        events0,s.special_events,raised0,s.special_raised,native0,s.special_native,s.special_family,s.special_weapon,ds,carried,profile,gain,
+        s.special_native_value,s.special_value,static_cast<double>(s.special_random),s.special_targets,oc?1u:0u,s.server_room_rule,s.room_known,s.room_system,
+        nativePlayerCombat.SpecialWeapon(),unsigned(nativePlayerCombat.SpecialFamily()),unsigned(X87ControlWord()));
+    context->Observe(message);
+    ObserveOcSpecialServerFixture(context);
+    context->Assert(s.special_weapon==nativePlayerCombat.SpecialWeapon() && s.special_family==nativePlayerCombat.SpecialFamily() &&
+        s.special_damage_size==nativePlayerCombat.SpecialDamageSize(),
+        "the computed special is the fatal weapon the probe bound in the special slot");
+    if(s.server_room_rule)context->Assert(s.room_known && s.room_system==ExpectedRoomSystem(),"the client read the battle room's system from its room command");
+    if(!oc) {
+        context->Assert(s.special_raised==0 && s.special_native>native0 && gain==0 && carried==0,
+            "a battle that does not play OC leaves the local special native: no OC special carried or added");
+        context->Assert(s.special_value==s.special_native_value,"outside OC the game continued with the native special value");
+        return SDGO_GAME_TEST_PASS;
+    }
+    const int32_t expected=room>0 ? (std::min)(carried,room):0;
+    context->Assert(profile>0 && carried==profile,
+        "the local special carried the saved OC special allocation (normal points x normal gain + Over points x Over gain)");
+    context->Assert(gain==expected,"the special gain is min(carried special, 7950 - DamageSize)");
+    if(room<=0) {
+        context->Assert(gain==0 && s.special_raised==raised0 && s.special_native>native0 && s.special_value==s.special_native_value,
+            "a fatal weapon already at the 7950 DamageSize cap keeps its native special");
+        return SDGO_GAME_TEST_PASS;
+    }
+    context->Assert(gain>0 && s.special_raised>raised0,"the local special was computed with DamageSize + the OC special gain");
+    switch(s.special_family) {
+    case 1: {
+        const float r=s.special_random;
+        const int32_t native=MeleeSpecialValue(ds,r),raised=MeleeSpecialValue(ds+gain,r);
+        char line[160];sprintf_s(line,"oc special melee recomputed native=%d value=%d",native,raised);context->Observe(line);
+        context->Assert(r>=0.899f && r<=1.151f,"the melee special roll is the native 0.9..1.15 draw");
+        context->Assert(s.special_native_value==native,"the native melee value is trunc(DamageSize x r) in the native x87 arithmetic");
+        context->Assert(s.special_value==raised,"the melee special continued with trunc((DamageSize + gain) x r) in the native x87 arithmetic");
+        break;
+    }
+    case 2: {
+        const int32_t c=s.special_targets;
+        context->Assert(c>=0 && c<=4,"the ranged special target count is the native clamped 0..4");
+        context->Assert(s.special_native_value==((115-15*c)*ds)/100,"the native ranged value is (115 - 15c) x DamageSize / 100");
+        context->Assert(s.special_value==((115-15*c)*(ds+gain))/100,"the ranged special continued with (115 - 15c) x (DamageSize + gain) / 100");
+        break;
+    }
+    case 3:
+    case 8:
+        context->Assert(s.special_value==s.special_native_value+gain,"the map special base continued with the native additive bonus + gain");
+        break;
+    default:
+        context->Assert(0,"the computed special belongs to a hooked family (1 melee, 2 ranged, 3 map, 8 rush)");
+    }
+    return SDGO_GAME_TEST_PASS;
+}
+const SdgoGameTestCaseV1 ocSpecialCase{"oc.special",540000,&OcSpecial};
 // G改 1.0 on the native 强化部件 page (after oc.panel): open the 强化部件 tab,
 // switch the page to G改 1.0 with its system switch, then use the page as a
 // player does: pick a type on the category bar, double-click a skill in the
@@ -5873,8 +6082,12 @@ void RegisterPlannedCases() {
             }
             if (requestedModes.size()==1 && !sameRoomRematch) {
                 plannedCases.push_back(realCases[3+i]);
-                // OC speed/agility: the battle unit exists after the AI spawn check.
+                // OC battle stats, speed/agility and the special: the battle unit
+                // exists after the AI spawn check; the special waits inside the
+                // battle before its return.
+                if(i==2 && ocStats && playUnitUid && ocAllocateStat>=0)plannedCases.push_back(ocStatsCase);
                 if(i==2 && ocMobility && playUnitUid)plannedCases.push_back(ocMobilityCase);
+                if(i==2 && ocSpecial && playUnitUid)plannedCases.push_back(ocSpecialCase);
                 continue;
             }
             const std::string prefix=requestedModes.size()==1 ? "pvp":"pvp.mode"+std::to_string(mode);
@@ -6185,6 +6398,7 @@ SDGO_MOD_ENTRY {
     if (!nativeDeathProbe.Install(api,mod)) return 0;
     if (!nativeAiLives.Install(api,mod)) return 0;
     if (!nativePlayerCombat.Install(api,mod)) return 0;
+    nativePlayerCombat.SetSpecialEventSource(&ReadOcSpecialEvents);
     reviewCamera.Install(api,mod);
     if (!apsalus_probe::packetObserver.Install(api,mod)) return 0;
     if (verifyQuietRuntime) {

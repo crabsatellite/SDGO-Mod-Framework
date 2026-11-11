@@ -80,7 +80,7 @@ dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);bo
      <div class="inline spread"><h2>结算掉落</h2><button type="button" id="add-rule">＋ 添加掉落物品</button></div>
      <p class="note">以原生副官掉落触发为一次。每次最多命中一条规则；物品池内等概率抽取，剩余概率不掉落。</p>
      <div class="rule rule-head"><span>物品</span><span>概率 %</span><span>最少数量</span><span>最多数量</span><span></span></div><div class="rules" id="rules"></div>
-     <div class="totals"><span id="chance-total"></span><span id="no-drop"></span></div><datalist id="items"></datalist>
+     <div class="totals"><span id="chance-total"></span><span id="drop-expected"></span><span id="no-drop"></span></div><datalist id="items"></datalist>
     </div>
     <div class="footer"><button type="button" id="disable">停用自定义配置</button><div class="actions"><button type="button" id="apply">应用到服务端</button><button class="primary" type="submit">保存配置草稿</button></div></div>
    </form>
@@ -187,7 +187,8 @@ dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);bo
  }
  function total(){
   const sum=draft.drops.reduce((value,rule)=>value+Number(rule.chance_bps||0),0);
-  $('chance-total').textContent='掉落合计 '+(sum/100).toFixed(2)+'%';$('no-drop').textContent='不掉落 '+Math.max(0,100-sum/100).toFixed(2)+'%';$('chance-total').classList.toggle('error',sum>10000);
+  const expected=draft.drops.reduce((value,rule)=>value+Number(rule.chance_bps||0)*(Number(rule.min_amount||0)+Number(rule.max_amount||0))/20000,0);
+  $('chance-total').textContent='掉落合计 '+(sum/100).toFixed(2)+'%';$('drop-expected').textContent='每次触发期望 '+expected.toFixed(4)+' 件';$('no-drop').textContent='不掉落 '+Math.max(0,100-sum/100).toFixed(2)+'%';$('chance-total').classList.toggle('error',sum>10000);
  }
  function ruleInput(value,type,label){const input=document.createElement('input');input.type=type;input.value=value;input.setAttribute('aria-label',label);return input;}
  function renderRules(){

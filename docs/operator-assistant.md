@@ -81,6 +81,8 @@ running BattleServer has loaded the configuration.
 
 Each native operator-drop trigger can select at most one configured rule. Probabilities use 0.01%
 precision, may total at most 100%, and leave the remainder as no drop. Quantities use inclusive bounds.
+Multiple mutually exclusive rules may name the same item to form common, surprise, and rare jackpot bands;
+the panel shows the exact expected quantity per native trigger.
 
 - `all_players`: permanent access is granted on normal login or when the operator page opens. Existing
   rentals are upgraded. A full 100-slot operator inventory is never cleared to make room.

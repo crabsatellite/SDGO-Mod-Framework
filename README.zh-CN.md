@@ -57,10 +57,11 @@
 | [战斗 AI 难度](docs/battle-ai.zh-CN.md) <!-- catalog: `battle_ai`、`battle_ai_server` --> | 在房名中选择 Easy／Medium／Hard 三档对战 AI 难度 |
 | [王牌驾驶员 AI](docs/ace-ai.zh-CN.md) **Beta** <!-- catalog: `ace_ai`、`ace_ai_server` --> | 对战 AI 与我方任务僚机可按服主配置成为有姓名的王牌驾驶员，难度、HP 与普通攻击倍率由服务端统一决定 |
 | [任务行为版本](docs/mission-behavior.zh-CN.md) <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 统一选择任务 AI 与刷怪使用 OC 原版行为或现有行为，客户端与全部 Battle 频道同步 |
+| [新手保护](docs/newcomer-protection.zh-CN.md) <!-- catalog: `newcomer_protection` --> | 为服主指定玩家配置任务和对战的生命、普通武器伤害倍率；必杀维持原规则，名单仅留服务端 |
 | [AI 机师互动台词（可选）](docs/ai-dialogue.zh-CN.md) <!-- catalog: `ai_dialogue` --> | AI 机师按战况和机体人设说台词、给队友建议；需自填 DeepSeek 密钥，默认关闭 |
 | [每局随机机体](docs/room-random.zh-CN.md) <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机选择出击机体或卡组 |
 | [完整对战 All Map](docs/all-maps.zh-CN.md) <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 |
-| [三种强化体系，一个客户端](docs/over-custom.zh-CN.md) <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | OC 六维加点、挑战与洗点，房间可选择 OC、G改 2.0 或服主提供的 G改 1.0；原改造数据独立保留 |
+| [三种强化体系，一个客户端](docs/over-custom.zh-CN.md) <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | OC 六维加点（OC 房间战斗中六项都生效，含必杀）、挑战与洗点，房间可选择 OC、G改 2.0 或服主提供的 G改 1.0；原改造数据独立保留 |
 | [好友机体赠送（可选）](docs/friend-unit-gift.zh-CN.md) <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；默认关闭，由服主开启 |
 | [收藏扭蛋](docs/collection-capsule.zh-CN.md) <!-- catalog: `collection_capsule` --> | 优先补图鉴的活动机台；服主可设除外名单，图鉴获取说明随实际奖池自动更新；价格和次数可配置，默认每周 15 次 |
 | [战斗贡献奖励](docs/battle-rewards.zh-CN.md) <!-- catalog: `battle_rewards` --> | 按贡献发放 GB/MB，可配置人数倍率与按账号去重的聚会奖励 |
@@ -94,7 +95,7 @@
 | [商城商品管理](docs/shop-catalog.zh-CN.md) <!-- catalog: `shop_catalog` --> | 在 Manager 中上架、改价、下架服主自己的商城商品（WorldServer） |
 | [扭蛋机编辑器](docs/capsule-catalog.zh-CN.md) <!-- catalog: `capsule_catalog` --> | 管理机台、奖池、价格和权重；图鉴自动显示有效获取途径和游戏机台号 |
 | [机体族导入](docs/unit-import.zh-CN.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入任何来源按协议制作的机体包或整套阵容，补齐定义并生成两端数据、图鉴和商城／扭蛋资源 |
-| [地图与任务导入（Beta）](docs/map-import.zh-CN.md) <!-- catalog: `map_catalog` --> | 在 Mod Manager 登记按协议制作的地图包（地形、物件、出生点、天空、音乐）和带阶段目标、刷怪、人物对话、过场动画与横幅的 PvE 任务；生成一个客户端包和配套服务端行；附可下载的示例地图与 6 阶段任务 |
+| [地图与任务导入（Beta）](docs/map-import.zh-CN.md) <!-- catalog: `map_catalog` --> | 在 Mod Manager 登记按协议制作的地图包（地形、物件、出生点、天空、音乐）和带阶段目标、刷怪、人物对话、过场动画、横幅、加载海报、地面边界线与设计图掉落的 PvE 任务；生成一个客户端包和配套服务端行；附可下载的示例地图与 6 阶段任务 |
 | [副官与能力管理](docs/operator-assistant.zh-CN.md) <!-- catalog: `operator_catalog`、`operator_catalog_server` --> | 在 Manager 编辑副官外观、能力、补给掉落和商城草稿，导入分享包并发布配套内容 |
 | [AI 机体目录（可选）](docs/ai-catalog.zh-CN.md) <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 |
 | [公告与展示规则](docs/announcements.zh-CN.md) <!-- catalog: `announcements` --> | 登录时显示一次资讯简报；可选在游戏内按时段和事件展示服主公告 |

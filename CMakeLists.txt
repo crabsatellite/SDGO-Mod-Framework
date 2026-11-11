@@ -173,6 +173,18 @@ endfunction()
 
 sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
              SOURCES mods/mission_ai/mission_ai.cpp FILES mission_ai.lua)
+sdgo_add_mod(newcomer_protection SERVER DESCRIPTION "server-owned newcomer HP and ordinary attack multipliers"
+             SOURCES mods/newcomer_protection/newcomer_protection.cpp FILES symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_executable(newcomer_protection_test tests/newcomer_protection_test.cpp)
+    sdgo_strict(newcomer_protection_test)
+    add_test(NAME newcomer_protection_policy COMMAND newcomer_protection_test)
+    add_executable(newcomer_protection_dll_test tests/newcomer_protection_dll_test.cpp)
+    target_link_libraries(newcomer_protection_dll_test PRIVATE sdgo_api)
+    sdgo_strict(newcomer_protection_dll_test)
+    add_dependencies(newcomer_protection_dll_test newcomer_protection)
+    add_test(NAME newcomer_protection_loaded_dll COMMAND newcomer_protection_dll_test "$<TARGET_FILE:newcomer_protection>")
+endif()
 sdgo_add_mod(ai_dialogue DESCRIPTION "optional asynchronous AI pilot battle dialogue"
              SOURCES mods/ai_dialogue/ai_dialogue.cpp
              FILES symbols.fragment.ini config.ini personas.json prompt.txt LIBS bcrypt)
@@ -1584,6 +1596,9 @@ if(BUILD_TESTING)
     add_library(mission_respawn_server_probe SHARED tests/mission_respawn_server_probe.cpp)
     target_link_libraries(mission_respawn_server_probe PRIVATE sdgo_api)
     sdgo_strict(mission_respawn_server_probe)
+    add_library(oc_special_server_probe SHARED tests/oc_special_server_probe.cpp)
+    target_link_libraries(oc_special_server_probe PRIVATE sdgo_api)
+    sdgo_strict(oc_special_server_probe)
     target_link_libraries(mission_ai_observer_test PRIVATE sdgo_api)
     sdgo_strict(mission_ai_observer_test)
     add_test(NAME mission_ai_observer_offline COMMAND mission_ai_observer_test)

@@ -231,7 +231,7 @@ class Workspace:
                   'panels':[{'id':key,'title':provider.title} for key,provider in self.providers.items()]}
         return result
 
-    def details(self, host_id, mod_id):
+    def details(self, host_id, mod_id, *, internal=False):
         host = self.host(host_id)
         contract = self.contracts.get(mod_id)
         mod_dir = self._mod_directory(host, mod_id)
@@ -244,7 +244,7 @@ class Workspace:
         if host['role'] not in contract.get('hosts', []):
             raise ValueError('此 Mod 不属于所选宿主')
         contract=copy.deepcopy(contract)
-        contract['settings']=[field for field in contract.get('settings',[]) if field['audience']=='user' or self.mode=='developer']
+        contract['settings']=[field for field in contract.get('settings',[]) if field['audience']=='user' or self.mode=='developer' or internal]
         files = {}
         values = {}
         for field in contract.get('settings', []):
@@ -279,9 +279,11 @@ class Workspace:
     def _client_xml_field(field):
         return (field['file'], field.get('section', 'settings'), field['key']) == registry.CLIENT_XML_SETTING
 
-    def configure(self, host_id, mod_id, values, revisions):
+    def configure(self, host_id, mod_id, values, revisions, *, internal=False):
         with self._change_lease(), storage.LOCK:
-            current = self.details(host_id, mod_id)
+            # Only trusted Python providers can request hidden storage fields.
+            # HTTP settings calls keep the default user/developer visibility.
+            current = self.details(host_id, mod_id, internal=internal)
             fields = {field['id']: field for field in current['contract'].get('settings', [])}
             if not isinstance(values, dict) or set(values) - fields.keys():
                 raise ValueError('请求包含未登记的配置项')
@@ -327,7 +329,7 @@ class Workspace:
             enabled=next(n for n in after if n['host']==host_id and n['id']==mod_id)['enabled']
             runtime=mod_state(host,mod_id,enabled)
             hot=bool(values)and all(fields[k].get('activation')=='hot_reload'for k in values)
-            return {**self.details(host_id, mod_id), 'saved': True, 'activation':'hot_reload'if hot else'restart_required','runtime':runtime}
+            return {**self.details(host_id, mod_id, internal=internal), 'saved': True, 'activation':'hot_reload'if hot else'restart_required','runtime':runtime}
 
     def toggle(self, host_id, mod_id, enabled, expected):
         if type(enabled) is not bool or not registry.ID.fullmatch(mod_id):

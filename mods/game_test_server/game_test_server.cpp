@@ -19,6 +19,7 @@
 #include "sdgo/mission_behavior_profile.h"
 #include "sdgo/mission_behavior_server_observer.h"
 #include "sdgo/oc_custom_battle_observer.h"
+#include "sdgo/newcomer_protection_observer.h"
 #include "sdgo/pvp_ai_observer.h"
 #include "sdgo/ace_ai_observer.h"
 #include "sdgo/sdgo_api.h"
@@ -723,8 +724,47 @@ namespace
         return count;
     }
 
-    bool WriteReceipt(const std::string& line)
+    std::string NewcomerJson()
     {
+        const auto library=GetModuleHandleW(L"newcomer_protection.dll");
+        const auto builds=library?reinterpret_cast<SdgoNewcomerProtectionRecentV1Fn>(GetProcAddress(library,SDGO_NEWCOMER_PROTECTION_RECENT_EXPORT)):nullptr;
+        const auto hits=library?reinterpret_cast<SdgoNewcomerProtectionHitsV1Fn>(GetProcAddress(library,SDGO_NEWCOMER_PROTECTION_HITS_EXPORT)):nullptr;
+        if(!builds||!hits)return {};
+        SdgoNewcomerProtectionReceiptV1 players[64]{};
+        SdgoNewcomerProtectionHitV1 damage[64]{};
+        const auto count=builds(players,64),hitCount=hits(damage,64);
+        std::string result="{\"players\":[";
+        for(std::uint32_t i=0;i<count;++i){
+            const auto& p=players[i];if(i)result+=',';
+            result+="{\"sequence\":"+std::to_string(p.sequence)+",\"account\":"+std::to_string(p.account)+
+                ",\"unit\":"+std::to_string(p.unit)+",\"deck\":"+std::to_string(p.deck)+",\"mode\":"+std::to_string(p.mode)+
+                ",\"maximum_before\":"+std::to_string(p.maximum_before)+",\"maximum_after\":"+std::to_string(p.maximum_after)+
+                ",\"current_before\":"+std::to_string(p.current_before)+",\"current_after\":"+std::to_string(p.current_after)+
+                ",\"special_unchanged\":"+std::string(std::memcmp(p.special_before,p.special_after,sizeof(p.special_before))==0?"true":"false")+'}';
+        }
+        result+="],\"hits\":[";
+        for(std::uint32_t i=0;i<hitCount;++i){
+            const auto& h=damage[i];if(i)result+=',';
+            result+="{\"sequence\":"+std::to_string(h.sequence)+",\"account\":"+std::to_string(h.account)+
+                ",\"victim\":"+std::to_string(h.victim)+",\"mode\":"+std::to_string(h.mode)+",\"weapon\":"+std::to_string(h.weapon)+
+                ",\"before\":"+std::to_string(h.proposed_before)+",\"after\":"+std::to_string(h.proposed_after)+
+                ",\"cap_before\":"+std::to_string(h.cap_before)+",\"cap_after\":"+std::to_string(h.cap_after)+'}';
+        }
+        result+="]";
+        const auto status=library?reinterpret_cast<SdgoNewcomerProtectionStatusV1Fn>(GetProcAddress(library,SDGO_NEWCOMER_PROTECTION_STATUS_EXPORT)):nullptr;
+        SdgoNewcomerProtectionStatusV1 values{sizeof(values),1};
+        if(status&&status(&values))result+=",\"status\":{\"hit_calls\":"+std::to_string(values.hit_calls)+",\"human_calls\":"+std::to_string(values.human_calls)+
+            ",\"roster_calls\":"+std::to_string(values.roster_calls)+",\"ordinary_roster_calls\":"+std::to_string(values.ordinary_roster_calls)+
+            ",\"membership_rejected\":"+std::to_string(values.membership_rejected)+",\"last_account\":"+std::to_string(values.last_account)+",\"last_type\":"+std::to_string(values.last_type)+'}';
+        return result+'}';
+    }
+
+    bool WriteReceipt(const std::string& input)
+    {
+        auto line=input;
+        const auto newcomer=NewcomerJson();
+        const auto end=line.find_last_of('}');
+        if(!newcomer.empty()&&end!=std::string::npos)line.insert(end,",\"newcomer\":"+newcomer);
         DWORD written = 0;
         const bool ok = g_eventFile != INVALID_HANDLE_VALUE &&
             line.size() <= MAXDWORD &&
@@ -735,6 +775,26 @@ namespace
         if (!ok && InterlockedCompareExchange(&g_writeErrorLogged, 1, 0) == 0)
             g_api->Log(g_mod, SDGO_LOG_ERROR, "GameTest server observer could not flush its JSONL receipt");
         return ok;
+    }
+
+    void WriteNewcomerSnapshot()
+    {
+        static ULONGLONG next=0;
+        const auto now=GetTickCount64();
+        if(now<next)return;
+        next=now+1000;
+        const auto snapshot=NewcomerJson();
+        if(snapshot.empty())return;
+        const auto body="{\"run_id\":\""+EscapeJson(g_config.runId)+"\",\"pid\":"+std::to_string(GetCurrentProcessId())+
+            ",\"host_key\":\""+EscapeJson(g_api->host_key)+"\",\"newcomer\":"+snapshot+"}\n";
+        const auto path=g_directory+L"\\newcomer-observer.json";
+        const auto temporary=path+L".tmp";
+        HANDLE file=CreateFileW(temporary.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(file==INVALID_HANDLE_VALUE)return;
+        DWORD written=0;
+        const bool ok=WriteFile(file,body.data(),static_cast<DWORD>(body.size()),&written,nullptr)&&written==body.size()&&FlushFileBuffers(file);
+        CloseHandle(file);
+        if(ok)MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
     }
 
     const char* EventName(uint32_t type)
@@ -1381,6 +1441,7 @@ namespace
                     g_mod,
                     SDGO_LOG_ERROR,
                     "GameTest server observer could not update mission profile status");
+            WriteNewcomerSnapshot();
             Sleep(25);
         }
     }
@@ -1497,6 +1558,7 @@ namespace
             }
             if (statusChanged && !WriteStatus(lifecycle))
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "GameTest server observer could not update its status file");
+            WriteNewcomerSnapshot();
             Sleep(25);
         }
     }

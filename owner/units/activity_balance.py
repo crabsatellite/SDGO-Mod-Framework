@@ -1,4 +1,4 @@
-"""Source-bound averages for dedicated imported S-tier activity drafts."""
+"""Source-bound averages for dedicated imported activity drafts."""
 from __future__ import annotations
 
 from collections import Counter,defaultdict
@@ -6,7 +6,8 @@ from fractions import Fraction
 
 
 def recommend(root,*,units,categories,prices,pool,listed_machines,currency=None,profile='ordinary'):
-    if root.get('rank')!=4:raise ValueError('独立活动机建议只用于S级及以上机库根形态')
+    if type(root.get('rank')) is not int or not 1<=root['rank']<=4:
+        raise ValueError('活动机目标机体等级无效')
     if profile not in ('ordinary','same_tier'):raise ValueError('未知活动机台参考类型')
     unit_by_id={u['UnitNumber']:u for u in units}
     category_by_id={r['CatalogueID']:r for r in categories}

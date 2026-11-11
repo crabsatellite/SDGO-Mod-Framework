@@ -17,6 +17,11 @@
   "loading": "images/cat_loading.png",
   "loading_screen": "poster"
  },
+ "drops": {
+  "normal": true,
+  "blueprints": "mission",
+  "blueprint_per_mille": 2
+ },
  "briefing": {
   "zh": [
    "第1阶段：击破扎古部队，肃清残兵",

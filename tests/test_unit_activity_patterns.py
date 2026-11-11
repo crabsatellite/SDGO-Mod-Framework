@@ -1,6 +1,6 @@
 import unittest
 
-from owner.units.activity_patterns import build_pattern
+from owner.units.activity_patterns import build_pattern, normalize_preferences
 from owner.units.activity_repository import normalize_config
 
 
@@ -21,14 +21,15 @@ class ActivityPatterns(unittest.TestCase):
             pool.append({'MachineID':9301,'CategoryID':cid,'Amount':1,'ExpandedEntries':count})
         return dict(units=units,categories=categories,prices=prices,pool=pool,listed_machines={101,201,9301})
 
-    def build(self,pattern,preferences=None):
-        data=self.fixture()
+    def build(self,pattern,preferences=None,root=None,data=None):
+        data=data or self.fixture()
         # The ordinary experience category is split across amounts, but its
         # category total must still stay below the native repeat limit.
         data['categories'].append({'CatalogueID':2220002,'Name':'Native second pack','RefIndex':3240002,'TimeLimit':0})
         for row in data['pool']:
             if row['MachineID'] in (101,201) and row['Amount']==3:row['CategoryID']=2220002
-        return build_pattern(pattern,{'unit_id':90001,'rank':4,'subgrade':4},1119000,preferences=preferences,**data)
+        return build_pattern(pattern,root or {'unit_id':90001,'rank':4,'subgrade':4},1119000,
+                             preferences=preferences,**data)
 
     def test_owner_can_configure_private_gp_and_small_token_target_defaults(self):
         preferences={'schema_version':1,'patterns':{'gp_rare':{'featured_entries':20},'token_rare':{'featured_entries':20}}}
@@ -43,6 +44,43 @@ class ActivityPatterns(unittest.TestCase):
     def test_framework_without_owner_settings_uses_host_reference_frequency(self):
         result=self.build('gp_rare')
         self.assertEqual(10,result['target_entries'])
+
+    def test_aggregate_s_grade_priority_rebalances_multiple_s_targets(self):
+        preferences={'schema_version':1,'patterns':{'gp_rare':{
+            'featured_entries':20,'s_grade_entries':150}}}
+        result=self.build('gp_rare',preferences)
+        self.assertEqual(20,result['requested_target_entries'])
+        self.assertEqual(100,result['target_entries'])
+        self.assertEqual(150,result['s_grade_entries'])
+        self.assertEqual(150,sum(row['entries'] for row in result['pool']
+                                 if row['category_id'] in (1119000,1100004)))
+        self.assertEqual(10000,sum(row['entries'] for row in result['pool']))
+        self.assertTrue(all(row['entries']>0 for row in result['pool']))
+
+    def test_aggregate_s_grade_priority_handles_a_single_s_target(self):
+        data=self.fixture()
+        next(row for row in data['units'] if row['UnitNumber']==4)['UnitGradeNumber']=3
+        result=self.build('gp_rare',{'schema_version':1,'patterns':{'gp_rare':{
+            'featured_entries':20,'s_grade_entries':150}}},data=data)
+        self.assertEqual((20,150,150),(result['requested_target_entries'],
+                                     result['target_entries'],result['s_grade_entries']))
+        self.assertEqual(150,next(row['entries'] for row in result['pool']
+                                  if row['category_id']==1119000))
+
+    def test_non_s_featured_target_keeps_native_s_companions(self):
+        result=self.build('gp_rare',{'schema_version':1,'patterns':{'gp_rare':{
+            'featured_entries':20,'s_grade_entries':150}}},
+            root={'unit_id':90001,'rank':3,'subgrade':3})
+        self.assertEqual(20,result['requested_target_entries'])
+        self.assertEqual(21,result['target_entries'])
+        self.assertEqual(150,sum(row['entries'] for row in result['pool']
+                                 if row['category_id'] in (1100002,1100004)))
+        self.assertTrue(any(row['category_id']==1119000 for row in result['pool']))
+
+    def test_aggregate_s_grade_frequency_keeps_premium_pool_independent(self):
+        with self.assertRaisesRegex(ValueError,'99 代币高阶模板'):
+            normalize_preferences({'schema_version':1,'patterns':{
+                'token_99':{'s_grade_entries':150}}})
 
     def test_99_token_pool_is_only_selected_explicitly(self):
         result=self.build('token_99')

@@ -17,7 +17,13 @@ namespace
     int g_continuousSetting = 0;
     int g_secondarySetting = 0;
     int g_weaponSlotSetting = -1;
+    int g_specialSetting = 0;
     int g_weaponRequests = 0;
+    uint32_t g_weaponAction = 16;
+    bool g_specialCommit = false;
+    bool g_specialSourceReady = true;
+    bool g_specialComputes = true;
+    uint32_t g_specialEvents = 0;
     bool g_consumeAmmo = true;
     int g_symbolCalls = 0;
     const char* g_missingSymbol = nullptr;
@@ -30,6 +36,8 @@ namespace
 
     constexpr uint32_t kPilotId = 77001;
     constexpr uint32_t kObjectId = 7;
+    constexpr uint32_t kEnemyObjectId = 9;
+    constexpr uint32_t kEnemyPilotId = 0x80000011u;
     uint8_t g_manager[0x100] = {};
     uint8_t* g_managerPointer = g_manager;
     uint8_t g_unit[0x3300] = {};
@@ -38,6 +46,9 @@ namespace
     uint8_t g_attack[0xC00] = {};
     uint8_t g_definition[0x300] = {};
     uint8_t g_weapons[3][0x700] = {};
+    uint8_t g_specialWeapon[0x700] = {};
+    uint8_t g_enemy[0x100] = {};
+    uint8_t g_enemyNode[0x100] = {};
     void* g_moveVtable[2] = {};
     void* g_attackVtable[2] = {};
     uint8_t g_nativeInput[0x40] = {};
@@ -117,7 +128,7 @@ namespace
         void* manager, void*, uint32_t objectId)
     {
         CHECK(manager == g_manager);
-        return objectId == kObjectId ? g_unit : nullptr;
+        return objectId == kObjectId ? g_unit : objectId == kEnemyObjectId ? g_enemy : nullptr;
     }
 
     void __fastcall MoveInput(
@@ -176,7 +187,23 @@ namespace
                 auto ammo = Get<int16_t>(g_attack, 0x24C + 2 * 0xC8);
                 if (ammo > 0) Put(g_attack, 0x24C + 2 * 0xC8, int16_t(ammo - 1));
             }
+            // A bound melee special captures only a locked target.
+            if (g_specialComputes && Get<int32_t>(g_attack, 0x240) == 3 &&
+                (g_specialWeapon[0x6A] != 1 || g_lockHeld))
+                ++g_specialEvents;
         }
+        // The native FSM commits the queued special-slot selection.
+        if (g_specialCommit && Get<int32_t>(g_unit, 0xDD0) == 3) {
+            Put(g_attack, 0x240, int32_t(3));
+            Put(g_attack, 0x248, static_cast<void*>(g_specialWeapon));
+        }
+    }
+
+    bool __cdecl SpecialEvents(uint32_t* events)
+    {
+        if (!g_specialSourceReady || !events) return false;
+        *events = g_specialEvents;
+        return true;
     }
 
     int SettingInt(
@@ -194,6 +221,8 @@ namespace
             return g_secondarySetting;
         if (std::strcmp(key, "BattlePlayerWeaponSlot") == 0)
             return g_weaponSlotSetting;
+        if (std::strcmp(key, "BattlePlayerSpecial") == 0)
+            return g_specialSetting;
         return fallback;
     }
 
@@ -377,10 +406,12 @@ namespace
     void __fastcall WeaponInput(uint8_t* unit, void*, void* input, int wheel)
     {
         CHECK(unit == g_unit && input == g_nativeInput && wheel == 0);
-        CHECK(g_downDetour(input, nullptr, 16) == 1);
+        CHECK(g_downDetour(input, nullptr, g_weaponAction) == 1);
         ++g_weaponRequests;
         // Real native receipt queues DD0; it does not acknowledge the binding.
-        Put(g_unit, 0xDD0, int32_t(2));
+        // The special slot is queued only with a full SP gauge.
+        if (g_weaponAction != 17 || Get<int32_t>(g_unit, 0xBC8) >= 30000)
+            Put(g_unit, 0xDD0, int32_t(g_weaponAction - 14));
     }
 
     void RangedProfile()
@@ -535,33 +566,34 @@ namespace
         g_secondarySetting = 0;
         g_symbolCalls = 0;
         g_missingSymbol = nullptr;
+        // A disabled probe binds only the read-only unit manager (ReadLocalArea).
         NativePlayerCombatProbe disabled;
         CHECK(disabled.Install(&api, nullptr));
-        CHECK(g_symbolCalls == 0);
+        CHECK(g_symbolCalls == 1);
 
         g_setting = 2;
         NativePlayerCombatProbe invalid;
         CHECK(!invalid.Install(&api, nullptr));
-        CHECK(g_symbolCalls == 0);
+        CHECK(g_symbolCalls == 1);
 
         g_setting = 1;
         g_continuousSetting = 2;
         NativePlayerCombatProbe invalidContinuous;
         CHECK(!invalidContinuous.Install(&api, nullptr));
-        CHECK(g_symbolCalls == 0);
+        CHECK(g_symbolCalls == 1);
 
         g_continuousSetting = 0;
         g_secondarySetting = 2;
         NativePlayerCombatProbe invalidSecondary;
         CHECK(!invalidSecondary.Install(&api, nullptr));
-        CHECK(g_symbolCalls == 0);
+        CHECK(g_symbolCalls == 1);
 
         g_secondarySetting = 0;
         g_missingSymbol =
             "test.apsalus_primary_input";
         NativePlayerCombatProbe missing;
         CHECK(!missing.Install(&api, nullptr));
-        CHECK(g_symbolCalls == 5);
+        CHECK(g_symbolCalls == 6);
         g_missingSymbol = nullptr;
     }
 
@@ -966,6 +998,230 @@ namespace
         g_secondarySetting = 0;
         g_continuousSetting = 0;
     }
+
+    void SpecialProfile(uint8_t rangeType)
+    {
+        RangedProfile();
+        std::memset(g_specialWeapon, 0, sizeof(g_specialWeapon));
+        Put(g_definition, 0x255, uint32_t(50001));
+        Put(g_specialWeapon, 0, uint32_t(50001));
+        g_specialWeapon[0x69] = 2;
+        g_specialWeapon[0x6A] = rangeType;
+        Put(g_specialWeapon, 0x6C, int32_t(4200));
+        Put(g_specialWeapon, 0x72, uint32_t(450));
+        for (size_t bank : {size_t(0x24C), size_t(0x56C)})
+            Put(g_attack, bank + 3 * 0xC8 + 0xC, static_cast<void*>(g_specialWeapon));
+        std::memset(g_enemy, 0, sizeof(g_enemy));
+        std::memset(g_enemyNode, 0, sizeof(g_enemyNode));
+        Put(g_enemy, 0x04, kEnemyObjectId);
+        Put(g_enemy, 0x08, static_cast<void*>(g_enemyNode));
+        Put(g_enemy, 0x38, int32_t(800));
+        g_weaponAction = 17;
+        g_specialCommit = true;
+        g_specialSourceReady = true;
+        g_specialEvents = 0;
+    }
+
+    // One enemy AI of the PvP snapshot, `distance` ahead of the local node.
+    void PlaceEnemy(SdgoPvpAiClientSnapshotV1& snapshot, float distance)
+    {
+        const float x = Get<float>(g_node, 0x88) + distance;
+        Put(g_enemyNode, 0x88, x);
+        Put(g_enemyNode, 0x90, Get<float>(g_node, 0x90));
+        snapshot.local_team = 1;
+        snapshot.bot_count = 1;
+        auto& bot = snapshot.bots[0];
+        bot.pilot_id = kEnemyPilotId;
+        bot.object_id = kEnemyObjectId;
+        bot.team = 2;
+        bot.valid_registered_object = 1;
+        bot.position_valid = 1;
+        bot.position_x = x;
+        bot.position_z = Get<float>(g_node, 0x90);
+    }
+
+    bool Observed(const char* text)
+    {
+        for (const auto& line : g_observations)
+            if (line.find(text) != std::string::npos) return true;
+        return false;
+    }
+
+    void SpecialModeTests()
+    {
+        SdgoApi api = Api();
+        g_setting = 1;
+        g_continuousSetting = 1;
+        g_secondarySetting = 0;
+        g_weaponSlotSetting = -1;
+        g_missingSymbol = nullptr;
+
+        // Invalid special configurations are rejected before any binding.
+        g_symbolCalls = 0;
+        g_specialSetting = 2;
+        NativePlayerCombatProbe invalidSpecial;
+        CHECK(!invalidSpecial.Install(&api, nullptr));
+        g_specialSetting = 1;
+        g_setting = 0;
+        NativePlayerCombatProbe specialWithoutCombat;
+        CHECK(!specialWithoutCombat.Install(&api, nullptr));
+        g_setting = 1;
+        g_weaponSlotSetting = 2;
+        NativePlayerCombatProbe specialWithSlot;
+        CHECK(!specialWithSlot.Install(&api, nullptr));
+        g_weaponSlotSetting = 3;
+        NativePlayerCombatProbe specialSlot;
+        CHECK(!specialSlot.Install(&api, nullptr));
+        g_weaponSlotSetting = -1;
+        CHECK(g_symbolCalls == 0);
+        for (const char* symbol : {"test.player_secondary_input", "test.player_weapon_input"}) {
+            g_missingSymbol = symbol;
+            NativePlayerCombatProbe missing;
+            CHECK(!missing.Install(&api, nullptr));
+        }
+        g_missingSymbol = nullptr;
+
+        ResetNativeWorld();
+        SpecialProfile(1);
+        ScoreboardActions input;
+        CHECK(input.Install(&api, nullptr));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 31) == 0);
+        g_symbolCalls = 0;
+        NativePlayerCombatProbe probe;
+        CHECK(probe.Install(&api, nullptr));
+        CHECK(g_symbolCalls == 7 && probe.SpecialEnabled());
+        probe.SetSpecialEventSource(&SpecialEvents);
+        auto snapshot = Snapshot();
+        auto status = StartStatus();
+        auto context = Context(1000);
+
+        // No enemy within the special's reach (RangeSize 450): ordinary
+        // movement and primary fire, no gauge fill or special selection.
+        PlaceEnemy(snapshot, 2000.0f);
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        context.elapsed_ms = 1180;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(g_weaponRequests == 0 && g_fireHeld && !g_lockHeld);
+        CHECK(Get<int32_t>(g_attack, 0x240) == 0 && g_specialEvents == 0);
+        CHECK(probe.SpecialGauge() == 25000 && probe.SpecialAttempts() == 0);
+        context.elapsed_ms = 11200;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(Observed("waits for an enemy within reach=450 nearest=1998") && g_weaponRequests == 0);
+        // A dead enemy is no target.
+        PlaceEnemy(snapshot, 300.0f);
+        Put(g_enemy, 0x38, int32_t(0));
+        context.elapsed_ms = 11250;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(g_weaponRequests == 0 && Get<int32_t>(g_unit, 0xBC8) == 25000);
+        Put(g_enemy, 0x38, int32_t(800));
+
+        // An enemy in reach: the fixture fills the gauge, the mapped down edge
+        // of action 17 goes to the original consumer and the attack FSM is
+        // dispatched; nothing fires this tick.
+        const int fireBefore = g_fireInputCalls;
+        const int dispatchBefore = g_attackDispatchCalls;
+        context.elapsed_ms = 11300;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(Get<int32_t>(g_unit, 0xBC8) == 30000 && probe.SpecialFills() == 1);
+        CHECK(g_weaponRequests == 1 && Get<int32_t>(g_unit, 0xDD0) == 3);
+        CHECK(g_fireInputCalls == fireBefore && g_attackDispatchCalls == dispatchBefore + 1);
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 9) == 0);
+        CHECK(probe.SpecialAttempts() == 1 &&
+              Observed("attempt=1 target=80000011 distance=300 reach=450: fixture SP 25000 -> 30000"));
+
+        // The committed AttackStyle-2 melee weapon fires with the lock held.
+        context.elapsed_ms = 11320;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(Observed("slot=3 weapon=50001 range_type=1 damage_size=4200"));
+        CHECK(g_fireHeld && g_lockHeld && g_lockInputCalls > 0);
+        CHECK(g_specialEvents == 1 && probe.SpecialWeapon() == 50001 &&
+              probe.SpecialFamily() == 1 && probe.SpecialDamageSize() == 4200);
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 17) == 0);
+        context.elapsed_ms = 11340;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(probe.SpecialObserved() && Observed("special computed attempt=1 weapon=50001"));
+        // Apart from the declared gauge fill nothing is written: not the weapon
+        // row, the HP or the enemy.
+        CHECK(Get<int32_t>(g_specialWeapon, 0x6C) == 4200 && Get<int32_t>(g_unit, 0x38) == 1000 &&
+              Get<int32_t>(g_enemy, 0x38) == 800);
+        const int requests = g_weaponRequests;
+        context.elapsed_ms = 12000;
+        CHECK(probe.Poll(&context, snapshot, status, input));
+        CHECK(g_weaponRequests == requests);
+        probe.Finish(&context, input);
+        CHECK(g_assertions.size() == 5);
+        for (int result : g_assertions) CHECK(result == 1);
+        CHECK(Observed("fixture_fills=1") && Observed("computed=1"));
+
+        // A minute without a target in reach doubles the reach. A selection that
+        // is not committed and a special without any computation time out and
+        // wait for a target again; a battle without the special fails its two
+        // special assertions.
+        ResetNativeWorld();
+        SpecialProfile(2);
+        g_specialCommit = false;
+        NativePlayerCombatProbe timeout;
+        CHECK(timeout.Install(&api, nullptr));
+        timeout.SetSpecialEventSource(&SpecialEvents);
+        snapshot = Snapshot();
+        PlaceEnemy(snapshot, 800.0f);
+        context.elapsed_ms = 10000;
+        CHECK(timeout.Poll(&context, snapshot, status, input));
+        context.elapsed_ms = 70000;
+        CHECK(timeout.Poll(&context, snapshot, status, input));
+        CHECK(Observed("the reach doubles") && g_weaponRequests == 0);
+        context.elapsed_ms = 70020;
+        CHECK(timeout.Poll(&context, snapshot, status, input));
+        CHECK(g_weaponRequests == 1 && Observed("reach=900: fixture SP 25000 -> 30000"));
+        PlaceEnemy(snapshot, 300.0f);
+        context.elapsed_ms = 76020;
+        CHECK(timeout.Poll(&context, snapshot, status, input));
+        CHECK(Observed("special slot not bound attempt=1"));
+        context.elapsed_ms = 76040;
+        g_specialCommit = true;
+        g_specialComputes = false;
+        CHECK(timeout.Poll(&context, snapshot, status, input));
+        CHECK(timeout.SpecialAttempts() == 2 && Get<int32_t>(g_attack, 0x240) == 3 &&
+              timeout.SpecialFills() == 1);
+        // A bound ranged special fires without the lock.
+        context.elapsed_ms = 76060;
+        CHECK(timeout.Poll(&context, snapshot, status, input));
+        CHECK(g_fireHeld && !g_lockHeld && g_specialEvents == 0);
+        CHECK(Observed("slot=3 weapon=50001 range_type=2"));
+        // The next case restarts elapsed_ms; the probe's own time continues.
+        context.elapsed_ms = 100;
+        CHECK(timeout.Poll(&context, snapshot, status, input));
+        CHECK(!Observed("fired for") && g_fireHeld);
+        context.elapsed_ms = 20100;
+        CHECK(timeout.Poll(&context, snapshot, status, input));
+        CHECK(Observed("special attempt=2 fired for 20100 ms") && !timeout.SpecialObserved());
+        g_assertions.clear();
+        timeout.Finish(&context, input);
+        CHECK(g_assertions.size() == 5);
+        if (g_assertions.size() == 5)
+            CHECK(g_assertions[0] && g_assertions[1] && g_assertions[2] &&
+                  g_assertions[3] && !g_assertions[4]);
+        g_specialComputes = true;
+
+        // An unreadable special source fails the case once a target is in reach.
+        ResetNativeWorld();
+        SpecialProfile(1);
+        g_specialSourceReady = false;
+        NativePlayerCombatProbe unreadable;
+        CHECK(unreadable.Install(&api, nullptr));
+        unreadable.SetSpecialEventSource(&SpecialEvents);
+        snapshot = Snapshot();
+        PlaceEnemy(snapshot, 300.0f);
+        context.elapsed_ms = 50000;
+        CHECK(!unreadable.Poll(&context, snapshot, status, input));
+        CHECK(g_assertions.size() == 1 && !g_assertions[0]);
+
+        g_specialSetting = 0;
+        g_weaponAction = 16;
+        g_specialCommit = false;
+        g_specialSourceReady = true;
+        g_continuousSetting = 0;
+    }
 }
 
 int main()
@@ -974,6 +1230,7 @@ int main()
     GatingAndAbiTests();
     MissionLeaseTests();
     RangedWeaponAcknowledgementTests();
+    SpecialModeTests();
     std::cout << g_checks << " checks, "
               << g_failures << " failures\n";
     return g_failures ? 1 : 0;

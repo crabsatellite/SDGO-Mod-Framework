@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 #include "sdgo/game_test.h"
 #include "sdgo/mission_ai_client_observer.h"
@@ -17,9 +18,29 @@
 // resolves the authenticated pilot's real local unit, supplies mapped forward
 // and primary-fire actions to the original input consumers, and dispatches the
 // resulting native FSM work through the unit's real control context. It never
-// writes HP, SP, position, controller flags or FSM state.
+// writes HP, position, controller flags, FSM state or weapon data.
+//
+// With BattlePlayerSpecial=1 the probe also fires the special attack. Charging
+// the SP gauge (CUnit+0xBC8, 0..30000) in combat takes about 27,300 damage
+// dealt, which a short isolated battle does not provide, so the special mode is
+// a declared GameTest fixture: once a living enemy AI of the PvP snapshot is
+// within the special weapon's reach, it fills the local gauge to 30000 (the
+// only gameplay value it writes; the Battle host's own check is filled by the
+// matching development-only server fixture). The mapped special-slot action 17
+// then goes to the original weapon input consumer, which selects slot 3 only
+// with a full gauge, and the attack FSM is dispatched until it binds that
+// slot's AttackStyle-2 weapon. Primary input (plus the lock action for the
+// melee families) fires the special until the caller's special-event source
+// reports a new local special computation, or the attempt times out and the
+// next one waits for a target again.
 class NativePlayerCombatProbe
 {
+public:
+    // Reads the cumulative count of local special computations (the OC client
+    // observer's special_events). False when the source is unavailable.
+    using SpecialEventsFn = bool(__cdecl*)(uint32_t* events);
+
+private:
     using ObjectIdFromPilotFn =
         uint32_t(__thiscall*)(void*, uint32_t);
     using FindObjectFn =
@@ -51,6 +72,31 @@ class NativePlayerCombatProbe
     static constexpr size_t kMoveOwner = 0x21C;
     static constexpr size_t kNodePosition = 0x88;
     static constexpr size_t kUnitTerrainArea = 0x3148;   // left x, right x, top z, bottom z, then u8 on
+
+    // Special attack (BattlePlayerSpecial).
+    enum class SpecialPhase : uint8_t { Charge, Select, Fire, Done };
+    enum class SpecialStep : uint8_t { Control, Wait, Fail };
+    static constexpr size_t kUnitDefinition = 0x9C4;
+    static constexpr size_t kUnitSpecialGauge = 0xBC8;
+    static constexpr int32_t kSpecialGaugeFull = 30000;
+    static constexpr int32_t kSpecialSlot = 3;
+    static constexpr uint32_t kSpecialSelectAction = 14u + kSpecialSlot;
+    static constexpr size_t kDefinitionSpecialWeapon = 0x249 + kSpecialSlot * 4;
+    static constexpr size_t kAttackSelectedSlot = 0x240;
+    static constexpr size_t kAttackSelectedWeapon = 0x248;
+    static constexpr size_t kWeaponAttackStyle = 0x69;
+    static constexpr size_t kWeaponRangeType = 0x6A;
+    static constexpr size_t kWeaponDamageSize = 0x6C;
+    static constexpr size_t kWeaponRangeSize = 0x72;
+    static constexpr uint64_t kSpecialSelectMs = 6000;
+    static constexpr uint64_t kSpecialFireMs = 20000;
+    static constexpr uint32_t kSpecialAttempts = 10;
+    // Target gate: the special weapon's own RangeSize, at least kSpecialMinReach;
+    // after kSpecialRelaxMs without a target in reach, twice that.
+    static constexpr float kSpecialMinReach = 300.0f;
+    static constexpr float kSpecialDefaultReach = 1000.0f;
+    static constexpr uint64_t kSpecialRelaxMs = 60000;
+    static constexpr uint64_t kSpecialReportMs = 10000;
 
     void** unitManager_ = nullptr;
     ObjectIdFromPilotFn objectIdFromPilot_ = nullptr;
@@ -90,6 +136,39 @@ class NativePlayerCombatProbe
     uint32_t consumedFireQueries_ = 0;
     uint32_t dispatches_ = 0;
     float baseline_[3] = {};
+    // Probe time: each case's context restarts elapsed_ms, and a battle can be
+    // polled from more than one case (oc.special, then pvp.return).
+    bool clockStarted_ = false;
+    uint64_t clock_ = 0;
+    uint64_t lastElapsed_ = 0;
+
+    bool special_ = false;
+    SpecialEventsFn specialEvents_ = nullptr;
+    SpecialPhase specialPhase_ = SpecialPhase::Charge;
+    uint64_t specialPhaseAt_ = 0;
+    uint32_t specialAttempts_ = 0;
+    uint32_t specialSelectInputs_ = 0;
+    uint32_t specialEventsBefore_ = 0;
+    uint32_t specialEventsAfter_ = 0;
+    int32_t specialGauge_ = 0;
+    int32_t specialGaugeMax_ = 0;
+    int32_t specialGaugeAtSelect_ = 0;
+    uint32_t specialUnitData_ = 0;
+    uint32_t specialWeapon_ = 0;
+    uint8_t specialFamily_ = 0;
+    int32_t specialDamageSize_ = 0;
+    bool specialBound_ = false;
+    bool specialObserved_ = false;
+    uint32_t specialFills_ = 0;
+    float specialReach_ = 0.0f;
+    float specialDistance_ = -1.0f;
+    uint32_t specialTargetPilot_ = 0;
+    uint64_t specialWaitAt_ = 0;
+    uint64_t specialReportAt_ = 0;
+    bool specialWaiting_ = false;
+    bool specialRelaxed_ = false;
+    // The PvP snapshot of the current Poll (enemy positions); null for missions.
+    const SdgoPvpAiClientSnapshotV1* pvpSnapshot_ = nullptr;
 
     void Release(ScoreboardActions& input)
     {
@@ -98,6 +177,8 @@ class NativePlayerCombatProbe
         input.HoldGameplay(kLockAction, false);
         if (requestedWeaponSlot_ >= 0)
             input.HoldGameplay(14u + requestedWeaponSlot_, false);
+        if (special_)
+            input.HoldGameplay(kSpecialSelectAction, false);
         forwardHeld_ = false;
         primaryHeld_ = false;
         controlsActive_ = false;
@@ -124,6 +205,294 @@ class NativePlayerCombatProbe
         consumedMoveQueries_ = 0;
         consumedFireQueries_ = 0;
         dispatches_ = 0;
+        specialPhase_ = SpecialPhase::Charge;
+        specialPhaseAt_ = 0;
+        specialAttempts_ = 0;
+        specialSelectInputs_ = 0;
+        specialEventsBefore_ = 0;
+        specialEventsAfter_ = 0;
+        specialGauge_ = 0;
+        specialGaugeMax_ = 0;
+        specialGaugeAtSelect_ = 0;
+        specialUnitData_ = 0;
+        specialWeapon_ = 0;
+        specialFamily_ = 0;
+        specialDamageSize_ = 0;
+        specialBound_ = false;
+        specialObserved_ = false;
+        specialFills_ = 0;
+        specialReach_ = 0.0f;
+        specialDistance_ = -1.0f;
+        specialTargetPilot_ = 0;
+        specialWaitAt_ = 0;
+        specialReportAt_ = 0;
+        specialWaiting_ = false;
+        specialRelaxed_ = false;
+    }
+
+    static bool MeleeFamily(uint8_t rangeType)
+    {
+        return rangeType == 1 || rangeType == 8;
+    }
+
+    // Monotonic probe time in milliseconds. It equals elapsed_ms while one case
+    // polls the probe; a later case's restarted elapsed_ms continues it.
+    uint64_t Now(const SdgoGameTestContextV1* context)
+    {
+        const uint64_t elapsed = context->elapsed_ms;
+        if (!clockStarted_) {
+            clockStarted_ = true;
+            clock_ = elapsed;
+        } else {
+            clock_ += elapsed >= lastElapsed_ ? elapsed - lastElapsed_ : elapsed;
+        }
+        lastElapsed_ = elapsed;
+        return clock_;
+    }
+
+    // The special weapon's RangeSize (+0x72) from the live weapon bank, at
+    // least kSpecialMinReach; kSpecialDefaultReach while the bank is unreadable.
+    float SpecialReach(uint8_t* unit)
+    {
+        if (specialReach_ > 0.0f)
+            return specialReach_;
+        battle_ai::native::Capabilities caps{};
+        if (!battle_ai::native::ReadCapabilities(unit, caps))
+            return kSpecialDefaultReach;
+        const auto& weapon = caps.weapons[kSpecialSlot];
+        if (!weapon.id || weapon.attackStyle != 2)
+            return kSpecialDefaultReach;
+        specialReach_ = weapon.range > kSpecialMinReach ? weapon.range : kSpecialMinReach;
+        return specialReach_;
+    }
+
+    // Horizontal distance from the local scene node to the nearest living enemy
+    // AI of the current PvP snapshot (its live scene node when readable).
+    bool NearestEnemy(void* manager, uint8_t* unit, float& distance, uint32_t& pilot) const
+    {
+        using namespace battle_ai::native::detail;
+        const SdgoPvpAiClientSnapshotV1* snapshot = pvpSnapshot_;
+        uint8_t* node = nullptr;
+        float x = 0.0f, z = 0.0f;
+        if (!snapshot || !manager || !findObject_ ||
+            (snapshot->local_team != 1 && snapshot->local_team != 2) ||
+            !ReadPointer(unit, kUnitNode, node) ||
+            !Read(node, kNodePosition, x) || !Read(node, kNodePosition + 8, z) ||
+            !std::isfinite(x) || !std::isfinite(z))
+            return false;
+        bool found = false;
+        for (uint32_t i = 0; i < snapshot->bot_count && i < 12; ++i) {
+            const auto& bot = snapshot->bots[i];
+            if (bot.team != 3 - snapshot->local_team || !bot.valid_registered_object ||
+                !bot.position_valid || !bot.object_id)
+                continue;
+            uint8_t* enemy = findObject_(manager, bot.object_id);
+            int32_t hp = 0;
+            if (!enemy || !Read(enemy, kUnitHp, hp) || hp <= 0)
+                continue;
+            float ex = bot.position_x, ez = bot.position_z;
+            uint8_t* enemyNode = nullptr;
+            float liveX = 0.0f, liveZ = 0.0f;
+            if (ReadPointer(enemy, kUnitNode, enemyNode) &&
+                Read(enemyNode, kNodePosition, liveX) && Read(enemyNode, kNodePosition + 8, liveZ) &&
+                std::isfinite(liveX) && std::isfinite(liveZ)) {
+                ex = liveX;
+                ez = liveZ;
+            }
+            const float dx = ex - x, dz = ez - z;
+            const float d = std::sqrt(dx * dx + dz * dz);
+            if (!std::isfinite(d))
+                continue;
+            if (!found || d < distance) {
+                distance = d;
+                pilot = bot.pilot_id;
+                found = true;
+            }
+        }
+        return found;
+    }
+
+    // One tick of the special attack. Control: run the ordinary control this
+    // tick (waiting for a target, or firing the bound special). Wait: this tick
+    // only supplied the mapped special-slot selection. Fail: the case fails.
+    SpecialStep PollSpecial(
+        const SdgoGameTestContextV1* context, uint64_t now,
+        void* manager, uint8_t* unit, uint8_t* attack,
+        NativeTickFn dispatchAttack, void* nativeInput,
+        ScoreboardActions& input)
+    {
+        using namespace battle_ai::native::detail;
+        int32_t gauge = 0;
+        if (!Read(unit, kUnitSpecialGauge, gauge))
+            return SpecialStep::Control;
+        specialGauge_ = gauge;
+        if (gauge > specialGaugeMax_)
+            specialGaugeMax_ = gauge;
+        char text[256] = {};
+
+        if (specialPhase_ == SpecialPhase::Charge) {
+            if (specialAttempts_ >= kSpecialAttempts)
+                return SpecialStep::Control;
+            if (!specialWaiting_) {
+                specialWaiting_ = true;
+                specialRelaxed_ = false;
+                specialWaitAt_ = now;
+                specialReportAt_ = now;
+            }
+            const float reach = SpecialReach(unit) * (specialRelaxed_ ? 2.0f : 1.0f);
+            if (pvpSnapshot_) {
+                float distance = -1.0f;
+                uint32_t pilot = 0;
+                const bool seen = NearestEnemy(manager, unit, distance, pilot);
+                specialDistance_ = seen ? distance : -1.0f;
+                specialTargetPilot_ = seen ? pilot : 0;
+                if (!seen || distance > reach) {
+                    if (!specialRelaxed_ && now - specialWaitAt_ >= kSpecialRelaxMs) {
+                        specialRelaxed_ = true;
+                        sprintf_s(text,
+                            "native player special: no enemy within reach=%.0f for %llu ms; the reach doubles for this attempt",
+                            reach, static_cast<unsigned long long>(now - specialWaitAt_));
+                        context->Observe(text);
+                    }
+                    if (now - specialReportAt_ >= kSpecialReportMs) {
+                        specialReportAt_ = now;
+                        sprintf_s(text,
+                            "native player special waits for an enemy within reach=%.0f nearest=%.0f pilot=%08X sp=%d attempts=%u",
+                            reach, specialDistance_, specialTargetPilot_, gauge, specialAttempts_);
+                        context->Observe(text);
+                    }
+                    return SpecialStep::Control;
+                }
+            }
+            uint32_t events = 0;
+            if (!specialEvents_ || !specialEvents_(&events)) {
+                context->Assert(0, "the native special probe can read the OC client's local special computations");
+                Release(input);
+                return SpecialStep::Fail;
+            }
+            // GameTest fixture: fill the local gauge for the native client gates
+            // (slot-3 selection and special admission).
+            if (gauge < kSpecialGaugeFull) {
+                const int32_t full = kSpecialGaugeFull;
+                std::memcpy(unit + kUnitSpecialGauge, &full, sizeof(full));
+                ++specialFills_;
+            }
+            specialEventsBefore_ = events;
+            specialGaugeAtSelect_ = gauge;
+            specialWaiting_ = false;
+            ++specialAttempts_;
+            specialPhase_ = SpecialPhase::Select;
+            specialPhaseAt_ = now;
+            sprintf_s(text,
+                "native player special attempt=%u target=%08X distance=%.0f reach=%.0f: fixture SP %d -> %d, "
+                "mapped action 17 selects the special slot (events=%u)",
+                specialAttempts_, specialTargetPilot_, specialDistance_, reach, gauge,
+                gauge < kSpecialGaugeFull ? kSpecialGaugeFull : gauge, events);
+            context->Observe(text);
+            if (gauge < kSpecialGaugeFull)
+                gauge = kSpecialGaugeFull;
+        }
+
+        if (specialPhase_ == SpecialPhase::Select) {
+            int32_t slot = -1;
+            uint8_t* record = nullptr;
+            uint8_t* definition = nullptr;
+            uint32_t unitData = 0, expected = 0, bound = 0;
+            uint8_t style = 0, family = 0;
+            int32_t damageSize = 0;
+            const bool committed =
+                Read(attack, kAttackSelectedSlot, slot) && slot == kSpecialSlot &&
+                ReadPointer(attack, kAttackSelectedWeapon, record) &&
+                ReadPointer(unit, kUnitDefinition, definition) &&
+                Read(definition, 0, unitData) &&
+                Read(definition, kDefinitionSpecialWeapon, expected) && expected != 0 &&
+                Read(record, 0, bound) && bound == expected &&
+                Read(record, kWeaponAttackStyle, style) &&
+                Read(record, kWeaponRangeType, family) &&
+                Read(record, kWeaponDamageSize, damageSize);
+            if (committed) {
+                input.HoldGameplay(kSpecialSelectAction, false);
+                if (style != 2) {
+                    sprintf_s(text, "native special slot weapon=%u attack_style=%u", bound, unsigned(style));
+                    context->Observe(text);
+                    context->Assert(0, "the native special slot binds an AttackStyle-2 (fatal) weapon");
+                    Release(input);
+                    return SpecialStep::Fail;
+                }
+                specialBound_ = true;
+                specialUnitData_ = unitData;
+                specialWeapon_ = bound;
+                specialFamily_ = family;
+                specialDamageSize_ = damageSize;
+                specialPhase_ = SpecialPhase::Fire;
+                specialPhaseAt_ = now;
+                // The first firing tick then supplies a fresh primary down edge.
+                input.HoldGameplay(kPrimaryAction, false);
+                primaryHeld_ = false;
+                sprintf_s(text,
+                    "native player special slot bound unit_data=%u slot=3 weapon=%u range_type=%u damage_size=%d sp=%d inputs=%u",
+                    unitData, bound, unsigned(family), damageSize, gauge, specialSelectInputs_);
+                context->Observe(text);
+                return SpecialStep::Control;
+            }
+            if (now - specialPhaseAt_ >= kSpecialSelectMs ||
+                gauge < kSpecialGaugeFull) {
+                input.HoldGameplay(kSpecialSelectAction, false);
+                sprintf_s(text,
+                    "native player special slot not bound attempt=%u sp=%d slot=%d after %llu ms; charging again",
+                    specialAttempts_, gauge, slot,
+                    static_cast<unsigned long long>(now - specialPhaseAt_));
+                context->Observe(text);
+                specialPhase_ = SpecialPhase::Charge;
+                return SpecialStep::Control;
+            }
+            // The original consumer reads the down edge, not the held level.
+            // It queues the selection; the attack FSM dispatch commits it.
+            input.HoldGameplay(kForwardAction, false);
+            input.HoldGameplay(kPrimaryAction, false);
+            forwardHeld_ = false;
+            primaryHeld_ = false;
+            input.HoldGameplay(kSpecialSelectAction, false);
+            input.HoldGameplay(kSpecialSelectAction, true);
+            weaponInput_(unit, nativeInput, 0);
+            dispatchAttack(attack, unit + kUnitControlContext);
+            ++specialSelectInputs_;
+            ++dispatches_;
+            return SpecialStep::Wait;
+        }
+
+        if (specialPhase_ == SpecialPhase::Fire) {
+            uint32_t events = 0;
+            if (!specialEvents_ || !specialEvents_(&events)) {
+                context->Assert(0, "the native special probe can read the OC client's local special computations");
+                Release(input);
+                return SpecialStep::Fail;
+            }
+            if (events > specialEventsBefore_) {
+                specialObserved_ = true;
+                specialEventsAfter_ = events;
+                specialPhase_ = SpecialPhase::Done;
+                sprintf_s(text,
+                    "native player special computed attempt=%u weapon=%u range_type=%u events=%u->%u sp_at_select=%d sp=%d fire_ms=%llu",
+                    specialAttempts_, specialWeapon_, unsigned(specialFamily_),
+                    specialEventsBefore_, events, specialGaugeAtSelect_, gauge,
+                    static_cast<unsigned long long>(now - specialPhaseAt_));
+                context->Observe(text);
+                return SpecialStep::Control;
+            }
+            if (now - specialPhaseAt_ >= kSpecialFireMs) {
+                int32_t slot = -1;
+                Read(attack, kAttackSelectedSlot, slot);
+                sprintf_s(text,
+                    "native player special attempt=%u fired for %llu ms without a local special computation (sp=%d slot=%d); charging again",
+                    specialAttempts_,
+                    static_cast<unsigned long long>(now - specialPhaseAt_),
+                    gauge, slot);
+                context->Observe(text);
+                specialPhase_ = SpecialPhase::Charge;
+            }
+        }
+        return SpecialStep::Control;
     }
 
     void BeginControl(
@@ -170,6 +539,13 @@ public:
         requestedWeaponSlot_ = api->SettingInt(mod, "BattlePlayerWeaponSlot", -1);
         if (requestedWeaponSlot_ < -1 || requestedWeaponSlot_ > 2)
             return false;
+        // The special slot (3) is reached only through the special mode, which
+        // charges with the current weapon and needs the combat input itself.
+        const int special = api->SettingInt(mod, "BattlePlayerSpecial", 0);
+        if ((special != 0 && special != 1) ||
+            (special != 0 && (!enabled_ || requestedWeaponSlot_ >= 0)))
+            return false;
+        special_ = special != 0;
         // the unit manager is also needed by ReadLocalArea (read-only) when combat input is off
         unitManager_ = static_cast<void**>(
             api->Symbol(mod, "game.unit_manager"));
@@ -191,12 +567,12 @@ public:
             reinterpret_cast<InputBusinessFn>(
                 api->Symbol(
                     mod, "test.apsalus_primary_input"));
-        if (lockOn_) {
+        if (lockOn_ || special_) {
             lockInput_ = reinterpret_cast<InputBusinessFn>(
                 api->Symbol(mod, "test.player_secondary_input"));
             if (!lockInput_) return false;
         }
-        if (requestedWeaponSlot_ >= 0) {
+        if (requestedWeaponSlot_ >= 0 || special_) {
             weaponInput_ = reinterpret_cast<WeaponInputFn>(
                 api->Symbol(mod, "test.player_weapon_input"));
             if (!weaponInput_) return false;
@@ -204,6 +580,17 @@ public:
         return unitManager_ && objectIdFromPilot_ &&
                findObject_ && moveInput_ && fireInput_;
     }
+
+    void SetSpecialEventSource(SpecialEventsFn source) { specialEvents_ = source; }
+    bool SpecialEnabled() const { return enabled_ && special_; }
+    bool SpecialObserved() const { return specialObserved_; }
+    uint32_t SpecialWeapon() const { return specialWeapon_; }
+    uint8_t SpecialFamily() const { return specialFamily_; }
+    int32_t SpecialDamageSize() const { return specialDamageSize_; }
+    int32_t SpecialGauge() const { return specialGauge_; }
+    uint32_t SpecialAttempts() const { return specialAttempts_; }
+    uint32_t SpecialFills() const { return specialFills_; }
+    float SpecialDistance() const { return specialDistance_; }
 
     bool Poll(
         const SdgoGameTestContextV1* context,
@@ -224,7 +611,8 @@ public:
             start.battle_start_sequence ==
                 snapshot.received_battle_start_count &&
             start.player_control_enabled != 0;
-        return PollReleased(
+        pvpSnapshot_ = &snapshot;
+        const bool result = PollReleased(
             context,
             snapshot.native_app_state,
             snapshot.profile_pilot_id,
@@ -232,6 +620,8 @@ public:
             released,
             "battle",
             input);
+        pvpSnapshot_ = nullptr;
+        return result;
     }
 
     bool PollMission(
@@ -279,6 +669,7 @@ private:
             return true;
         if (!context)
             return false;
+        const uint64_t now = Now(context);
         // Result handling may still report app state 22 for several updates.
         // Finish ends this battle's input lease even before that state changes.
         if (finished_ && battleSequence_ == sequence) {
@@ -366,9 +757,39 @@ private:
             return true;
         }
 
+        const auto dispatchMove =
+            reinterpret_cast<NativeTickFn>(
+                moveVtable[1]);
+        const auto dispatchAttack =
+            reinterpret_cast<NativeTickFn>(
+                attackVtable[1]);
+
+        if (special_) {
+            const SpecialStep step = PollSpecial(
+                context, now, manager, unit, attack, dispatchAttack,
+                nativeInput, input);
+            if (step == SpecialStep::Fail)
+                return false;
+            if (step == SpecialStep::Wait)
+                return true;
+        }
+        const bool specialFire =
+            special_ && specialPhase_ == SpecialPhase::Fire;
+
         if (requestedWeaponSlot_ >= 0) {
             battle_ai::native::Capabilities caps{};
             if (!battle_ai::native::ReadCapabilities(unit, caps)) {
+                // A fresh local player's attack bank may not be coherent until
+                // the original weapon-selection work has actually run. Feed
+                // its mapped selection and dispatch that real queued FSM work
+                // before waiting for the read-only acknowledgement.
+                input.HoldGameplay(kForwardAction, false);
+                input.HoldGameplay(kPrimaryAction, false);
+                input.HoldGameplay(14u + requestedWeaponSlot_, false);
+                input.HoldGameplay(14u + requestedWeaponSlot_, true);
+                weaponInput_(unit, nativeInput, 0);
+                reinterpret_cast<NativeTickFn>(attackVtable[1])(
+                    attack, unit + kUnitControlContext);
                 if (context->tick % 300 == 0)
                     context->Observe("native fire probe waits for a coherent live form and weapon-bank observation");
                 Release(input);
@@ -438,28 +859,38 @@ private:
         if (!controlsActive_ || boundUnit_ != unit ||
             boundObjectId_ != objectId) {
             BeginControl(
-                unit, objectId, context->elapsed_ms,
+                unit, objectId, now,
                 position, input);
         }
 
         const uint64_t controlledFor =
-            context->elapsed_ms - controlStartedAt_;
+            now - controlStartedAt_;
+        // The bound special fires in pulses from its binding, so every cycle
+        // offers the native admission a fresh primary down edge.
         const bool forward =
-            controlledFor < kForwardHeldMs;
+            !specialFire && controlledFor < kForwardHeldMs;
         const bool primary =
-            controlledFor >= kForwardHeldMs &&
-            (continuousPrimary_ ||
-             (controlledFor - kForwardHeldMs) %
-                     kCycleMs <
-                 kPrimaryHeldMs);
+            specialFire
+                ? (now - specialPhaseAt_) % kCycleMs <
+                      kPrimaryHeldMs
+                : controlledFor >= kForwardHeldMs &&
+                      (continuousPrimary_ ||
+                       (controlledFor - kForwardHeldMs) %
+                               kCycleMs <
+                           kPrimaryHeldMs);
         if (primary && !primaryHeld_)
             ++bursts_;
         input.HoldGameplay(kForwardAction, forward);
         input.HoldGameplay(kPrimaryAction, primary);
         // Supply the mapped secondary action to its original consumer.
         // Target choice, aim and all control-state changes stay native.
-        input.HoldGameplay(kLockAction, lockOn_);
-        if (lockOn_) lockInput_(unit, nativeInput);
+        // Reacquire ordinary targets with real down edges; a melee special
+        // retains its native held lock while capturing the target in reach.
+        const bool lock =
+            (lockOn_ && controlledFor % kCycleMs < kPrimaryHeldMs) ||
+            (specialFire && MeleeFamily(specialFamily_));
+        input.HoldGameplay(kLockAction, lock);
+        if (lock) lockInput_(unit, nativeInput);
         forwardHeld_ = forward;
         primaryHeld_ = primary;
 
@@ -480,12 +911,6 @@ private:
             (consumedMoveQueries_ != 0 &&
              consumedFireQueries_ != 0);
 
-        const auto dispatchMove =
-            reinterpret_cast<NativeTickFn>(
-                moveVtable[1]);
-        const auto dispatchAttack =
-            reinterpret_cast<NativeTickFn>(
-                attackVtable[1]);
         dispatchMove(
             move, unit + kUnitControlContext);
         dispatchAttack(
@@ -613,5 +1038,25 @@ public:
             "mapped primary input and native FSM dispatch entered a real local attack state");
         if (requestedWeaponSlot_ >= 0)
             context->Assert(ammoSpent_, "the acknowledged ordinary ranged weapon consumed its real native ammunition");
+        if (special_) {
+            char report[384] = {};
+            sprintf_s(
+                report,
+                "native player special sequence=%u attempts=%u fixture_fills=%u select_inputs=%u bound=%u "
+                "unit_data=%u weapon=%u range_type=%u damage_size=%d reach=%.0f last_distance=%.0f "
+                "sp_max=%d sp_at_select=%d events=%u->%u computed=%u",
+                battleSequence_, specialAttempts_, specialFills_, specialSelectInputs_,
+                specialBound_ ? 1u : 0u, specialUnitData_, specialWeapon_,
+                unsigned(specialFamily_), specialDamageSize_, specialReach_, specialDistance_,
+                specialGaugeMax_, specialGaugeAtSelect_, specialEventsBefore_, specialEventsAfter_,
+                specialObserved_ ? 1u : 0u);
+            context->Observe(report);
+            context->Assert(
+                specialBound_,
+                "with the SP gauge full, mapped action 17 selected the special slot through the original consumer and the native FSM bound its AttackStyle-2 weapon");
+            context->Assert(
+                specialObserved_,
+                "mapped primary input fired the bound special and the OC client recorded the local special computation");
+        }
     }
 };

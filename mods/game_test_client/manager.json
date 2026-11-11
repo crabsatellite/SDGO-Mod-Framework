@@ -181,6 +181,17 @@
       "activation": "restart_required"
     },
     {
+      "id": "battle_player_special",
+      "key": "BattlePlayerSpecial",
+      "label": "测试进程原生必杀技输入（SP 满后经映射输入选择并发动）",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "battle_review_camera",
       "key": "BattleReviewCamera",
       "label": "录制素材时镜头轮流跟随 AI 机体",

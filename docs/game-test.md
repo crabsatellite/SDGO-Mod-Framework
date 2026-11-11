@@ -244,6 +244,50 @@ only after that actor's bound room, pilot, battle sequence and original control
 release are observed, and releases input when settlement completes. It remains off
 by default.
 
+`BattlePlayerSpecial=1`, together with `BattlePlayerCombat=1` and the default
+`BattlePlayerWeaponSlot=-1`, also fires the special attack. Charging the SP gauge in combat
+takes about 27,300 damage dealt, more than a short test battle provides, so this mode is a
+declared test fixture. The probe waits until a living enemy AI is within the special weapon's
+own range (at least 300; after a minute without a target, twice that), then fills the local
+SP gauge (`CUnit+0xBC8`) to 30000. This is the only gameplay value it writes. It gives the
+mapped special-slot action to the original weapon-selection consumer, which selects that
+slot only with a full gauge, and waits until the native attack FSM binds the slot's fatal
+weapon. Primary input, plus the lock action for melee specials, then fires it until the OC
+client Mod records the local special's damage computation. An attempt that is not bound
+within 6 seconds, or not computed within 20 seconds, waits for a target again; after ten
+attempts, or at the end of the battle, the special fails. HP, FSM state and weapon data are
+only read.
+
+The Battle host checks the gauge again when the special request arrives (`0x04BE`, at
+`0x4C3AEA`). The development-only Battle fixture `oc_special_server_probe`
+(`tests/oc_special_server_probe.cpp`) fills the authenticated host pilot's server gauge at
+that check, just before the native comparison, and records each fill in
+`oc-special-server-<run>.ini` next to the client's `run.ini`. AI pilots and other humans
+keep the native check; admission, the SP cost and damage stay native. The fixture is never
+part of a release. It loads only in a copied test tree marked `TEST-ONLY.txt`, for the run
+named in `SDGO_GAME_TEST_RUN`. `game_test_backend.py serve` installs it, with its symbol,
+in each Battle host only for an `--oc-special` client run, which requires
+`--oc-special-probe <build>/Release/oc_special_server_probe.dll`.
+
+`prepare --oc-special` seals this into an `--oc-allocate` battle whose allocation includes
+special points (stat `5`), with an existing `--play-unit-uid`. It sets the probe to
+continuous primary fire with the lock action and requires GameTest client 0.1.33. The
+battle plays against seven enemy AI and no allied AI (`--expected-ai 7 --ai-allies 0`, the
+default for this flag), so enemies come within reach of the only human.
+The `oc.special` case waits inside the battle, before `pvp.return`, and keeps the
+whole-battle observations running meanwhile. It also reports the Battle fixture's record. In an OC battle (`--oc-room`, or any room on a
+server in OC mode) it requires the special to carry the saved special allocation, the gain
+to equal `min(carried, 7950 - DamageSize)` and the computed value to follow its site:
+`trunc((DamageSize + gain) × r)` in the native x87 arithmetic for melee,
+`(115 - 15c) × (DamageSize + gain) / 100` for ranged, and the native additive bonus plus
+the gain for map specials. Without `--oc-room`, a server in room mode plays the current
+system, and the case is the negative control: the special must stay native. `oc.stats`
+runs in the same battle and in every single `--oc-allocate` battle with attack (`2`) or
+defense (`3`) points. In an OC battle an allocated stat's carried delta must equal the
+saved allocation, and the local battle stat block must hold the unit data value plus that
+delta, capped at 169; outside OC no delta may be carried. `--oc-special` cannot be
+combined with `--room-switch`, `--random-loadout` or the transform probes.
+
 For collection quota rejection, use the pages-only collection-draw scenario with
 `CollectionExpectedStatus=6006` in the copied observer. Declare an already-exhausted
 quota in the isolated test database before launch. The same cases then require a

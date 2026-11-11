@@ -1823,10 +1823,15 @@ void __fastcall TitleBarUpdateHook(void* title_bar, void*) {
     if (g_room_view.known) room_marks::MarkTitleBar(title_bar, g_room_view.system);
 }
 
+void NoteBattleStats(std::uint8_t* unit, bool count = true) noexcept;
+
 extern "C" void __cdecl ApplyMobility(std::uint8_t* unit) {
     __try {
         auto* manager = g_unit_manager ? *g_unit_manager : nullptr;
-        if (unit && manager && Read<std::uint8_t*>(manager, kUnitManagerLocal) == unit) NoteBattleSkills(unit);
+        if (unit && manager && Read<std::uint8_t*>(manager, kUnitManagerLocal) == unit) {
+            NoteBattleSkills(unit);
+            NoteBattleStats(unit);
+        }
         std::int16_t speed = 0, agility = 0;
         std::uint32_t revision = 0;
         if (!unit || !manager || !GainFor(unit, &speed, &agility, &revision)) return;
@@ -1849,6 +1854,7 @@ DeriveFn g_derive = nullptr;
 void ApplyAfterAddPlayer(std::uint8_t* unit) noexcept {
     __try {
         NoteBattleSkills(unit);
+        NoteBattleStats(unit); // the stat setup ran before AddPlayer made this unit the local one
         std::int16_t speed = 0, agility = 0;
         std::uint32_t revision = 0;
         for (auto& mark : g_setups) {
@@ -1870,6 +1876,246 @@ void __fastcall AddPlayerHook(void* manager, void*, void* unit, int local, int p
 
 // Site detour on `call 0x675850` inside the stat setup (ECX = unit). Every
 // register and the flags are preserved; the trampoline performs the call.
+// --- Battle special (fatal attack) damage ----------------------------------------
+//
+// The attacker's client computes special damage from its own weapon row (DamageSize at +0x6C) and reports the
+// number; the server only applies it, capped at 19000 (the special bonus the Battle Mod keeps per form is never
+// read by either side). So the OC special stat applies here, as in the OC-era rule "special = fatal weapon
+// DamageSize + OC points": at three sites the local player's special continues with DamageSize + gain, before
+// the random roll is truncated, before the ranged target scale, the map /21 and awakening, so the native
+// arithmetic then gives exactly what a weapon row with that DamageSize would. The shared weapon row is never
+// written (enemies use the same row).
+constexpr std::size_t kFsmOwner = 0xB2C;     // attack FSM -> owning battle unit
+constexpr std::size_t kUnitAttackFsm = 0x9CC; // battle unit -> its attack FSM
+constexpr std::size_t kWeaponStyle = 0x69;    // 2 = fatal (special) weapon
+constexpr std::size_t kWeaponRange = 0x6A;    // RangeType: 1 melee, 2 ranged, 3 map, 8 rush
+constexpr std::size_t kWeaponDamage = 0x6C;   // DamageSize
+constexpr std::size_t kWeaponId = 0x00;
+constexpr std::int32_t kSpecialCap = 7950;    // DamageSize + special (OC procedures and the Battle grade cap)
+constexpr std::size_t kUnitStatBlock = 0x2CE6; // server-built stat block (form 0: +0xE attack, +0x10 defense)
+constexpr std::size_t kSpecAttack = 0x22C;      // unit data StrikingPower
+constexpr std::size_t kSpecDefense = 0x22E;     // unit data DefensivePower
+
+struct SpecialStats {
+    std::uint32_t events = 0, raised = 0, native = 0;
+    std::uint32_t family = 0, weapon = 0;
+    std::int32_t damage_size = 0, carried = 0, gain = 0, native_value = 0, value = 0, targets = 0;
+    float random = 0.0f;
+    std::uint32_t block_seen = 0;
+    std::int32_t block_attack = 0, block_defense = 0, base_attack = 0, base_defense = 0, attack_gain = 0,
+                 defense_gain = 0;
+};
+SpecialStats g_special;
+void* g_special_melee_original = nullptr;
+void* g_special_ranged_original = nullptr;
+void* g_special_map_original = nullptr;
+void* g_ftol2 = nullptr;
+
+// The active record's carried OC deltas when the current battle plays OC (OC mode, or room mode in an !oc room);
+// false otherwise.
+bool OcDeltas(Carrier* carrier) {
+    if (!g_profile || !*g_profile) return false;
+    std::uint8_t record[kUnitRecordBytes];
+    std::memcpy(record, *g_profile + kProfileActiveRecord, sizeof(record));
+    if (!ReadCarrier(record, carrier) || !(carrier->flags & carrier_profile)) return false;
+    if (carrier->flags & carrier_oc_mode) return true;
+    return (carrier->flags & carrier_room_rule) && RoomPlaysOc();
+}
+
+// The battle stat block the client received for the local unit, next to its unit data and carried deltas.
+// `count` marks a new local battle unit; snapshot refreshes only update the values.
+void NoteBattleStats(std::uint8_t* unit, bool count) noexcept {
+    __try {
+        auto* spec = Read<std::uint8_t*>(unit, 0x9C4);
+        if (!spec) return;
+        g_special.block_attack = Read<std::uint16_t>(unit, kUnitStatBlock + 0x0E);
+        g_special.block_defense = Read<std::uint16_t>(unit, kUnitStatBlock + 0x10);
+        g_special.base_attack = Read<std::uint16_t>(spec, kSpecAttack);
+        g_special.base_defense = Read<std::uint16_t>(spec, kSpecDefense);
+        Carrier carrier{};
+        const bool oc = OcDeltas(&carrier);
+        g_special.attack_gain = oc ? carrier.delta[stat_attack] : 0;
+        g_special.defense_gain = oc ? carrier.delta[stat_defense] : 0;
+        if (count) ++g_special.block_seen;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+// Refreshes the stat block values from the current local battle unit (the block can arrive after AddPlayer).
+void RefreshBattleStats() noexcept {
+    __try {
+        auto* manager = g_unit_manager ? *g_unit_manager : nullptr;
+        auto* local = manager ? Read<std::uint8_t*>(manager, kUnitManagerLocal) : nullptr;
+        if (local && g_special.block_seen) NoteBattleStats(local, false);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+// Gain for the local player's own special computed by `fsm` with `weapon` (family bit set in `families`):
+// min(carried OC special, 7950 - DamageSize) when the battle plays OC, 0 to stay native, or -1 when this is not
+// the local player's special (other units, other weapons, other families: not counted, nothing recorded).
+std::int32_t SpecialGain(std::uint8_t* fsm, const std::uint8_t* weapon, std::uint32_t families) noexcept {
+    __try {
+        if (!fsm || !weapon || weapon[kWeaponStyle] != 2) return -1;
+        const std::uint32_t family = weapon[kWeaponRange];
+        if (family >= 32 || !(families & (1u << family))) return -1;
+        auto* owner = Read<std::uint8_t*>(fsm, kFsmOwner);
+        auto* manager = g_unit_manager ? *g_unit_manager : nullptr;
+        if (!owner || !manager || Read<std::uint8_t*>(manager, kUnitManagerLocal) != owner ||
+            Read<std::uint8_t*>(owner, kUnitAttackFsm) != fsm)
+            return -1;
+        ++g_special.events;
+        g_special.family = family;
+        g_special.weapon = Read<std::uint32_t>(weapon, kWeaponId);
+        const std::int32_t size = Read<std::int32_t>(weapon, kWeaponDamage);
+        g_special.damage_size = size;
+        g_special.carried = 0;
+        g_special.gain = 0;
+        Carrier carrier{};
+        std::int32_t gain = 0;
+        if (OcDeltas(&carrier)) {
+            g_special.carried = carrier.delta[stat_special];
+            auto* spec = Read<std::uint8_t*>(owner, 0x9C4);
+            std::uint8_t record[kUnitRecordBytes];
+            std::memcpy(record, *g_profile + kProfileActiveRecord, sizeof(record));
+            if (spec && SameUnitFamily(Read<std::uint32_t>(record), Read<std::uint32_t>(spec)) && carrier.delta[stat_special] > 0)
+                gain = (std::min)(static_cast<std::int32_t>(carrier.delta[stat_special]), kSpecialCap - size);
+        }
+        if (gain <= 0) {
+            ++g_special.native;
+            return 0;
+        }
+        g_special.gain = gain;
+        ++g_special.raised;
+        return gain;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+// Melee: EAX = trunc(DamageSize * r) at the store; the detour recomputes trunc((DamageSize + gain) * r) with the
+// same x87 instructions and CRT truncation as the native code.
+extern "C" std::int32_t __cdecl SpecialMeleeGain(std::uint8_t* fsm, const std::uint8_t* weapon, std::int32_t native) {
+    const std::int32_t gain = SpecialGain(fsm, weapon, 1u << 1);
+    if (gain < 0) return 0;
+    g_special.native_value = native;
+    g_special.value = native;
+    g_special.targets = 0;
+    return gain > 0 ? Read<std::int32_t>(weapon, kWeaponDamage) + gain : 0;
+}
+extern "C" void __cdecl SpecialMeleeNote(std::int32_t value, const float* random) {
+    g_special.value = value;
+    __try {
+        g_special.random = *random;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+__declspec(naked) void SpecialMeleeDetour() {
+    __asm {
+        pushfd
+        push ecx
+        push edx
+        push eax
+        push eax
+        push ebx
+        push esi
+        call SpecialMeleeGain
+        add esp, 12
+        test eax, eax
+        jz keep
+        push eax
+        fild dword ptr [esp]
+        add esp, 4
+        fmul dword ptr [ebp - 0x4C]
+        call dword ptr [g_ftol2]
+        add esp, 4               // drop the saved native EAX; EAX = trunc((DamageSize + gain) * r)
+        push eax
+        lea ecx, [ebp - 0x4C]
+        push ecx
+        push eax
+        call SpecialMeleeNote
+        add esp, 8
+        pop eax
+        pop edx
+        pop ecx
+        popfd
+        jmp dword ptr [g_special_melee_original]
+    keep:
+        pop eax
+        pop edx
+        pop ecx
+        popfd
+        jmp dword ptr [g_special_melee_original]
+    }
+}
+
+// Ranged: EAX = (115 - 15c) * DamageSize / 100 with c = EBX; the raised value uses DamageSize + gain.
+extern "C" std::int32_t __cdecl SpecialRangedValue(std::uint8_t* fsm, const std::uint8_t* weapon, std::int32_t targets,
+                                                   std::int32_t native) {
+    const std::int32_t gain = SpecialGain(fsm, weapon, 1u << 2);
+    if (gain < 0) return native;
+    g_special.native_value = native;
+    g_special.targets = targets;
+    g_special.random = 0.0f;
+    g_special.value = native;
+    if (gain == 0) return native;
+    const std::int32_t value = ((115 - 15 * targets) * (Read<std::int32_t>(weapon, kWeaponDamage) + gain)) / 100;
+    g_special.value = value;
+    return value;
+}
+
+__declspec(naked) void SpecialRangedDetour() {
+    __asm {
+        pushfd
+        push ecx
+        push edx
+        push eax
+        push ebx
+        push edi
+        push esi
+        call SpecialRangedValue
+        add esp, 16
+        pop edx
+        pop ecx
+        popfd
+        jmp dword ptr [g_special_ranged_original]
+    }
+}
+
+// Map and rush specials: EAX = additive bonus (0 for the special slot) in the shared hit builder; the base becomes
+// DamageSize + bonus + gain. Only RangeType 3 and 8 are taken here (the builder also serves every normal hit and the
+// ranged special's projectile contact), and only without a damage override.
+extern "C" std::int32_t __cdecl SpecialMapBonus(std::uint8_t* fsm, const std::uint8_t* weapon, std::int32_t override_damage,
+                                                std::int32_t bonus) {
+    if (override_damage != 0) return bonus;
+    const std::int32_t gain = SpecialGain(fsm, weapon, (1u << 3) | (1u << 8));
+    if (gain < 0) return bonus;
+    g_special.native_value = bonus;
+    g_special.targets = 0;
+    g_special.random = 0.0f;
+    g_special.value = bonus + gain;
+    return bonus + gain;
+}
+
+__declspec(naked) void SpecialMapDetour() {
+    __asm {
+        pushfd
+        push ecx
+        push edx
+        push eax
+        push dword ptr [ebp + 0x1C]
+        push dword ptr [ebp + 8]
+        push esi
+        call SpecialMapBonus
+        add esp, 16
+        pop edx
+        pop ecx
+        popfd
+        jmp dword ptr [g_special_map_original]
+    }
+}
+
 __declspec(naked) void DeriveCallDetour() {
     __asm {
         pushfd
@@ -2958,6 +3204,26 @@ int Snapshot(SdgoOcCustomClientSnapshotV2* output) {
     snapshot.room_known = g_room_view.known ? 1u : 0u;
     snapshot.room_system = g_room_view.known ? static_cast<std::uint32_t>(g_room_view.system) : 0u;
     snapshot.mobility_room_skips = g_mobility_room_skips;
+    snapshot.special_events = g_special.events;
+    snapshot.special_raised = g_special.raised;
+    snapshot.special_native = g_special.native;
+    snapshot.special_family = g_special.family;
+    snapshot.special_weapon = g_special.weapon;
+    snapshot.special_damage_size = g_special.damage_size;
+    snapshot.special_carried = g_special.carried;
+    snapshot.special_gain = g_special.gain;
+    snapshot.special_native_value = g_special.native_value;
+    snapshot.special_value = g_special.value;
+    snapshot.special_random = g_special.random;
+    snapshot.special_targets = g_special.targets;
+    RefreshBattleStats();
+    snapshot.battle_block_seen = g_special.block_seen;
+    snapshot.battle_block_attack = g_special.block_attack;
+    snapshot.battle_block_defense = g_special.block_defense;
+    snapshot.battle_base_attack = g_special.base_attack;
+    snapshot.battle_base_defense = g_special.base_defense;
+    snapshot.battle_attack_gain = g_special.attack_gain;
+    snapshot.battle_defense_gain = g_special.defense_gain;
     snapshot.room_list_marks = room_marks::ListMarks();
     snapshot.title_marks = room_marks::TitleMarks();
     snapshot.title_mark_system = room_marks::TitleSystem();
@@ -3322,6 +3588,17 @@ SDGO_MOD_ENTRY {
                            reinterpret_cast<void**>(&g_add_player_original))) {
             Log(SDGO_LOG_WARN, "oc: the battle unit setup hooks are unavailable; speed and agility gains inactive");
         }
+    }
+    if (api->SettingInt(mod, "BattleSpecial", 1)) {
+        g_ftol2 = api->Symbol(mod, "crt.ftol2");
+        if (!g_ftol2 || !api->HookSite ||
+            !api->HookSite(mod, "oc_custom.special_melee_damage_store", reinterpret_cast<void*>(&SpecialMeleeDetour),
+                           &g_special_melee_original) ||
+            !api->HookSite(mod, "oc_custom.special_ranged_scaled_base", reinterpret_cast<void*>(&SpecialRangedDetour),
+                           &g_special_ranged_original) ||
+            !api->HookSite(mod, "oc_custom.special_packet_bonus", reinterpret_cast<void*>(&SpecialMapDetour),
+                           &g_special_map_original))
+            Log(SDGO_LOG_WARN, "oc: the special damage sites are unavailable; OC special points stay out of battle damage");
     }
     if (!api->HookSlot || !room_marks::Bind(api, mod, &LogMark) ||
         !api->HookSlot(mod, "oc_custom.client_room_list_update", reinterpret_cast<void*>(&RoomListUpdateHook),
