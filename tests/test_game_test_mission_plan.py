@@ -191,7 +191,9 @@ class MissionPlanContractTests(unittest.TestCase):
             mission_ai_count=0,
         )
         self.assertEqual(plan["mission_ai_count"], 0)
-        self.assertEqual(plan["room_title"], f"{plan['title_nonce']} lv2")
+        self.assertEqual(plan["room_title"], f"{plan['title_nonce']} imported mission lv2")
+        self.assertGreater(len(plan["room_title"].encode('utf-8')), 20)
+        self.assertLessEqual(len(plan["room_title"].encode('utf-8')), 512)
         self.assertNotIn("!ai", plan["room_title"])
         self.assertEqual(
             game_test.required_cases_for_plan(plan),
@@ -209,6 +211,20 @@ class MissionPlanContractTests(unittest.TestCase):
         report = game_test.build_report(run_dir)
         self.assertEqual(report["status"], "pass")
         self.assertEqual(report["layers"]["native"]["mission_ai_count"], 0)
+
+    def test_zero_ai_title_cannot_fall_back_to_an_unbound_legacy_name(self):
+        run_dir = self.capsule(game_mode_id=88072, mission_ai_count=0)
+        plan = game_test.validate_metadata(run_dir)["plan"]
+        other_nonce = 'gt0001' if plan['title_nonce'] == 'gt0000' else 'gt0000'
+        for title in (
+            f"{plan['title_nonce']} lv2",
+            f"{other_nonce} imported mission lv2",
+            f"{plan['title_nonce']} imported mission !ai0 lv2",
+        ):
+            with self.subTest(title=title):
+                self.mutate_run_ini(run_dir, 'room_title', title)
+                with self.assertRaises(game_test.GameTestError):
+                    game_test.read_public_plan(run_dir / 'client')
 
     def test_zero_ai_rejects_every_non_imported_or_mutated_scope(self):
         invalid = (

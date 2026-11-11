@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <cstring>
 #include <cwchar>
 
@@ -131,7 +132,7 @@ unsigned g_networkOriginalCalls = 0;
 uint16_t g_joinedChannel = 0;
 bool g_callbackAbiValid = true;
 bool g_addStateAbiValid = true;
-wchar_t g_setTitle[32] = {};
+wchar_t g_setTitle[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
 
 uint32_t g_descriptorKeys[2] = {1001, 1002};
 uint32_t g_descriptorIds[2] = {0x00400000, 0x00300000};
@@ -1425,11 +1426,12 @@ uint8_t* AllocateGuardedReply(
 bool EnterMissionLobby(
     MissionFlowActions& actions,
     uint16_t mode,
-    uint32_t missionId = 0)
+    uint32_t missionId = 0,
+    const char* title = "mission-ai")
 {
     if (actions.EnsureRoom(
             mode,
-            "mission-ai",
+            title,
             true,
             missionId) !=
         MissionFlowActions::
@@ -1451,16 +1453,18 @@ bool EnterMissionLobby(
 bool OpenCreateDialog(
     MissionFlowActions& actions,
     uint16_t mode,
-    uint32_t missionId = 0)
+    uint32_t missionId = 0,
+    const char* title = "mission-ai")
 {
     if (!EnterMissionLobby(
             actions,
             mode,
-            missionId))
+            missionId,
+            title))
         return false;
     if (actions.EnsureRoom(
             mode,
-            "mission-ai",
+            title,
             true,
             missionId) !=
         MissionFlowActions::
@@ -1468,7 +1472,7 @@ bool OpenCreateDialog(
         return false;
     return actions.EnsureRoom(
                mode,
-               "mission-ai",
+               title,
                true,
                missionId) ==
            MissionFlowActions::
@@ -1527,6 +1531,8 @@ void TestBoundaryAndTopEntry(
                 MissionFlowActions::
                     kInvalidMode,
         "single mission and native AI modes cannot masquerade as modes 5/8");
+    const std::string oversizedTitle(
+        SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1, 'x');
     Check(
         actions.EnsureRoom(
             5,
@@ -1535,7 +1541,7 @@ void TestBoundaryAndTopEntry(
                 kInvalidTitle &&
             actions.EnsureRoom(
                 5,
-                "123456789012345678901") ==
+                oversizedTitle.c_str()) ==
                 MissionFlowActions::
                     kInvalidTitle,
         "room title validation fails before any native callback");
@@ -1658,6 +1664,36 @@ void TestCreationDialogHandoff(MissionFlowActions& actions)
           "repeated preparation keeps the original mission dialog ready for real character input");
     Check(actions.EnsureRoom(5, "mission-ai") == MissionFlowActions::kSettingRoomTitle,
           "the existing complete mission flow retains its default submission behavior");
+}
+
+void TestExtendedMissionTitle(MissionFlowActions& actions)
+{
+    constexpr char extended[] =
+        "gt2690 imported mission native damage lv2";
+    static_assert(sizeof(extended) - 1 > SDGO_ROOM_TITLE_LEGACY_BYTES);
+
+    ResetFixture(actions, 0);
+    Check(OpenCreateDialog(actions, 5, 0, extended),
+        "extended-title fixture reached the original mission create dialog");
+    Check(actions.EnsureRoom(5, extended) ==
+              MissionFlowActions::kCyclingMission,
+        "extended title keeps the requested mission descriptor selection");
+    ApplyPendingDescriptor();
+    Check(actions.EnsureRoom(5, extended) ==
+              MissionFlowActions::kSettingRoomTitle &&
+              std::wcscmp(g_setTitle,
+                  L"gt2690 imported mission native damage lv2") == 0,
+        "mission flow writes the complete extended title into the live native edit for room_titles submission");
+    Check(actions.EnsureRoom(5, extended) ==
+              MissionFlowActions::kCreateSubmitted,
+        "extended title still submits through the original mission create callback");
+
+    ResetFixture(actions, 0);
+    std::string oversized(
+        SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1, 'x');
+    Check(actions.EnsureRoom(5, oversized.c_str()) ==
+              MissionFlowActions::kInvalidTitle,
+        "mission flow rejects titles beyond the shared extended-title byte contract");
 }
 
 void TestCompleteMode5Flow(
@@ -2676,6 +2712,7 @@ int main()
     TestBoundaryAndTopEntry(actions);
     TestChannelListReadiness(actions);
     TestCreationDialogHandoff(actions);
+    TestExtendedMissionTitle(actions);
     TestCompleteMode5Flow(actions);
     TestSharedNativeStartReceipt(actions);
     TestStartRejectAndLatchedSend(actions);

@@ -172,6 +172,28 @@ class TransitionPolicyDeploymentTests(unittest.TestCase):
             self.assertEqual(state['ready_hosts'], [])
             self.assertFalse(state['policy_active'])
 
+    def test_disabled_battle_folder_does_not_block_enabled_hosts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ini, disabled = self._server(root)
+            enabled = root / 'Server/BattleServer2'
+            enabled.mkdir()
+            (enabled / 'BattleServer.exe').write_bytes(b'fixture')
+            self._install_module(enabled)
+            startup = root / 'ServerStartUp/ServerStartUp.xml'
+            startup.parent.mkdir()
+            startup.write_text(
+                '<Processes>'
+                '<Process Run="True" Path="./Server/WorldServer/WorldServer.exe" />'
+                '<Process Run="False" Path="./Server/BattleServer1/BattleServer.exe" />'
+                '<Process Run="True" Path="./Server/BattleServer2/BattleServer.exe" />'
+                '</Processes>', encoding='utf-8')
+            result = server.apply_runtime_policy(self._plan([90001]), ini)
+            self.assertEqual(result['status'], 'configured')
+            self.assertEqual(result['ready_hosts'], ['BattleServer2'])
+            self.assertEqual(result['missing_hosts'], [])
+            self.assertFalse((disabled / 'sdgo').exists())
+
     def test_existing_config_must_fit_the_native_parser_capacity(self):
         too_many = ','.join(['1'] * 257)
         self.assertIsNone(server._configured_mission_ids(

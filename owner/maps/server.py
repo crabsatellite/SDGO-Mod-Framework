@@ -215,9 +215,9 @@ def _configured_mission_ids(raw: bytes) -> list[int] | None:
 
 def _battle_policy_hosts(server_ini) -> list[dict]:
     from manager import operations, storage
-    _, nodes, _ = operations.topology(Path(server_ini))
+    _, _, consumers = operations.topology(Path(server_ini))
     result = []
-    for host in sorted({node.parent for node in nodes if node.name == 'BattleServer.exe'}, key=str):
+    for host in sorted({node.parent for node in consumers if node.name == 'BattleServer.exe'}, key=str):
         mod = host / 'sdgo/mods' / SERVER_POLICY_MOD
         dll = mod / (SERVER_POLICY_MOD + '.dll')
         mod_ini = mod / 'mod.ini'

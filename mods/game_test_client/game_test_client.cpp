@@ -237,6 +237,7 @@ NativePlayerCombatProbe nativePlayerCombat;
 uint32_t scoreboardCombatSequence = 0, scoreboardCombatChanges = 0;
 SdgoPvpAiClientScoreboardStatusV1 scoreboardLast{};
 char accountName[32] = {}, accountPassword[128] = {}, roomTitle[21] = {};
+char missionRoomTitle[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
 unsigned loginAttempts = 0, retryCount = 1;
 uint32_t loginReplySeen = 0;
 bool expectFirstFailure = false;
@@ -785,11 +786,28 @@ bool LoadPlan() {
         if((expectedAi!=0 && expectedAi!=3) || level!=2)return false;
         if(expectedAi==0) {
             if(missionRespawns || missionBehaviorProfile || !missionGameModeId ||
-               sprintf_s(roomTitle,"%s lv2",narrowNonce)<0)return false;
-        } else if(sprintf_s(roomTitle,missionRespawns==2?"%s !ai3 lv2 inf":"%s !ai3 lv2",narrowNonce)<0)return false;
-        wchar_t actualTitle[32]{};GetPrivateProfileStringW(L"run",L"room_title",L"",actualTitle,32,job.c_str());
-        const std::wstring expectedTitle(roomTitle,roomTitle+strlen(roomTitle));
-        if(expectedTitle!=actualTitle)return false;
+               sprintf_s(
+                   missionRoomTitle,
+                   "%s imported mission lv2",
+                   narrowNonce)<0)return false;
+        } else if(sprintf_s(
+                      missionRoomTitle,
+                      missionRespawns==2
+                          ? "%s !ai3 lv2 inf"
+                          : "%s !ai3 lv2",
+                      narrowNonce)<0)return false;
+        wchar_t actualTitle[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1]{};
+        const DWORD actualTitleLength=GetPrivateProfileStringW(
+            L"run",L"room_title",L"",actualTitle,
+            static_cast<DWORD>(
+                sizeof(actualTitle) / sizeof(actualTitle[0])),
+            job.c_str());
+        const std::wstring expectedTitle(
+            missionRoomTitle,
+            missionRoomTitle+strlen(missionRoomTitle));
+        if(!actualTitleLength ||
+           actualTitleLength>=sizeof(actualTitle)/sizeof(actualTitle[0]) ||
+           expectedTitle!=actualTitle)return false;
     }
     if (!missionMode && !ReadPvpRoomTitle(job,narrowNonce,randomLoadout,expectedEnemies,expectedAllies,roomTitle)) return false;
     if (!missionMode && !ReadSealedAiTeamCounts(job,expectedAi,roomTitle,expectedAllies,expectedEnemies)) return false;
@@ -5190,7 +5208,7 @@ int MissionProgress(const SdgoGameTestContextV1* context,MissionFlowActions::Res
 int __cdecl CreateMission(const SdgoGameTestContextV1* context) {
     const auto result=mission.EnsureRoom(
         missionMode,
-        roomTitle,
+        missionRoomTitle,
         true,
         missionGameModeId);
     const auto pending=MissionProgress(context,result);
@@ -5263,7 +5281,39 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
     const bool returnedToWaitRoom=player.native_app_state==18;
     const bool nativeResultObserved=
         ended.sequence>observedMissionEndBaseline;
+    const bool soloImportedMission=
+        expectedAi==0 && missionGameModeId &&
+        !missionBehaviorProfile && !missionRespawns;
     if(returnedToWaitRoom || nativeResultObserved) {
+        if(soloImportedMission) {
+            if(!nativeResultObserved || !ended.original_handler_completed ||
+               !returnedToWaitRoom)
+                return SDGO_GAME_TEST_WAIT;
+            if(missionSnapshotAvailable &&
+               (s.room_mode!=missionMode || s.lua_pcall_error_count ||
+                s.native_exception_count)) {
+                context->Assert(0,
+                    "the terminal imported-mission snapshot remains same-mode and error-free");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            nativePlayerCombat.Finish(context,scoreboardInput);
+            const bool valid=
+                observedMissionStartedAt && observedMissionGeneration &&
+                observedMissionRoom && ended.reply_opcode==0x0871;
+            char terminal[448]{};
+            sprintf_s(terminal,
+                "native imported mission ended before the 15-second observation gate elapsed=%llu app=%u pilot=%u generation=%u room=%u end_sequence=%u/%u end_opcode=%04X result=%u handler=%u",
+                static_cast<unsigned long long>(context->elapsed_ms),
+                player.native_app_state,player.profile_pilot_id,
+                observedMissionGeneration,observedMissionRoom,
+                ended.sequence,observedMissionEndBaseline,
+                ended.reply_opcode,ended.result_type,
+                ended.original_handler_completed);
+            context->Observe(terminal);
+            context->Assert(valid,
+                "an early natural imported-mission result is accepted only after genuine battle entry, original 0871 handling and return to the native wait room");
+            return valid?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+        }
         nativePlayerCombat.Finish(context,scoreboardInput);
         char terminal[448]{};
         sprintf_s(terminal,
@@ -5296,7 +5346,6 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
         const auto& p=s.participants[i];if(!p.mapping_valid || !p.valid_registered_object)continue;
         if(p.movement_observed)++moved;if(p.target_valid && p.target_hp>0)++targets;
     }
-    const bool soloImportedMission=expectedAi==0 && missionGameModeId && !missionBehaviorProfile && !missionRespawns;
     if(context->elapsed_ms<15000 || (!soloImportedMission && (!moved || !targets)))return SDGO_GAME_TEST_WAIT;
     char message[224];sprintf_s(message,"native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u humans=%u lua=%u tick=%u solo=%u",
         s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,s.human_participant_count,
@@ -6354,7 +6403,7 @@ SDGO_MOD_ENTRY {
     const NativeActions::Config config{
         accountName,
         accountPassword,
-        roomTitle,
+        missionMode ? missionRoomTitle : roomTitle,
         static_cast<uint16_t>(loaded ? (missionMode?missionMode:RequestedMode()) : 1),
         static_cast<uint32_t>(battleMap),
         passwordIsMd5,randomTeams};

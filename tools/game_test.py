@@ -1862,7 +1862,10 @@ def mission_room_title(
     mission_ai_count: int = MISSION_AI_COUNT,
 ) -> str:
     if mission_ai_count == 0:
-        return f"{title_nonce} lv{MISSION_AI_LEVEL}"
+        # Legacy <=20-byte mission titles have no full-title broker snapshot.
+        # Use the existing extended title path so the passive damage observer
+        # can bind this nonce without trusting the fixed native Battle title.
+        return f"{title_nonce} imported mission lv{MISSION_AI_LEVEL}"
     return f"{title_nonce} !ai{mission_ai_count} lv{MISSION_AI_LEVEL}" + (' inf' if respawns == 'infinite' else '')
 
 
@@ -3884,9 +3887,13 @@ def prepare(
         if oc_special:
             # The native player probe fires the play unit's special in the battle.
             plan['oc_special']=True
-        if any(len(title.encode('utf-8'))>20 for title in (
+        # Only the sealed, no-wingmen imported mission needs the existing
+        # extended title contract (include/sdgo/room_titles.h). Other scenarios
+        # retain their original twenty-byte native title and command semantics.
+        title_limit = 512 if mission_mode is not None and mission_ai_count == 0 else 20
+        if any(len(title.encode('utf-8'))>title_limit for title in (
                 room_switch_titles(plan['room_title']) if room_switch else (plan['room_title'],))):
-            raise GameTestError('Native GameTest room title exceeds twenty bytes; use a shorter rule or separate scenarios')
+            raise GameTestError(f'Native GameTest room title exceeds {title_limit} bytes; use a shorter rule or separate scenarios')
         plan['network_policy']=network_policy
         if route_binding is not None:
             plan.update(route_binding)
@@ -3966,12 +3973,9 @@ def prepare(
             os.replace(holding/'client',client)
             recycle_owned_artifact(client/'sdgo/gametest',preparing)
             recycle_owned_artifact(client/'sdgo/mods'/TEST_MOD,preparing)
-        overlay_observer(
-            client, stage, extra_mods, disabled_mods,
-            fps_mod_enabled=fps_mod_enabled if fps_only else None,
-            bind_staged_loader=bind_staged_loader,
-            skip_staged_mods=tuple(name for name,selected in
-                (('unit_catalog',unit_payload is not None),('capsule_catalog',capsule_binding is not None)) if selected))
+        # Install authored content before binding the selected staged programmes.
+        # A content ZIP may carry the programme version used to author it; the
+        # isolated run must retain its data while exercising this exact build.
         for package in client_packages:
             from types import SimpleNamespace
             import base64
@@ -3979,6 +3983,12 @@ def prepare(
             host={'id':'candidate','role':'client','path':str(client)}
             package_workspace=SimpleNamespace(host=lambda identity:host,public=lambda:{})
             import_client(package_workspace,'candidate',base64.b64encode(Path(package).read_bytes()).decode('ascii'))
+        overlay_observer(
+            client, stage, extra_mods, disabled_mods,
+            fps_mod_enabled=fps_mod_enabled if fps_only else None,
+            bind_staged_loader=bind_staged_loader,
+            skip_staged_mods=tuple(name for name,selected in
+                (('unit_catalog',unit_payload is not None),('capsule_catalog',capsule_binding is not None)) if selected))
         if mission_behavior_profile is not None:
             configure_mission_behavior_client(
                 client,

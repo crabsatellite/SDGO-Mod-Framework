@@ -59,6 +59,28 @@ namespace
         BattleRewardsBridge
     };
 
+    enum class DamageQualification : uint8_t
+    {
+        Matched,
+        ObserverDisabled,
+        InvalidRoom,
+        ExpectedHostUnavailable,
+        HostUnreadable,
+        HostMismatch,
+        ModeUnreadable,
+        ModeMismatch,
+        MissionUnreadable,
+        MissionMismatch,
+        TitleApiUnavailable,
+        TitleQueryException,
+        TitleMissing,
+        TitleInvalid,
+        TitleNonceMismatch,
+        RawTitleUnreadable,
+        RawTitleInvalid,
+        RawTitleNonceMismatch
+    };
+
     struct RunConfig
     {
         char runId[37] = {};
@@ -114,6 +136,13 @@ namespace
         uint8_t sameSlot = 0;
         uint8_t friendly = 0;
         uint8_t identityValid = 0;
+        uint8_t qualificationMatched = 0;
+        uint8_t diagnosticOnly = 0;
+        DamageQualification qualification = DamageQualification::InvalidRoom;
+        uint32_t brokerTitleLength = 0;
+        uint8_t rawTitleLength = 0;
+        char brokerTitle[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
+        uint8_t rawTitle[20] = {};
     };
 
     using RecordDamageFn = uint32_t(__thiscall*)(
@@ -147,6 +176,7 @@ namespace
     volatile LONG g_dropped = 0;
     volatile LONG g_damageDropped = 0;
     volatile LONG g_damageSequence = 0;
+    volatile LONG g_damageQualificationQueued = 0;
     volatile LONG g_abortWorker = 0;
     volatile LONG g_writeErrorLogged = 0;
     sdgo::mission_behavior::Bundle g_missionProfileBundle;
@@ -457,67 +487,119 @@ namespace
         return value;
     }
 
+    void CaptureRawRoomTitle(const void* room, DamageEvent* event)
+    {
+        if (!room || !event)
+            return;
+        uint8_t length = 0;
+        if (!SafeRead(room, kRoomTitleLength, &length))
+            return;
+        event->rawTitleLength = length;
+        if (length > sizeof(event->rawTitle))
+            return;
+        __try {
+            memcpy(
+                event->rawTitle,
+                static_cast<const uint8_t*>(room) + kRoomTitle,
+                length);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            event->rawTitleLength = 0;
+        }
+    }
+
     bool MatchingDamageRoom(
         const void* room, uint32_t* hostPilotId, uint8_t* mode,
-        uint32_t* missionId)
+        uint32_t* missionId, DamageEvent* diagnostic)
     {
-        if (!g_deathEnabled || !room || !hostPilotId || !mode || !missionId)
+        if (diagnostic)
+            CaptureRawRoomTitle(room, diagnostic);
+        const auto reject = [diagnostic](DamageQualification reason) {
+            if (diagnostic)
+                diagnostic->qualification = reason;
             return false;
+        };
+        if (!g_deathEnabled)
+            return reject(DamageQualification::ObserverDisabled);
+        if (!room || !hostPilotId || !mode || !missionId)
+            return reject(DamageQualification::InvalidRoom);
         const uint32_t expectedHost = ExpectedHost();
-        if (expectedHost == 0 ||
-            !SafeRead(room, kRoomHost, hostPilotId) ||
-            *hostPilotId != expectedHost ||
-            !SafeRead(room, kRoomMode, mode) ||
-            (g_config.mode != 0 && *mode != g_config.mode)) {
-            return false;
-        }
+        if (expectedHost == 0)
+            return reject(DamageQualification::ExpectedHostUnavailable);
+        if (!SafeRead(room, kRoomHost, hostPilotId))
+            return reject(DamageQualification::HostUnreadable);
+        if (*hostPilotId != expectedHost)
+            return reject(DamageQualification::HostMismatch);
+        if (!SafeRead(room, kRoomMode, mode))
+            return reject(DamageQualification::ModeUnreadable);
+        if (g_config.mode != 0 && *mode != g_config.mode)
+            return reject(DamageQualification::ModeMismatch);
         if (g_config.missionGameModeId != 0) {
-            if (!SafeRead(room, kRoomMissionId, missionId) ||
-                *missionId != g_config.missionGameModeId || !g_titleApi) {
-                return false;
-            }
+            if (!SafeRead(room, kRoomMissionId, missionId))
+                return reject(DamageQualification::MissionUnreadable);
+            if (*missionId != g_config.missionGameModeId)
+                return reject(DamageQualification::MissionMismatch);
+            if (!g_titleApi)
+                return reject(DamageQualification::TitleApiUnavailable);
             char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
             uint32_t titleLength = 0;
             __try {
                 titleLength = g_titleApi->QueryForPilot(
                     expectedHost, title, sizeof(title));
             } __except (EXCEPTION_EXECUTE_HANDLER) {
-                return false;
+                return reject(DamageQualification::TitleQueryException);
             }
-            return titleLength != 0 &&
-                titleLength <= SDGO_ROOM_TITLE_MAX_UTF8_BYTES &&
-                title[titleLength] == '\0' &&
-                TextContainsNonce(title, titleLength);
+            if (diagnostic) {
+                diagnostic->brokerTitleLength = titleLength;
+                if (titleLength <= SDGO_ROOM_TITLE_MAX_UTF8_BYTES)
+                    memcpy(
+                        diagnostic->brokerTitle, title,
+                        static_cast<size_t>(titleLength) + 1);
+            }
+            if (titleLength == 0)
+                return reject(DamageQualification::TitleMissing);
+            if (titleLength > SDGO_ROOM_TITLE_MAX_UTF8_BYTES ||
+                title[titleLength] != '\0') {
+                return reject(DamageQualification::TitleInvalid);
+            }
+            if (!TextContainsNonce(title, titleLength))
+                return reject(DamageQualification::TitleNonceMismatch);
+            if (diagnostic) {
+                diagnostic->qualification = DamageQualification::Matched;
+                diagnostic->qualificationMatched = 1;
+            }
+            return true;
         }
 
         uint8_t titleLength = 0;
         char title[21] = {};
-        if (!SafeRead(room, kRoomTitleLength, &titleLength) ||
-            titleLength > 20) {
-            return false;
-        }
+        if (!SafeRead(room, kRoomTitleLength, &titleLength))
+            return reject(DamageQualification::RawTitleUnreadable);
+        if (titleLength > 20)
+            return reject(DamageQualification::RawTitleInvalid);
         __try {
             memcpy(
                 title, static_cast<const uint8_t*>(room) + kRoomTitle,
                 titleLength);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
-            return false;
+            return reject(DamageQualification::RawTitleUnreadable);
         }
         title[titleLength] = '\0';
-        return TitleContainsNonce(title);
+        if (!TitleContainsNonce(title))
+            return reject(DamageQualification::RawTitleNonceMismatch);
+        if (diagnostic) {
+            diagnostic->qualification = DamageQualification::Matched;
+            diagnostic->qualificationMatched = 1;
+        }
+        return true;
     }
 
     bool CaptureDamage(
         void* room, void* victimPilot, void* attackerPilot, void* victimUnit,
         uint32_t effectiveLoss, int32_t deathFlag, DamageEvent* output)
     {
-        if (!output || !victimPilot || !attackerPilot || effectiveLoss == 0) {
+        if (!output)
             return false;
-        }
         DamageEvent event = {};
-        if (!MatchingDamageRoom(
-                room, &event.hostPilotId, &event.mode, &event.missionId))
-            return false;
         event.sequence = static_cast<uint32_t>(
             InterlockedIncrement(&g_damageSequence));
         LARGE_INTEGER qpc = {};
@@ -528,6 +610,17 @@ namespace
             static_cast<uint32_t>(reinterpret_cast<uintptr_t>(room));
         event.effectiveLoss = effectiveLoss;
         event.deathFlag = deathFlag;
+        if (!victimPilot || !attackerPilot || effectiveLoss == 0) {
+            event.qualification = DamageQualification::InvalidRoom;
+            *output = event;
+            return false;
+        }
+        if (!MatchingDamageRoom(
+                room, &event.hostPilotId, &event.mode, &event.missionId,
+                &event)) {
+            *output = event;
+            return false;
+        }
         event.attackerSlot = NativePilotSlot(room, attackerPilot);
         event.victimSlot = NativePilotSlot(room, victimPilot);
         if (!SafeRead(
@@ -538,6 +631,7 @@ namespace
                 attackerPilot, kPilotTeam, &event.attackerTeam) ||
             !SafeRead(
                 victimPilot, kPilotTeam, &event.victimTeam)) {
+            *output = event;
             return false;
         }
         event.attackerNativeNpc =
@@ -610,6 +704,29 @@ namespace
         LeaveCriticalSection(&g_queueLock);
     }
 
+    void QueueDamageQualificationOnce(const DamageEvent& event)
+    {
+        if (InterlockedCompareExchange(
+                &g_damageQualificationQueued, 1, 0) != 0) {
+            return;
+        }
+        if (!TryEnterCriticalSection(&g_queueLock)) {
+            InterlockedExchange(&g_damageQualificationQueued, 0);
+            return;
+        }
+        if (g_damageQueueCount == kDamageQueueCapacity) {
+            InterlockedExchange(&g_damageQualificationQueued, 0);
+        } else {
+            DamageEvent diagnostic = event;
+            diagnostic.diagnosticOnly = 1;
+            g_damageQueue[g_damageQueueWrite] = diagnostic;
+            g_damageQueueWrite =
+                (g_damageQueueWrite + 1) % kDamageQueueCapacity;
+            ++g_damageQueueCount;
+        }
+        LeaveCriticalSection(&g_queueLock);
+    }
+
     uint32_t __fastcall ObserveRecordDamage(
         void* room, void*, void* victimPilot, void* attackerPilot,
         void* victimUnit, uint32_t effectiveLoss, int32_t deathFlag)
@@ -617,11 +734,12 @@ namespace
         const DWORD incomingError = GetLastError();
         DamageEvent event = {};
         __try {
-            if (CaptureDamage(
-                    room, victimPilot, attackerPilot, victimUnit,
-                    effectiveLoss, deathFlag, &event)) {
+            const bool matched = CaptureDamage(
+                room, victimPilot, attackerPilot, victimUnit,
+                effectiveLoss, deathFlag, &event);
+            QueueDamageQualificationOnce(event);
+            if (matched)
                 QueueDamage(event);
-            }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
         SetLastError(incomingError);
@@ -643,16 +761,17 @@ namespace
                 nativeEvent->version ==
                     SDGO_BATTLE_REWARDS_DAMAGE_OBSERVER_VERSION) {
                 DamageEvent event = {};
-                if (CaptureDamage(
-                        nativeEvent->room,
-                        nativeEvent->victim_pilot,
-                        nativeEvent->attacker_pilot,
-                        nativeEvent->victim_unit,
-                        nativeEvent->effective_loss,
-                        nativeEvent->death_flag,
-                        &event)) {
+                const bool matched = CaptureDamage(
+                    nativeEvent->room,
+                    nativeEvent->victim_pilot,
+                    nativeEvent->attacker_pilot,
+                    nativeEvent->victim_unit,
+                    nativeEvent->effective_loss,
+                    nativeEvent->death_flag,
+                    &event);
+                QueueDamageQualificationOnce(event);
+                if (matched)
                     QueueDamage(event);
-                }
             }
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
@@ -879,6 +998,82 @@ namespace
             json += "]}";
         }
         return json + "]";
+    }
+
+    const char* DamageQualificationName(DamageQualification qualification)
+    {
+        switch (qualification) {
+        case DamageQualification::Matched: return "matched";
+        case DamageQualification::ObserverDisabled: return "observer_disabled";
+        case DamageQualification::InvalidRoom: return "invalid_room_or_damage";
+        case DamageQualification::ExpectedHostUnavailable: return "expected_host_unavailable";
+        case DamageQualification::HostUnreadable: return "host_unreadable";
+        case DamageQualification::HostMismatch: return "host_mismatch";
+        case DamageQualification::ModeUnreadable: return "mode_unreadable";
+        case DamageQualification::ModeMismatch: return "mode_mismatch";
+        case DamageQualification::MissionUnreadable: return "mission_unreadable";
+        case DamageQualification::MissionMismatch: return "mission_mismatch";
+        case DamageQualification::TitleApiUnavailable: return "title_api_unavailable";
+        case DamageQualification::TitleQueryException: return "title_query_exception";
+        case DamageQualification::TitleMissing: return "broker_title_missing";
+        case DamageQualification::TitleInvalid: return "broker_title_invalid";
+        case DamageQualification::TitleNonceMismatch: return "broker_title_nonce_mismatch";
+        case DamageQualification::RawTitleUnreadable: return "raw_title_unreadable";
+        case DamageQualification::RawTitleInvalid: return "raw_title_invalid";
+        case DamageQualification::RawTitleNonceMismatch: return "raw_title_nonce_mismatch";
+        default: return "unknown";
+        }
+    }
+
+    std::string HexBytes(const uint8_t* data, size_t size)
+    {
+        static constexpr char digits[] = "0123456789abcdef";
+        std::string output;
+        output.reserve(size * 2);
+        for (size_t i = 0; i < size; ++i) {
+            output.push_back(digits[data[i] >> 4]);
+            output.push_back(digits[data[i] & 0x0f]);
+        }
+        return output;
+    }
+
+    const char* DamageSourceName(DamageSource source);
+
+    std::string DamageQualificationJson(const DamageEvent& event)
+    {
+        const size_t rawLength =
+            event.rawTitleLength <= sizeof(event.rawTitle)
+                ? event.rawTitleLength : 0;
+        const bool brokerValid =
+            event.brokerTitleLength <= SDGO_ROOM_TITLE_MAX_UTF8_BYTES &&
+            event.brokerTitle[event.brokerTitleLength] == '\0';
+        return
+            "{\"run_id\":\"" + EscapeJson(g_config.runId) +
+            "\",\"role\":\"server\",\"suite\":\"" +
+            EscapeJson(g_config.suite) +
+            "\",\"event\":\"native_damage_qualification\"" +
+            ",\"source\":\"" + std::string(DamageSourceName(g_damageSource)) + "\"" +
+            ",\"sequence\":" + std::to_string(event.sequence) +
+            ",\"room_cookie\":" + std::to_string(event.roomCookie) +
+            ",\"expected_host_pilot_id\":" + std::to_string(ExpectedHost()) +
+            ",\"observed_host_pilot_id\":" + std::to_string(event.hostPilotId) +
+            ",\"mode\":" + std::to_string(event.mode) +
+            ",\"mission_game_mode_id\":" + std::to_string(event.missionId) +
+            ",\"qualification\":\"" +
+            DamageQualificationName(event.qualification) + "\"" +
+            ",\"matched\":" +
+            std::string(event.qualificationMatched ? "true" : "false") +
+            ",\"broker_title_length\":" +
+            std::to_string(event.brokerTitleLength) +
+            ",\"broker_title\":\"" +
+            EscapeJson(brokerValid ? event.brokerTitle : "") + "\"" +
+            ",\"raw_title_length\":" +
+            std::to_string(event.rawTitleLength) +
+            ",\"raw_title_hex\":\"" +
+            HexBytes(event.rawTitle, rawLength) + "\"" +
+            ",\"effective_loss\":" + std::to_string(event.effectiveLoss) +
+            ",\"death_flag\":" + std::to_string(event.deathFlag) +
+            "}\n";
     }
 
     std::string DamageJson(const DamageEvent& event)
@@ -1540,6 +1735,22 @@ namespace
             DamageEvent damageBatch[kDamageDrainBatch] = {};
             while ((count = DrainDamage(damageBatch)) != 0) {
                 for (unsigned i = 0; i < count; ++i) {
+                    if (damageBatch[i].diagnosticOnly) {
+                        if (!WriteReceipt(
+                                DamageQualificationJson(damageBatch[i]))) {
+                            Fail(
+                                &lifecycle,
+                                "native damage qualification receipt could not be flushed");
+                        } else if (!damageBatch[i].qualificationMatched &&
+                                   lifecycle.phase == 0) {
+                            lifecycle.reason =
+                                std::string("damage callback rejected by ") +
+                                DamageQualificationName(
+                                    damageBatch[i].qualification);
+                        }
+                        statusChanged = true;
+                        continue;
+                    }
                     if (!WriteReceipt(DamageJson(damageBatch[i]))) {
                         Fail(
                             &lifecycle,

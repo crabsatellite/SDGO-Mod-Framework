@@ -96,6 +96,7 @@ namespace
         InterlockedExchange(&g_dropped, 0);
         InterlockedExchange(&g_damageDropped, 0);
         InterlockedExchange(&g_damageSequence, 0);
+        InterlockedExchange(&g_damageQualificationQueued, 0);
     }
 
     void TestAbiAndValidation()
@@ -619,11 +620,23 @@ namespace
             425,
             0};
         ObserveBattleRewardsDamage(&bridged, nullptr);
-        CHECK(DrainDamage(output) == 1);
-        CHECK(output[0].effectiveLoss == 425);
-        CHECK(output[0].deathFlag == 0);
-        CHECK(output[0].attackerPilotId == attackerId);
-        CHECK(output[0].victimPilotId == victimId);
+        CHECK(DrainDamage(output) == 2);
+        CHECK(output[0].diagnosticOnly == 1);
+        CHECK(output[0].qualificationMatched == 1);
+        CHECK(output[0].qualification == DamageQualification::Matched);
+        CHECK(output[0].sequence == output[1].sequence);
+        const std::string qualification =
+            DamageQualificationJson(output[0]);
+        CHECK(qualification.find(
+                  "\"event\":\"native_damage_qualification\"") !=
+              std::string::npos);
+        CHECK(qualification.find("\"matched\":true") !=
+              std::string::npos);
+        CHECK(output[1].diagnosticOnly == 0);
+        CHECK(output[1].effectiveLoss == 425);
+        CHECK(output[1].deathFlag == 0);
+        CHECK(output[1].attackerPilotId == attackerId);
+        CHECK(output[1].victimPilotId == victimId);
 
         DamageEvent self = {};
         CHECK(CaptureDamage(
@@ -639,6 +652,9 @@ namespace
         CHECK(!CaptureDamage(
             room.data(), victim, attacker, unit.data(), 100, 0,
             &unrelated));
+        CHECK(unrelated.qualification ==
+              DamageQualification::RawTitleNonceMismatch);
+        CHECK(unrelated.qualificationMatched == 0);
         g_deathEnabled = false;
     }
 
@@ -648,7 +664,7 @@ namespace
         g_config.missionGameModeId = 88072;
         g_deathEnabled = true;
         g_titleApi = &kRoomTitleApi;
-        g_roomTitle = "T7x lv2";
+        g_roomTitle = "T7x imported mission lv2";
 
         std::vector<uint8_t> room(0x40000);
         std::vector<uint8_t> npcData(0x100);
@@ -692,6 +708,11 @@ namespace
         CHECK(event.identityValid == 1);
         CHECK(event.effectiveLoss == 875);
         CHECK(event.deathFlag == 1);
+        CHECK(event.qualification == DamageQualification::Matched);
+        CHECK(event.qualificationMatched == 1);
+        CHECK(event.brokerTitleLength == g_roomTitle.size());
+        CHECK(event.brokerTitleLength > SDGO_ROOM_TITLE_LEGACY_BYTES);
+        CHECK(std::string(event.brokerTitle) == g_roomTitle);
 
         Lifecycle lifecycle;
         ProcessMissionDamage(&lifecycle, event);
@@ -711,9 +732,17 @@ namespace
         CHECK(json.find("\"victim_is_ai\":false") !=
               std::string::npos);
 
+        g_roomTitle.clear();
+        CHECK(!CaptureDamage(
+            room.data(), victim, attacker, unit.data(), 1, 0, &event));
+        CHECK(event.qualification == DamageQualification::TitleMissing);
+        CHECK(event.brokerTitleLength == 0);
         g_roomTitle = "other";
         CHECK(!CaptureDamage(
             room.data(), victim, attacker, unit.data(), 1, 0, &event));
+        CHECK(event.qualification ==
+              DamageQualification::TitleNonceMismatch);
+        CHECK(event.brokerTitleLength == g_roomTitle.size());
         g_titleApi = nullptr;
         g_deathEnabled = false;
     }

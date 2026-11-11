@@ -8,6 +8,7 @@
 #include <cwchar>
 
 #include "native_actions.h"
+#include "sdgo/room_titles.h"
 
 // Drives the shipped multiplayer mission path for room modes 5 and 8.
 //
@@ -1068,7 +1069,8 @@ private:
         if (!value)
             return false;
         const size_t length = strlen(value);
-        if (length == 0 || length > 20)
+        if (length == 0 ||
+            length > SDGO_ROOM_TITLE_MAX_UTF8_BYTES)
             return false;
         for (size_t i = 0; i < length; ++i) {
             const unsigned char ch =
@@ -1381,7 +1383,8 @@ private:
                 kEditKind);
             const auto editReady=InspectCreateControl(root,edit,L"GameRoomNameEdit",2);
             if(editReady!=kRoomReady)return editReady;
-            wchar_t wideTitle[21] = {};
+            wchar_t wideTitle[
+                SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
             const size_t length = strlen(title_);
             for (size_t i = 0; i < length; ++i)
                 wideTitle[i] =
@@ -2456,7 +2459,7 @@ private:
     bool bound_ = false;
     uint8_t requestedMode_ = 0;
     uint32_t requestedMissionId_ = 0;
-    char title_[21] = {};
+    char title_[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
     bool topEntryInvoked_ = false;
     bool makeRoomInvoked_ = false;
     bool createDialogObserved_ = false;
