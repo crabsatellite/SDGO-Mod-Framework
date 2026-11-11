@@ -184,6 +184,7 @@ void Reset(int mode = 1) {
     g_settings.gradeCost[3] = 455;
     g_aceSettings = battle_ai::ace::Settings{};
     g_aceSettings.enabled = false;
+    g_reloadAceSettingsAtBattleEntry = false;
     g_itemController = {};
     std::memset(g_itemRooms, 0, sizeof(g_itemRooms));
     g_roomGeneration = 0;

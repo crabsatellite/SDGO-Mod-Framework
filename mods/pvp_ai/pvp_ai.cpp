@@ -776,6 +776,7 @@ namespace
     uint32_t g_roomGeneration = 0;
     volatile LONG g_damageReceipt = 0;
     volatile LONG g_aceDamageSequence = 0;
+    bool g_reloadAceSettingsAtBattleEntry = true;
     PVOID volatile g_aceObserverCallback = nullptr;
     PVOID volatile g_aceObserverUser = nullptr;
     volatile LONG g_aceObserverRegistration = 0;
@@ -1823,6 +1824,10 @@ namespace
     {
         if (!IsPvpMode(room[kRoomMode]))
             return true;
+        // The optional provider loads after pvp_ai. Startup-time discovery can
+        // therefore be absent; resolve it again before the authoritative roll.
+        if (g_reloadAceSettingsAtBattleEntry)
+            g_aceSettings = battle_ai::ace::LoadSettings(g_api, g_mod);
         RoomView view = ViewRoom(room);
         if (!view.titled)
             return true;
