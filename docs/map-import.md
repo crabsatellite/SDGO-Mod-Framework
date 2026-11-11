@@ -6,6 +6,8 @@ Register maps and missions that were made outside the game and prepared in the *
 
 The feature only imports. It reads protocol data, generates the records and resources the game needs and installs them on the client and the server. It does not unpack, export or change the game's own maps and missions.
 
+The mission catalogue, default room name and objective title retain the mission file's `name.zh`; NPC labels and attack multipliers do not replace it. If an older build displays a weapon field name, recompile and publish the client content with Manager 1.16.25 or later. An unchanged server plan needs no reapplication or server restart.
+
 ![Native unit illustration strip](map-native-cutin-demo.webp)
 
 The native entrance and exit animation uses built-in artwork here. The owner content package supplies the artwork used by each mission.

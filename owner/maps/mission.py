@@ -507,7 +507,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     transition_delay = spec.get('transition_delay', 'native')
     if transition_delay not in ('native', 'immediate'):
         _fail('transition_delay 只能是 native 或 immediate')
-    name = _zh(spec.get('name'), 'name', 48)
+    mission_name = _zh(spec.get('name'), 'name', 48)
     name_en = (spec.get('name') or {}).get('en') or spec.get('mission_key', 'mission')
     description = _zh(spec.get('description'), 'description', 240)
     briefing = (spec.get('briefing') or {}).get('zh') or []
@@ -599,13 +599,13 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                                                      f'npcs.{key}.attack 机体 {unit}')
                 if server_source['UnitNumber'] != unit:
                     _fail(f'npcs.{key}.attack：服务端机体 {unit} 的编号不匹配')
-                server_slots = [int(server_source[name] or 0) for name in SERVER_UNIT_WEAPON_FIELDS]
+                server_slots = [int(server_source[field] or 0) for field in SERVER_UNIT_WEAPON_FIELDS]
                 if server_slots != source_slots:
                     _fail(f'npcs.{key}.attack：客户端与服务端机体 {unit} 的武器槽不匹配')
                 server_copy = dict(server_source)
                 server_copy['UnitNumber'] = client_unit
-                for name, weapon_id in zip(SERVER_UNIT_WEAPON_FIELDS, changed_slots):
-                    server_copy[name] = weapon_id or None if server_source[name] is None else weapon_id
+                for field, weapon_id in zip(SERVER_UNIT_WEAPON_FIELDS, changed_slots):
+                    server_copy[field] = weapon_id or None if server_source[field] is None else weapon_id
                 build.server.setdefault('tbl_UnitNpc', []).append(server_copy)
                 server_unit = client_unit
             build.rows.append((UNIT_KIND, client_unit, bytes(copy)))
@@ -954,7 +954,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         # client GameMode mirror
         gm = bytearray(templates.game_mode)
         _u32(gm, 0, mode_id)
-        _w(gm, 5, 100, name, 'name')
+        _w(gm, 5, 100, mission_name, 'name')
         gm[105] = 1
         _u32(gm, 106, ids.group)
         gm[110] = ids.group & 0xFF
@@ -986,7 +986,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         _u32(objective, 0, ids.objective_first + d_index)
         _u32(objective, 5, ids.group)
         objective[9] = level
-        _w(objective, 10, 100, name, 'objective title')
+        _w(objective, 10, 100, mission_name, 'objective title')
         # five briefing lines: u32 colour (kept from the template) + wchar[50] text
         for k in range(5):
             _w(objective, 114 + 104 * k, 100, briefing[k] if k < len(briefing) else '', 'briefing')
@@ -1167,7 +1167,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     cat = bytearray(templates.catalogue)
     _u32(cat, 0, ids.catalogue)
     _u32(cat, 5, ids.group)
-    _w(cat, 9, 100, name, 'name')
+    _w(cat, 9, 100, mission_name, 'name')
     _w(cat, 409, 500, description, 'description')
     for offset, path in _catalogue_art(package, spec.get('presentation'), ids.lua_prefix.lower(), build).items():
         _w(cat, offset, 100, path, f'presentation ({offset})')

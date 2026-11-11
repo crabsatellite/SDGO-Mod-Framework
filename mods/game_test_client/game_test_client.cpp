@@ -5219,6 +5219,19 @@ int MissionProgress(const SdgoGameTestContextV1* context,MissionFlowActions::Res
     return SDGO_GAME_TEST_WAIT;
 }
 int __cdecl CreateMission(const SdgoGameTestContextV1* context) {
+    // Keep evidence of the shipped default before the test enters its nonce title.
+    // Otherwise compiler regressions in the authored name disappear from every run.
+    static bool defaultFrameRequested=false;
+    if(missionGameModeId && !missionBehaviorProfile && !missionRespawns && !defaultFrameRequested) {
+        const auto ready=mission.EnsureRoom(missionMode,missionRoomTitle,false,missionGameModeId);
+        const auto pending=MissionProgress(context,ready);
+        if(pending==SDGO_GAME_TEST_FAIL || ready!=MissionFlowActions::kCreateDialogReady)return pending;
+        const std::wstring frame=sdgo_test::directory+L"\\mission-default-title.bmp";
+        if(!quietGraphics.CaptureNextFrame(frame.c_str()))return SDGO_GAME_TEST_WAIT;
+        context->Observe("capturing the selected imported mission's original default title before nonce entry");
+        defaultFrameRequested=true;
+        return SDGO_GAME_TEST_WAIT;
+    }
     const auto result=mission.EnsureRoom(
         missionMode,
         missionRoomTitle,

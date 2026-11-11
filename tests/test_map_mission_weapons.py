@@ -40,6 +40,26 @@ def plan_for(build):
 
 
 class PairedWeaponCompileTests(unittest.TestCase):
+    def test_weapon_pairing_preserves_authored_mission_titles(self):
+        spec = attack_spec()
+        spec['name'] = {'zh': '奥德萨作战', 'en': 'Operation Odessa'}
+        spec['npcs']['boss2'] = dict(spec['npcs']['boss'], label='Second boss')
+        spec['phases'][0]['spawns'].append({'npc': 'boss2', 'positions': [[100, 150, 900]], 'at': 1})
+        build = compile_spec(spec, record_templates())
+        self.assertEqual(len(build.server['tbl_UnitNpc']), 2)
+        title_offsets = {M.GAME_MODE_KIND: 5, M.OBJECTIVE_KIND: 10, M.CATALOGUE_KIND: 9}
+        titles = []
+        for kind, ident, raw in build.rows:
+            if kind in title_offsets:
+                offset = title_offsets[kind]
+                title = raw[offset:offset + 100].decode('utf-16-le').split('\0')[0]
+                titles.append(kind)
+                with self.subTest(kind=kind, ident=ident):
+                    self.assertEqual(title, spec['name']['zh'])
+        self.assertEqual(set(titles), set(title_offsets))
+        self.assertTrue(all(row['ModeName'].startswith('Operation Odessa')
+                            for row in build.server['tbl_MissionMode']))
+
     def test_changed_weapons_publish_paired_server_unit_and_goal_identity(self):
         spec = attack_spec()
         tpl = record_templates()
