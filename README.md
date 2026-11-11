@@ -57,6 +57,7 @@ Battle rules, AI, progression, rewards and interactions between players.
 | [PvP AI](docs/pvp-ai.md) <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds AI opponents and teammates with live TAB stats and remaining lives; group humans, fill either side or add exact counts |
 | [Mission AI wingmen](docs/coop-wingmen.md) <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai` adds mission wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns |
 | [Battle AI difficulty](docs/battle-ai.md) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Choose Easy, Medium or Hard PvP AI in the room title |
+| [Ace AI pilots](docs/ace-ai.md) <!-- catalog: `ace_ai`, `ace_ai_server` --> | Give PvP AI and friendly mission wingmen a configurable chance to become named Ace pilots with server-authoritative difficulty, HP and ordinary-attack settings |
 | [Mission behavior profiles](docs/mission-behavior.md) <!-- catalog: `mission_behavior`, `mission_behavior_server` --> | Choose original OC or current mission AI and spawn behavior, applied together to the client and every Battle channel |
 | [AI pilot dialogue (optional)](docs/ai-dialogue.md) <!-- catalog: `ai_dialogue` --> | AI pilots speak lines and suggest tactics based on the battle and their character; your own DeepSeek key, off by default |
 | [Per-round random loadouts](docs/room-random.md) <!-- catalog: `room_random`, `room_random_client` --> | Use `!rand` in the room title to draw each player’s sortie unit or deck from their own hangar every round |

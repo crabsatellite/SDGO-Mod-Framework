@@ -381,6 +381,12 @@ target_link_libraries(shop_catalog_apply PRIVATE shop_catalog_engine)
 sdgo_strict(shop_catalog_apply)
 sdgo_stage(shop_catalog_apply "server/sdgo/mods/shop_catalog")
 add_dependencies(shop_catalog shop_catalog_apply)
+sdgo_add_mod(ace_ai DESCRIPTION "configurable Ace AI pilot identities and policy (client)"
+             SOURCES mods/ace_ai/ace_ai.cpp
+             FILES base-pilots.json symbols.fragment.ini)
+sdgo_add_mod(ace_ai_server SERVER DESCRIPTION "configurable Ace AI pilot policy (battle server)"
+             SOURCES mods/ace_ai_server/ace_ai_server.cpp
+             FILES config.ini base-pilots.json)
 sdgo_add_mod(coop_ai SERVER DESCRIPTION "co-op mission wingmen (battle server)" SOURCES mods/coop_ai/coop_ai.cpp)
 sdgo_add_mod(match_ai DESCRIPTION "PvP AI players (client)" SOURCES mods/match_ai/match_ai.cpp)
 sdgo_add_mod(pvp_ai SERVER DESCRIPTION "PvP AI players (battle server)" SOURCES mods/pvp_ai/pvp_ai.cpp)
@@ -1099,6 +1105,13 @@ if(BUILD_TESTING)
                 "$<TARGET_FILE:game_test_server_test>")
     set_tests_properties(game_test_server_ready_json_offline
                          PROPERTIES TIMEOUT 30)
+    add_test(
+        NAME game_test_server_ace_json_offline
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/game_test_server_ace_json_test.py"
+                "$<TARGET_FILE:game_test_server_test>")
+    set_tests_properties(game_test_server_ace_json_offline
+                         PROPERTIES TIMEOUT 30)
     add_executable(game_test_native_death_probe_test
                    tests/game_test_native_death_probe_test.cpp)
     target_link_libraries(game_test_native_death_probe_test PRIVATE sdgo_api)
@@ -1806,6 +1819,31 @@ if(BUILD_TESTING)
 endif()
 
 # Battle AI component tests never enter a shipped payload.
+add_executable(ace_policy_test tests/ace_policy_test.cpp)
+target_link_libraries(ace_policy_test PRIVATE sdgo_api)
+sdgo_strict(ace_policy_test)
+add_executable(ace_profile_registry_test tests/ace_profile_registry_test.cpp)
+target_link_libraries(ace_profile_registry_test PRIVATE sdgo_api)
+sdgo_strict(ace_profile_registry_test)
+add_executable(ace_ai_test tests/ace_ai_test.cpp)
+target_link_libraries(ace_ai_test PRIVATE sdgo_api)
+sdgo_strict(ace_ai_test)
+add_executable(ace_ai_server_test tests/ace_ai_server_test.cpp)
+target_link_libraries(ace_ai_server_test PRIVATE sdgo_api)
+sdgo_strict(ace_ai_server_test)
+add_dependencies(ace_ai_server_test ace_ai_server ace_ai_server_data)
+if(BUILD_TESTING)
+    add_test(NAME ace_ai_provider_offline COMMAND ace_ai_test)
+    set_tests_properties(ace_ai_provider_offline PROPERTIES TIMEOUT 30)
+    foreach(ace_server_case success overlay missing invalid-overlay unreadable-overlay oversize-overlay directory-overlay)
+        add_test(NAME ace_ai_server_${ace_server_case}_offline
+            COMMAND ace_ai_server_test
+                "$<TARGET_FILE:ace_ai_server>"
+                "${SDGO_STAGE}/server/sdgo/mods/ace_ai_server"
+                ${ace_server_case})
+        set_tests_properties(ace_ai_server_${ace_server_case}_offline PROPERTIES TIMEOUT 30)
+    endforeach()
+endif()
 add_executable(battle_ai_math_test tests/battle_ai_math_test.cpp)
 sdgo_strict(battle_ai_math_test)
 add_executable(battle_ai_capabilities_test tests/battle_ai_capabilities_test.cpp)
@@ -1859,6 +1897,8 @@ if(TARGET ai_test_lua50)
 endif()
 
 if(BUILD_TESTING)
+    add_test(NAME ace_policy_offline COMMAND ace_policy_test)
+    add_test(NAME ace_profile_registry_offline COMMAND ace_profile_registry_test)
     add_test(NAME owner_update_chain_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -p test_owner_update_chain.py -v)
     add_test(NAME owner_owned_process_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -p test_owner_owned_process.py -v)
     add_test(NAME owner_update_transport_offline COMMAND "${Python3_EXECUTABLE}" -m unittest discover -s tests -p test_owner_update_transport.py -v)

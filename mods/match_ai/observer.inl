@@ -225,6 +225,81 @@ namespace
         *output = snapshot;
         return true;
     }
+
+    bool CopyAceClientSnapshot(SdgoAceAiPvpClientSnapshotV1* output)
+    {
+        if (!output || output->size < sizeof(*output) ||
+            output->version != SDGO_ACE_AI_OBSERVER_VERSION)
+            return false;
+        SdgoAceAiPvpClientSnapshotV1 snapshot{};
+        snapshot.size = sizeof(snapshot);
+        snapshot.version = SDGO_ACE_AI_OBSERVER_VERSION;
+        snapshot.battle_sequence = static_cast<uint32_t>(
+            InterlockedCompareExchange(&g_receivedBattleStartCount, 0, 0));
+        if (!g_game.unitManager || !*g_game.unitManager ||
+            !g_botMode || CurrentMode() != g_botMode)
+            return false;
+        void* unitManager = *g_game.unitManager;
+        for (const Bot& bot : g_botTable) {
+            if (snapshot.unit_count >= 12 || !bot.unit || bot.slot < 0)
+                continue;
+            SdgoAceAiClientUnitV1& copied =
+                snapshot.units[snapshot.unit_count++];
+            copied.pilot_id = bot.pilotId;
+            copied.native_pilot_id = bot.ace ?
+                bot.pilotId & ~battle_ai::ace::kAceMetadataMask :
+                bot.pilotId;
+            copied.object_id = bot.objectId;
+            copied.slot = bot.slot;
+            const int nativeForm =
+                *reinterpret_cast<const int*>(bot.unit + kUnitDeckIndex);
+            copied.form = nativeForm >= 0 && nativeForm < 4 ?
+                nativeForm : -1;
+            copied.generation = bot.generation;
+            copied.base_difficulty = static_cast<uint8_t>(
+                g_roomDifficulty >= 0 && g_roomDifficulty <= 2 ?
+                    g_roomDifficulty : 1);
+            copied.effective_difficulty =
+                static_cast<uint8_t>(battle_ai::ace::Index(
+                    bot.effectiveDifficulty));
+            copied.ace = bot.ace ? 1 : 0;
+            copied.npc_id = copied.form >= 0 ?
+                bot.deckNpc[copied.form] : 0;
+            const uint8_t* npc =
+                *reinterpret_cast<const uint8_t* const*>(
+                    bot.unit + kUnitNpcData);
+            // Non-deck native AI starts advertise zero deck entries. Read the
+            // actual NPC record rather than reporting an empty deck cache as ID 0.
+            if (npc) copied.npc_id = *reinterpret_cast<const uint32_t*>(npc);
+            copied.machine_id = npc ?
+                *reinterpret_cast<const uint32_t*>(npc + kNpcUnitDataId) : 0;
+            copied.current_hp =
+                *reinterpret_cast<const uint32_t*>(bot.unit + 0x38);
+            copied.max_hp =
+                *reinterpret_cast<const uint32_t*>(bot.unit + 0x3C);
+            copied.active = SlotHolds(unitManager, bot) &&
+                g_findObject(unitManager, bot.objectId) == bot.unit ? 1 : 0;
+            if (!bot.acePilotName.empty())
+                wcsncpy_s(copied.expected_name,
+                          bot.acePilotName.c_str(), _TRUNCATE);
+            uint8_t* slot = g_game.playerSlot(unitManager, bot.slot);
+            const uint8_t* record = slot ?
+                *reinterpret_cast<uint8_t* const*>(slot + kSlotRecord) :
+                nullptr;
+            if (record) {
+                copied.team = record[kRecordTeam];
+                copied.colour = record[kRecordColour];
+            }
+            uint16_t length = 0;
+            copied.slot_name_valid = slot && CopyOldWString(
+                slot + kSlotName, copied.slot_name,
+                _countof(copied.slot_name), &length) ? 1 : 0;
+            copied.name_matches = copied.ace && copied.slot_name_valid &&
+                !wcscmp(copied.slot_name, copied.expected_name) ? 1 : 0;
+        }
+        *output = snapshot;
+        return true;
+    }
 }
 
 extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiClientGetSnapshotV1(
@@ -232,6 +307,32 @@ extern "C" __declspec(dllexport) int __cdecl SdgoPvpAiClientGetSnapshotV1(
 {
     __try {
         return CopyClientSnapshot(snapshot) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMatchAiGetAceSnapshotV1(SdgoAceAiPvpClientSnapshotV1* snapshot)
+{
+    __try {
+        return CopyAceClientSnapshot(snapshot) ? 1 : 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMatchAiGetMissionPlaybackContextV1(
+    SdgoAceAiMissionPlaybackContextV1* output)
+{
+    __try {
+        if (!output || output->size < sizeof(*output) ||
+            output->version != SDGO_ACE_AI_OBSERVER_VERSION ||
+            !g_missionPlaybackContext.active)
+            return 0;
+        *output = g_missionPlaybackContext;
+        return 1;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
     }

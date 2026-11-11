@@ -41,13 +41,39 @@
 
 #include <windows.h>
 #include "sdgo/mission_ai_lifecycle.h"
+#include "sdgo/ai_start_units.h"
+#include "sdgo/ace_ai_client.h"
 
 static SdgoMissionClientLifecycleV1* g_missionLifecycle = nullptr;
+
+static bool MissionClientLifecycleSupported(
+    const SdgoMissionClientLifecycleV1* hooks)
+{
+    if (!hooks || !hooks->object_for_pilot || !hooks->slot_for_object ||
+        !hooks->keep_dead) return false;
+    if (hooks->version == 1) return hooks->size == sizeof(*hooks);
+    if (hooks->version != 2 ||
+        hooks->size < sizeof(SdgoMissionClientLifecycleV2)) return false;
+    const auto* hooksV2 =
+        reinterpret_cast<const SdgoMissionClientLifecycleV2*>(hooks);
+    return hooksV2->respawn_complete != nullptr && hooksV2->ready != nullptr;
+}
+
+static const SdgoMissionClientLifecycleV2* MissionClientLifecycleV2()
+{
+    auto* hooks = reinterpret_cast<SdgoMissionClientLifecycleV1*>(
+        InterlockedCompareExchangePointer(
+            reinterpret_cast<void* volatile*>(&g_missionLifecycle),
+            nullptr, nullptr));
+    if (!hooks || hooks->version < 2 ||
+        hooks->size < sizeof(SdgoMissionClientLifecycleV2)) return nullptr;
+    return reinterpret_cast<const SdgoMissionClientLifecycleV2*>(hooks);
+}
+
 extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterMissionV1(
     const SdgoMissionClientLifecycleV1* hooks)
 {
-    if (!hooks || hooks->size != sizeof(*hooks) || hooks->version != 1 ||
-        !hooks->object_for_pilot || !hooks->slot_for_object || !hooks->keep_dead) return 0;
+    if (!MissionClientLifecycleSupported(hooks)) return 0;
     auto previous = InterlockedCompareExchangePointer(
         reinterpret_cast<void* volatile*>(&g_missionLifecycle),
         const_cast<SdgoMissionClientLifecycleV1*>(hooks), nullptr);
@@ -65,12 +91,14 @@ extern "C" __declspec(dllexport) int __cdecl SdgoMatchAiRegisterMissionV1(
 
 #include "sdgo/sdgo_api.h"
 #include "../battle_ai/difficulty.h"
+#include "../battle_ai/ace_policy.h"
 #include "../battle_ai/native_map_transport.h"
 #include "../battle_ai/native_map_gate.h"
 #include "sdgo/room_titles_current.h"
 #include "sdgo/ai_scoring.h"
 #include "sdgo/mission_ai_forced_pad_observer.h"
 #include "sdgo/pvp_ai_client_observer.h"
+#include "sdgo/ace_ai_observer.h"
 #include "forced_pad_observer.h"
 #include "transform_notice.h"
 #include "gate_status_observer.h"
@@ -116,6 +144,8 @@ namespace
     constexpr size_t kRecordNpcData = 0x44;
     constexpr size_t kStartPointPos = 0x24;     // x, y, z floats
     constexpr size_t kUnitObjectId = 0x04;
+    constexpr size_t kUnitCurrentHp = 0x38;
+    constexpr size_t kUnitMaxHp = 0x3C;
     constexpr size_t kUnitServerId = 0x2B68;
     constexpr size_t kUnitNpcData = 0x320C;     // npc data*, name (wchar) at +5
     constexpr size_t kUnitNpcDataId = 0x3238;   // u32
@@ -288,8 +318,26 @@ namespace
     UnitMessageFn g_originalUnitNetworkMessage=nullptr,g_unitCombatEvent=nullptr;
     struct TransformConfirmation {bool active=false;uint32_t pilot=0,object=0,target=0;};
     thread_local TransformConfirmation g_transformConfirmation{};
+    struct MissionRespawnPending {
+        void* unitManager = nullptr;
+        uint32_t objectId = 0;
+        int colour = -1;
+    };
+    thread_local std::vector<MissionRespawnPending> g_missionRespawnPending;
+    thread_local SdgoAceAiMissionPlaybackContextV1 g_missionPlaybackContext{};
+    uint8_t* g_missionReadyMode = nullptr;
+    uint8_t* g_missionPostNativeReadyMode = nullptr;
+    bool g_missionReadyComplete = false;
     HMODULE g_battleAiModule = nullptr;
     BattleAiInitializeUnitFn g_battleAiInitializeUnit = nullptr;
+    using BattleAiBeginBattleFn = int(__cdecl*)(uint32_t);
+    BattleAiBeginBattleFn g_battleAiBeginBattle = nullptr;
+    HMODULE g_aceAiModule = nullptr;
+    using AcePilotNameFn = int(__cdecl*)(uint32_t, wchar_t*, uint32_t);
+    using AceAnnounceTeamFn = int(__cdecl*)(uint8_t*, uint32_t);
+    AcePilotNameFn g_acePilotName = nullptr;
+    SdgoAceAiSetNameplateV1Fn g_aceSetNameplate = nullptr;
+    AceAnnounceTeamFn g_aceAnnounceTeam = nullptr;
     ForceMoveSenderFn g_forceMoveSender = nullptr;
     battle_ai::native::SendForceMovePacketFn g_sendForceMovePacket = nullptr;
     NativeStateFn g_movementState = nullptr;
@@ -346,9 +394,15 @@ namespace
         int form = 0;
         int pendingForm = -1;
         uint32_t generation = 0;
+        uint32_t startDeckGeneration = 0;
         bool pendingInitialize = false;
         bool missionLifeObserved = false;
         bool missionAlive = false;
+        bool ace = false;
+        uint8_t team = 0;
+        uint8_t colour = 0;
+        battle_ai::Difficulty effectiveDifficulty = battle_ai::Difficulty::Medium;
+        std::wstring acePilotName;
         ForcedPadState forcedPad{};
     };
     std::vector<Bot> g_botTable;
@@ -357,9 +411,12 @@ namespace
     volatile LONG g_missionForcedPadTicks = 0;
     int g_roomDifficulty = 1;
     uint32_t g_nextUnitGeneration = 0;
+    uint32_t g_nextBattleGeneration = 0;
     bool g_logPackets = false; // diagnostics: server packets from the spawn of AI players on
     int g_viewStateLogs = 0;   // diagnostics: dead view clicks logged this game
     bool g_logDiagnostics = false;
+    bool g_aceAnnouncementDone[3] = {};
+    bool g_aceAnnouncementProviderLogged = false;
 
 
     struct ModeClass
@@ -396,7 +453,8 @@ namespace
         char full[SDGO_ROOM_TITLE_MAX_UTF8_BYTES+1]={};
         const auto n=g_api&&g_api->ModDirectory?sdgo::CurrentRoomTitle(g_api->ModDirectory(g_mod),full,sizeof(full)):0;
         if(n&&n<=SDGO_ROOM_TITLE_MAX_UTF8_BYTES&&full[n]==0) {
-            int value=battle_ai::RoomDifficulty(std::string_view(full,n));return value<0?1:value;
+            int value=battle_ai::RoomDifficulty(std::string_view(full,n));
+            if(value>=0&&value<=2)return value;
         }
         wchar_t title[21] = {};
         size_t length = 0;
@@ -428,20 +486,87 @@ namespace
         return g_nextUnitGeneration;
     }
 
-    BattleAiInitializeUnitFn OptionalBattleAiInitializer()
+    void ResolveBattleAiBridge()
     {
         HMODULE module = GetModuleHandleW(L"battle_ai.dll");
-        if (!module) {
-            g_battleAiModule = nullptr;
-            g_battleAiInitializeUnit = nullptr;
-            return nullptr;
-        }
-        if (module != g_battleAiModule || !g_battleAiInitializeUnit) {
+        if (module != g_battleAiModule) {
             g_battleAiModule = module;
+            g_battleAiInitializeUnit = nullptr;
+            g_battleAiBeginBattle = nullptr;
+        }
+        if (module && !g_battleAiInitializeUnit)
             g_battleAiInitializeUnit = reinterpret_cast<BattleAiInitializeUnitFn>(
                 GetProcAddress(module, "SdgoBattleAiInitializeUnit"));
-        }
+        if (module && !g_battleAiBeginBattle)
+            g_battleAiBeginBattle = reinterpret_cast<BattleAiBeginBattleFn>(
+                GetProcAddress(module, "SdgoBattleAiBeginBattleV1"));
+    }
+
+    BattleAiInitializeUnitFn OptionalBattleAiInitializer()
+    {
+        ResolveBattleAiBridge();
         return g_battleAiInitializeUnit;
+    }
+
+    void BeginBattleAiProfiles()
+    {
+        ResolveBattleAiBridge();
+        if (!g_battleAiBeginBattle) return;
+        if (++g_nextBattleGeneration == 0) ++g_nextBattleGeneration;
+        if (g_battleAiBeginBattle(g_nextBattleGeneration) != 1)
+            g_api->Log(g_mod, SDGO_LOG_WARN, "battle AI profile registry did not accept battle generation %lu",
+                       static_cast<unsigned long>(g_nextBattleGeneration));
+    }
+
+    void ResolveAceProvider()
+    {
+        HMODULE module = GetModuleHandleW(L"ace_ai.dll");
+        if (module != g_aceAiModule) {
+            g_aceAiModule = module;
+            g_acePilotName = nullptr;
+            g_aceSetNameplate = nullptr;
+            g_aceAnnounceTeam = nullptr;
+        }
+        if (module && !g_acePilotName)
+            g_acePilotName = reinterpret_cast<AcePilotNameFn>(
+                GetProcAddress(module, "SdgoAceAiPilotNameV1"));
+        if (module && !g_aceAnnounceTeam)
+            g_aceAnnounceTeam = reinterpret_cast<AceAnnounceTeamFn>(
+                GetProcAddress(module, "SdgoAceAiAnnounceTeamV1"));
+        if (module && !g_aceSetNameplate)
+            g_aceSetNameplate = reinterpret_cast<SdgoAceAiSetNameplateV1Fn>(
+                GetProcAddress(module, SDGO_ACE_AI_SET_NAMEPLATE_EXPORT));
+    }
+
+    int GuardedAcePilotName(uint32_t unitId, wchar_t* value, uint32_t capacity)
+    {
+        __try { return g_acePilotName ? g_acePilotName(unitId, value, capacity) : 0; }
+        __except (EXCEPTION_EXECUTE_HANDLER) { g_acePilotName = nullptr; return 0; }
+    }
+
+    std::wstring AcePilotName(uint32_t unitId)
+    {
+        ResolveAceProvider();
+        wchar_t value[65]{};
+        if (GuardedAcePilotName(unitId, value,
+                                static_cast<uint32_t>(sizeof(value) / sizeof(value[0]))) != 1)
+            return {};
+        return value;
+    }
+
+    void ApplyAcePilotName(void* um, const Bot& bot)
+    {
+        if (!um || !bot.ace || bot.acePilotName.empty() || bot.slot < 0) return;
+        __try {
+            uint8_t* slot = g_game.playerSlot(um, bot.slot);
+            if (slot) g_game.assign(slot + kSlotName, bot.acePilotName.c_str(), bot.acePilotName.size());
+            ResolveAceProvider();
+            if (g_aceSetNameplate)
+                g_aceSetNameplate(bot.unit, bot.acePilotName.c_str(), bot.startDeckGeneration);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod, SDGO_LOG_WARN, "AI player %08lX: restoring Ace pilot name failed (%08lX)",
+                       static_cast<unsigned long>(bot.pilotId), GetExceptionCode());
+        }
     }
 
     void InitializeBattleAiUnit(Bot& bot, bool initialMatchSpawn = false)
@@ -451,7 +576,7 @@ namespace
             return;
         // The low byte is the public room difficulty.  0x100 marks only the first
         // completed spawn in this match; respawns and deck changes must retain SP.
-        int difficultyAndFlags = g_roomDifficulty | (initialMatchSpawn ? 0x100 : 0);
+        int difficultyAndFlags = static_cast<int>(bot.effectiveDifficulty) | (initialMatchSpawn ? 0x100 : 0);
         __try {
             initialize(bot.unit, difficultyAndFlags, bot.generation);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -523,6 +648,8 @@ namespace
     // GridData::Find 0x0059D2B0), and on a respawn its NPC data is set to the new entry's
     // before message 7 (CNPC::Add re-inits the AI script from it) and the deck switched
     // after it, as CPlayer does.
+    uint8_t* CurrentMode();
+
     constexpr int kPacketBattleStart = 0x6C3;
     constexpr size_t kStartPacketSlots = 0x20;
     constexpr size_t kStartSlotStride = 0x10F;
@@ -531,6 +658,10 @@ namespace
     constexpr size_t kStartSlotUnitBlocks = 0x0E;
     constexpr size_t kStartUnitBlock = 0x32;
 
+    // Native 0x004B61E0 copies the first 0x32 bytes of each authoritative
+    // server unit record into this packet block.  Server unit +4 is its
+    // post-policy maximum HP; +0x34 current HP is deliberately not copied.
+    constexpr size_t kStartUnitMaxHp = 0x04;
     constexpr size_t kStartUnitLifeCost = 0x08; // u16, unit record +8: the life cost the server counts
 
     struct StartDeck
@@ -539,9 +670,12 @@ namespace
         int points;
         int units;
         uint32_t npc[4];
+        uint32_t maxHp[4];
         int lifeCost[4];
+        uint32_t generation;
     };
     StartDeck g_startDecks[12] = {};
+    uint32_t g_startDeckGeneration = 0;
     volatile LONG g_receivedBattleStartCount = 0;
     volatile LONG g_receivedBattleStartMode = 0;
     volatile LONG g_createReplyVersion = 0;
@@ -552,6 +686,8 @@ namespace
     void ReadStartDecks(const uint8_t* packet)
     {
         memset(g_startDecks, 0, sizeof(g_startDecks));
+        if (++g_startDeckGeneration == 0) ++g_startDeckGeneration;
+        const uint32_t generation = g_startDeckGeneration;
         for (int slot = 0; slot < 12; ++slot) {
             const uint8_t* entry = packet + kStartPacketSlots + slot * kStartSlotStride;
             uint32_t pilotId = *reinterpret_cast<const uint32_t*>(entry);
@@ -561,9 +697,11 @@ namespace
             deck.pilotId = pilotId;
             deck.points = entry[kStartSlotPoints];
             deck.units = entry[kStartSlotUnits];
+            deck.generation = generation;
             for (int i = 0; i < 4; ++i) {
                 const uint8_t* block = entry + kStartSlotUnitBlocks + i * kStartUnitBlock;
                 deck.npc[i] = *reinterpret_cast<const uint32_t*>(block);
+                deck.maxHp[i] = *reinterpret_cast<const uint32_t*>(block + kStartUnitMaxHp);
                 deck.lifeCost[i] = *reinterpret_cast<const uint16_t*>(block + kStartUnitLifeCost);
             }
             g_api->Log(g_mod, SDGO_LOG_INFO,
@@ -580,6 +718,85 @@ namespace
             if (deck.pilotId == pilotId && pilotId != 0)
                 return &deck;
         return nullptr;
+    }
+
+    bool ImplicitSingleUnitStartDeckForCurrentMode(
+        const StartDeck& deck, int form)
+    {
+        if (deck.units != 0 || form != 0)
+            return false;
+        __try {
+            uint8_t* mode = CurrentMode();
+            const uint8_t* room = mode ?
+                *reinterpret_cast<uint8_t* const*>(mode + kModeRoom) : nullptr;
+            if (!room)
+                return false;
+            const uint16_t roomMode =
+                *reinterpret_cast<const uint16_t*>(room + kModeRoomMode);
+            // Native ordinary-mode and mission starts advertise zero deck units even
+            // though the first copied unit block is the active machine.  Tag/grid
+            // modes use the count as deck authority, so an absent count stays closed.
+            return roomMode != 6 && roomMode != 7;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    bool ImplicitSingleUnitStartDeck(const StartDeck& deck, int form)
+    {
+        return g_botMode && CurrentMode() == g_botMode &&
+            ImplicitSingleUnitStartDeckForCurrentMode(deck, form);
+    }
+
+    bool ApplyAdvertisedAceHealth(Bot& bot, int form, bool initializeFreshCurrent)
+    {
+        if (!bot.unit || bot.startDeckGeneration == 0 || form < 0 || form >= 4 ||
+            (bot.pilotId & (battle_ai::ace::kAiPilotBit | battle_ai::ace::kAcePilotBit)) !=
+                (battle_ai::ace::kAiPilotBit | battle_ai::ace::kAcePilotBit))
+            return false;
+        const StartDeck* deck = FindStartDeck(bot.pilotId);
+        if (!deck || deck->generation != bot.startDeckGeneration)
+            return false;
+        const bool implicitSingle = ImplicitSingleUnitStartDeck(*deck, form);
+        if (!implicitSingle &&
+            (deck->units < 1 || deck->units > 4 || form >= deck->units))
+            return false;
+        const uint32_t advertised = deck->maxHp[form];
+        if (advertised == 0 || advertised > 0x7fffffffu || deck->npc[form] == 0)
+            return false;
+
+        __try {
+            if (*reinterpret_cast<const uint32_t*>(bot.unit + kUnitObjectId) != bot.objectId ||
+                *reinterpret_cast<const uint32_t*>(bot.unit + kUnitServerId) != bot.pilotId ||
+                *reinterpret_cast<const uint32_t*>(bot.unit + kUnitNpcDataId) != deck->npc[form])
+                return false;
+            const uint32_t nativeMaximum =
+                *reinterpret_cast<const uint32_t*>(bot.unit + kUnitMaxHp);
+            const uint32_t nativeCurrent =
+                *reinterpret_cast<const uint32_t*>(bot.unit + kUnitCurrentHp);
+            const bool freshFullSeed = initializeFreshCurrent && nativeMaximum != 0 &&
+                nativeMaximum <= 0x7fffffffu && nativeCurrent == nativeMaximum;
+            if (nativeMaximum != advertised)
+                *reinterpret_cast<uint32_t*>(bot.unit + kUnitMaxHp) = advertised;
+            // The start packet has no current-HP field.  Preserve all server-authored
+            // current HP except the exact native full-health seed of a newly created
+            // actor, where the advertised maximum is the only truthful full value.
+            if (freshFullSeed)
+                *reinterpret_cast<uint32_t*>(bot.unit + kUnitCurrentHp) = advertised;
+            if (nativeMaximum != advertised)
+                g_api->Log(g_mod, SDGO_LOG_INFO,
+                           "AI player %08lX deck unit %d: native max HP %lu -> advertised %lu%s",
+                           static_cast<unsigned long>(bot.pilotId), form,
+                           static_cast<unsigned long>(nativeMaximum),
+                           static_cast<unsigned long>(advertised),
+                           freshFullSeed ? ", fresh full HP initialized" : "");
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod, SDGO_LOG_WARN,
+                       "AI player %08lX deck unit %d: applying advertised HP failed (%08lX)",
+                       static_cast<unsigned long>(bot.pilotId), form, GetExceptionCode());
+            return false;
+        }
     }
 
     bool GuardedReadStartDecks(const uint8_t* packet)
@@ -628,6 +845,7 @@ namespace
             } __except (EXCEPTION_EXECUTE_HANDLER) { createReply = false; }
         }
         if ((opcode & 0xFFFF) == kPacketBattleStart && packet) {
+            g_missionPostNativeReadyMode = nullptr;
             InterlockedIncrement(&g_receivedBattleStartCount);
             InterlockedExchange(&g_receivedBattleStartMode,ReadReceivedBattleMode());
             if (!GuardedReadStartDecks(static_cast<const uint8_t*>(packet)))
@@ -803,7 +1021,21 @@ namespace
         uint32_t objectId = *reinterpret_cast<uint32_t*>(unit + kUnitObjectId);
         g_game.setPlayerInfo(c.um, slot, 0, objectId, *reinterpret_cast<uint32_t*>(record + kRecordConnection), record);
         const uint8_t* npc = *reinterpret_cast<uint8_t**>(unit + kUnitNpcData);
-        if (npc) {
+        const auto aceOutcome = battle_ai::ace::DecodePilotId(
+            serverId, static_cast<battle_ai::Difficulty>(g_roomDifficulty));
+        std::wstring acePilotName;
+        if (aceOutcome.ace && npc) {
+            const uint32_t unitId = *reinterpret_cast<const uint32_t*>(npc + kNpcUnitDataId);
+            acePilotName = AcePilotName(unitId);
+            if (acePilotName.empty())
+                g_api->Log(g_mod, SDGO_LOG_ERROR,
+                           "AI player %08lX: server selected Ace but unit %lu has no valid pilot identity",
+                           static_cast<unsigned long>(serverId), static_cast<unsigned long>(unitId));
+        }
+        if (!acePilotName.empty()) {
+            g_game.assign(g_game.playerSlot(c.um, slot) + kSlotName,
+                          acePilotName.c_str(), acePilotName.size());
+        } else if (npc) {
             auto name = reinterpret_cast<const wchar_t*>(npc + 5);
             g_game.assign(g_game.playerSlot(c.um, slot) + kSlotName, name, wcslen(name));
         }
@@ -811,6 +1043,13 @@ namespace
         g_game.addAiUnit(c.um, unit);
         *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
         Bot bot{serverId, objectId, slot, unit};
+        if (const StartDeck* startDeck = FindStartDeck(serverId))
+            bot.startDeckGeneration = startDeck->generation;
+        bot.ace = aceOutcome.ace && !acePilotName.empty();
+        bot.team = static_cast<uint8_t>(team);
+        bot.colour = static_cast<uint8_t>(colour);
+        bot.effectiveDifficulty = aceOutcome.effective;
+        bot.acePilotName = acePilotName;
         uint8_t* room = *reinterpret_cast<uint8_t**>(c.mode + kModeRoom);
         uint16_t roomMode = *reinterpret_cast<uint16_t*>(room + kModeRoomMode);
         if (roomMode == 6 || roomMode == 7) {
@@ -820,6 +1059,7 @@ namespace
         }
         bot.generation = NextUnitGeneration();
         InitializeBattleAiUnit(bot, true);
+        ApplyAdvertisedAceHealth(bot, 0, true);
         // Native CreateNpc/InitNPCAI may already enable the controller. Apply
         // the per-unit steps of AllNpcStopControl (0x00AE5A20), scoped to this
         // newly created match_ai participant, before the first world update.
@@ -880,6 +1120,7 @@ namespace
     {
         g_botTable.clear();
         g_aiEnabled = false;
+        std::fill(std::begin(g_aceAnnouncementDone), std::end(g_aceAnnouncementDone), false);
         g_startStatus = {};
         g_scoreboardStatus = {};
         g_rosterPanel = nullptr;
@@ -899,6 +1140,7 @@ namespace
         int count = RecordCount(room, kRoomAiBegin, kRoomAiEnd);
         if (count == 0)
             return;
+        BeginBattleAiProfiles();
         if (RecordCount(room, kRoomHumansBegin, kRoomHumansEnd) == 1)
             g_soloAiMode = mode;
         if (!g_game.isNetwork()) {
@@ -1044,20 +1286,53 @@ namespace
     // Map volumes are polled by each PvP mode's continuous Update instead.
 
     bool GuardedUpdateForcedPads();
+    void AnnounceAceTeams(uint8_t* mode);
+    void DispatchMissionReady(uint8_t* mode, bool reset);
     volatile LONG g_forcedPadTicks=0;
     template<size_t I>
     int __fastcall ModeUpdate(uint8_t* mode,void*)
     {
         const int result=g_classes[I].updateOriginal(mode);
+        // Native NPC skill/respawn initialization can reset maximum HP after
+        // PlaybackUnit returns. Keep the exact server-advertised maximum at
+        // the completed mode boundary; never rescale or restore current HP.
+        if(mode==g_botMode&&g_aiEnabled&&CurrentMode()==mode)
+            for(Bot& bot:g_botTable)
+                ApplyAdvertisedAceHealth(bot,bot.form,false);
         NotifyTick(mode,static_cast<uint32_t>(InterlockedCompareExchange(&g_receivedBattleStartCount,0,0)));
         if(mode==g_botMode&&g_aiEnabled) {
             InterlockedIncrement(&g_forcedPadTicks);
             GuardedUpdateForcedPads();
+            AnnounceAceTeams(mode);
         }
         return result;
     }
     using ModeUpdateDetour=int(__fastcall*)(uint8_t*,void*);
     const ModeUpdateDetour g_updateDetours[]={&ModeUpdate<0>,&ModeUpdate<1>,&ModeUpdate<2>,&ModeUpdate<3>,&ModeUpdate<4>};
+
+    void AnnounceAceTeams(uint8_t* mode)
+    {
+        if (!mode || g_botTable.empty()) return;
+        bool present[3] = {};
+        for (const Bot& bot : g_botTable)
+            if (bot.ace && (bot.colour == 1 || bot.colour == 2)) present[bot.colour] = true;
+        ResolveAceProvider();
+        if (!g_aceAnnouncementProviderLogged && (present[1] || present[2])) {
+            g_aceAnnouncementProviderLogged = true;
+            g_api->Log(g_mod, SDGO_LOG_INFO,
+                       "Ace chat candidates: red=%u blue=%u provider=%u",
+                       present[1] ? 1u : 0u, present[2] ? 1u : 0u,
+                       g_aceAnnounceTeam ? 1u : 0u);
+        }
+        if (!g_aceAnnounceTeam) return;
+        for (uint32_t colour = 1; colour <= 2; ++colour) {
+            if (!present[colour] || g_aceAnnouncementDone[colour]) continue;
+            int result = 0;
+            __try { result = g_aceAnnounceTeam(mode, colour); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { g_aceAnnounceTeam = nullptr; }
+            if (result == 1) g_aceAnnouncementDone[colour] = true;
+        }
+    }
 
     void EnableBots(uint8_t* service)
     {
@@ -1066,8 +1341,12 @@ namespace
             return;
         if (*reinterpret_cast<const uint32_t*>(service + kServiceReadyState) != 3)
             return;
-        for (const Bot& bot : g_botTable)
+        void* um = g_game.unitManager ? *g_game.unitManager : nullptr;
+        for (const Bot& bot : g_botTable) {
+            ApplyAcePilotName(um, bot);
             g_game.enableAi(bot.unit);
+        }
+        AnnounceAceTeams(mode);
         g_aiEnabled = true;
         ++g_startStatus.release_count;
         g_startStatus.release_ready_state = *reinterpret_cast<uint32_t*>(service + kServiceReadyState);
@@ -1111,8 +1390,22 @@ namespace
     void __fastcall GameReady(uint8_t* service, void* /*edx*/)
     {
         g_originalGameReady(service);
-        if (service && !GuardedEnable(service))
-            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while switching on the AI players");
+        if (service) {
+            uint8_t* mode = nullptr;
+            __try {
+                mode = *reinterpret_cast<uint8_t**>(service + kServiceMode);
+                g_missionPostNativeReadyMode =
+                    mode && *reinterpret_cast<uint32_t*>(
+                        service + kServiceReadyState) == 3 ? mode : nullptr;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                g_missionPostNativeReadyMode = nullptr;
+            }
+            DispatchMissionReady(mode, true);
+            if (!GuardedEnable(service))
+                g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while switching on the AI players");
+        } else {
+            g_missionPostNativeReadyMode = nullptr;
+        }
     }
 
     // ---- battle start: no UDP link to AI pilots ------------------------------------------
@@ -1231,6 +1524,53 @@ namespace
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return nullptr;
         }
+    }
+
+    bool MissionControlReleased(uint8_t* mode)
+    {
+        if (!mode || !g_gameApp) {
+            g_missionPostNativeReadyMode = nullptr;
+            return false;
+        }
+        if (g_missionPostNativeReadyMode != mode) {
+            g_missionPostNativeReadyMode = nullptr;
+            return false;
+        }
+        __try {
+            uint8_t* app = g_gameApp();
+            uint8_t* service =
+                app ? *reinterpret_cast<uint8_t**>(app + kAppGameMain) : nullptr;
+            if (!service ||
+                *reinterpret_cast<uint8_t**>(service + kServiceMode) != mode ||
+                *reinterpret_cast<uint32_t*>(service + kServiceReadyState) != 3) {
+                g_missionPostNativeReadyMode = nullptr;
+                return false;
+            }
+            // Native GameReady has a valid branch which reaches ready state 3 but
+            // skips the helper that sets player+0x31E9.  The post-original exact-mode
+            // latch is the authority for Mission; PvP keeps its separate assertions.
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_missionPostNativeReadyMode = nullptr;
+            return false;
+        }
+    }
+
+    void DispatchMissionReady(uint8_t* mode, bool reset)
+    {
+        if (reset || mode != g_missionReadyMode) {
+            g_missionReadyMode = mode;
+            g_missionReadyComplete = false;
+            if (reset) g_missionRespawnPending.clear();
+        }
+        if (!mode || g_missionReadyComplete || !MissionControlReleased(mode))
+            return;
+        const auto* mission = MissionClientLifecycleV2();
+        if (!mission) return;
+        int result = 0;
+        __try { result = mission->ready(mode); }
+        __except (EXCEPTION_EXECUTE_HANDLER) { result = 0; }
+        if (result == 1) g_missionReadyComplete = true;
     }
 
     // The current game mode when it is one of the PvP modes, else NULL.
@@ -2570,7 +2910,9 @@ namespace
             if (bot.pendingInitialize) {
                 bot.pendingInitialize = false;
                 bot.generation = NextUnitGeneration();
+                ApplyAcePilotName(g_game.unitManager ? *g_game.unitManager : nullptr, bot);
                 InitializeBattleAiUnit(bot);
+                ApplyAdvertisedAceHealth(bot, bot.form, false);
             }
         }
     }
@@ -2837,19 +3179,50 @@ namespace
         }
     }
 
+    void GuardedMissionRespawnComplete(
+        const SdgoMissionClientLifecycleV2* mission, void* unitManager,
+        uint32_t objectId)
+    {
+        __try {
+            mission->respawn_complete(unitManager, objectId);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+    }
+
     int __fastcall PlaybackUnit(void* self, void* /*edx*/, uint8_t* packet)
     {
         int result = g_originalPlaybackUnit(self, packet);
         GuardedSwitchDecks();
+        if (!g_missionRespawnPending.empty()) {
+            const MissionRespawnPending pending = g_missionRespawnPending.front();
+            g_missionRespawnPending.erase(g_missionRespawnPending.begin());
+            if (const auto* mission = MissionClientLifecycleV2()) {
+                g_missionPlaybackContext = {};
+                g_missionPlaybackContext.size = sizeof(g_missionPlaybackContext);
+                g_missionPlaybackContext.version = SDGO_ACE_AI_OBSERVER_VERSION;
+                g_missionPlaybackContext.object_id = pending.objectId;
+                g_missionPlaybackContext.colour = pending.colour >= 0 ?
+                    static_cast<uint32_t>(pending.colour) : 0xffffffffu;
+                g_missionPlaybackContext.native_result =
+                    static_cast<uint32_t>(result);
+                g_missionPlaybackContext.active = 1;
+                GuardedMissionRespawnComplete(
+                    mission, pending.unitManager, pending.objectId);
+                g_missionPlaybackContext.active = 0;
+            }
+        }
         return result;
     }
 
     void __fastcall SetSlotColour(void* um, void* /*edx*/, int index, int colour)
     {
         if (index >= 1000) {
+            const uint32_t objectId = static_cast<uint32_t>(index) + 1;
             const int missionSlot = g_missionLifecycle ?
-                g_missionLifecycle->slot_for_object(um, static_cast<uint32_t>(index) + 1) : -1;
+                g_missionLifecycle->slot_for_object(um, objectId) : -1;
             if (missionSlot >= 0) {
+                if (MissionClientLifecycleV2())
+                    g_missionRespawnPending.push_back({um, objectId, colour});
                 g_originalSetSlotColour(um, missionSlot, colour);
                 return;
             }
@@ -3078,6 +3451,41 @@ namespace
 
 #include "observer.inl"
 
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMatchAiGetStartUnitV1(SdgoAiStartUnitV1* request)
+{
+    __try {
+        if (!request || request->size != sizeof(*request) ||
+            request->version != SDGO_AI_START_UNIT_VERSION ||
+            request->npc_id == 0 || request->form < 0 || request->form >= 4)
+            return 0;
+        const auto decoded = battle_ai::ace::DecodePilotId(
+            request->pilot_id, battle_ai::Difficulty::Medium);
+        if (!decoded.ace)
+            return 0;
+        const StartDeck* deck = FindStartDeck(request->pilot_id);
+        if (!deck || deck->generation == 0 ||
+            (request->expected_generation != 0 &&
+             request->expected_generation != deck->generation))
+            return 0;
+        const bool implicitSingle =
+            ImplicitSingleUnitStartDeckForCurrentMode(*deck, request->form);
+        if (!implicitSingle &&
+            (deck->units < 1 || deck->units > 4 ||
+             request->form >= deck->units))
+            return 0;
+        const uint32_t advertised = deck->maxHp[request->form];
+        if (deck->npc[request->form] != request->npc_id ||
+            advertised == 0 || advertised > 0x7fffffffu)
+            return 0;
+        request->generation = deck->generation;
+        request->max_hp = advertised;
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
 extern "C" __declspec(dllexport) uint32_t __cdecl SdgoMatchAiGetLifeCostV1(uint32_t pilot) {
     for(const auto& bot:g_botTable)if(bot.pilotId==pilot) {
         const auto* deck=FindStartDeck(pilot);
@@ -3094,6 +3502,7 @@ SdgoMatchAiMissionTickV1(uint8_t* mode)
         return 0;
     __try {
         NotifyTick(mode,static_cast<uint32_t>(InterlockedCompareExchange(&g_receivedBattleStartCount,0,0)));
+        DispatchMissionReady(mode, false);
         InterlockedIncrement(
             &g_missionForcedPadTicks);
         UpdateMissionForcedPads(mode);

@@ -11,6 +11,12 @@ local D={GenericMode=1,Difficulty=1,Enabled=1,AutoTransform=1,DecisionMs=0,React
 local C={}
 for k,v in pairs(D) do C[k]=v end
 for k,v in pairs(config or SDGO_BattleAI_TestConfig or {}) do C[k]=v end
+-- Keep this helper on the captured config table: Lua 5.0 permits only 32
+-- upvalues per function, and the controller already reaches that limit.
+function C.GetDifficulty()
+  if SDGO_BattleAI_Difficulty then return SDGO_BattleAI_Difficulty() end
+  return C.Difficulty
+end
 -- Old player configuration must not reintroduce an artificial combat pause.
 if C.Difficulty>=1 then
   C.GenericMode=1;C.AttackIntervalMs=0
@@ -334,7 +340,7 @@ local function Support(o,t,now)
   return false
 end
 local function Weave(npc,o,s,t,now)
-  if C.Difficulty<2 then
+  if C.GetDifficulty()<2 then
     s.weave=nil;MeleeGate(RangedResponse(o))
     return RangedResponse(o) and 'ranged' or nil,false
   end
@@ -387,7 +393,7 @@ local function RoutePoint(t,p,allowRanged)
   return SDGO_BattleAI_Route(t.id,0,p.x,p.y,p.z,allowRanged and 1 or 0)==1
 end
 local function Flank(npc,o,s,w,t,now)
-  if C.Difficulty<2 then return false end
+  if C.GetDifficulty()<2 then return false end
   local function Release()
     if s.flanking and Flag(o.routeActive) then SDGO_BattleAI_CancelRoute() end
     s.flanking=false
@@ -417,7 +423,7 @@ local function Flank(npc,o,s,w,t,now)
   s.flanking=false;return false
 end
 local function CoverStep(npc,o,s,w,t,now)
-  if C.Difficulty<2 then s.cover=nil;s.coverSearching=nil;return false,false end
+  if C.GetDifficulty()<2 then s.cover=nil;s.coverSearching=nil;return false,false end
   if w.kind=='melee' or not t.pos or not SDGO_BattleAI_Cover then s.cover=nil;s.coverSearching=nil;return false,false end
   if s.coverSearching and s.coverSearching~=t.id then s.coverSearching=nil;s.coverAt=0 end
   local q=s.cover
@@ -482,7 +488,7 @@ local function CoverStep(npc,o,s,w,t,now)
   return true,TargetVisible(w,t) and TargetDistance(w,t)<=w.range
 end
 local function Orbwalk(npc,o,s,w,t,now)
-  if C.Difficulty<2 then return false,false end
+  if C.GetDifficulty()<2 then return false,false end
   if w.kind=='melee' or not TargetVisible(w,t) or TargetDistance(w,t)>w.range or
      (not Flag(t.meleeApproaching) and not Flag(t.meleeTracking) and not Flag(t.meleeSwinging) and not Flag(t.hurt) and not Support(o,t,now)) then return false,false end
   local count=o.shots or 0
@@ -754,7 +760,7 @@ local function Recover(npc,o,s,t,now)
   return true
 end
 local function GroundStrafe(npc,o,s,w,now,canFire)
-  if C.Difficulty~=1 or not canFire or not Flag(w.movingShot) or
+  if C.GetDifficulty()~=1 or not canFire or not Flag(w.movingShot) or
      w.kind=='melee' or w.kind=='other' then return false end
   local turn=now>=(s.groundTurnAt or 0)
   if turn then
@@ -769,7 +775,7 @@ local function GroundStrafe(npc,o,s,w,now,canFire)
   return true
 end
 local function Evade(npc,o,s,w,t,now,canFire)
-  if C.Difficulty<2 then return false end
+  if C.GetDifficulty()<2 then return false end
   if C.AirStrafe~=1 or w.kind=='melee' or now>=(s.threatUntil or 0) then return false end
   -- Stationary-only weapons evade between shots, not by bypassing their motor rules.
   if not Flag(w.movingShot) and canFire then return false end
@@ -835,7 +841,7 @@ local function KeepBoundGun(npc,o,t)
   SDGO_BattleAI_AimTarget(fire and t.id or 0)
 end
 local function ProfileTick(npc,o,now,deferSpecial)
-  if C.Difficulty<1 or not Flag(o.valid) or o.hp<=0 then return false end
+  if C.GetDifficulty()<1 or not Flag(o.valid) or o.hp<=0 then return false end
   if not U.profiles then U.profiles={} end
   if now>=(U.profileSweepAt or 0) then
     U.profileSweepAt=now+2000
@@ -956,7 +962,7 @@ local function ProfileTick(npc,o,now,deferSpecial)
   -- Medium reserves SP for pressure/catch defence. Hard can confirm an opening,
   -- but never steal an allied catch, spend SP on a normal one-shot, or stop an
   -- ongoing crossfire escape just because the gauge reached its cap.
-  if not target and C.Difficulty>=2 and not Flag(o.defenceMoving) then
+  if not target and C.GetDifficulty()>=2 and not Flag(o.defenceMoving) then
     for _,t in pairs(o.targets or {}) do
       if t.id==(o.policyTarget or o.nativeTarget) and SpecialTarget(o,t) and
          (Flag(t.hurt) or Flag(t.meleeTracking) or Flag(t.meleeSwinging)) and
@@ -1322,7 +1328,7 @@ local function Tick(npc)
           elseif not GroundStrafe(npc,o,s,active,now,keep) then
             SDGO_BattleAI_CancelRoute()
             if keep then
-              if C.Difficulty==1 and not Flag(active.movingShot) then npc:MoveStop();s.movementIntent=false
+              if C.GetDifficulty()==1 and not Flag(active.movingShot) then npc:MoveStop();s.movementIntent=false
               else Evade(npc,o,s,active,t,now,true) end
             end
           end
@@ -1516,13 +1522,13 @@ function SDGO_BattleAI_ProfileRelease(npc)
   return 123
 end
 function SDGO_BattleAI_ProfileUpdate(npc)
-  if C.Enabled~=1 or C.Difficulty~=1 or SDGO_BattleAI_Authority()~=1 then return 123 end
+  if C.Enabled~=1 or C.GetDifficulty()~=1 or SDGO_BattleAI_Authority()~=1 then return 123 end
   local ok,result=pcall(function() return ProfileTick(npc,SDGO_BattleAI_Observe(),SDGO_BattleAI_Now()) end)
   if not ok then SDGO_BattleAI_Log('profile action unavailable: '..tostring(result)) end
   return 123
 end
 function SDGO_BattleAI_GenericUpdate(npc)
-  if C.Difficulty<1 or C.Enabled~=1 or C.GenericMode~=1 or SDGO_BattleAI_Authority()~=1 then
+  if C.GetDifficulty()<1 or C.Enabled~=1 or C.GenericMode~=1 or SDGO_BattleAI_Authority()~=1 then
     return SDGO_BattleAI_Native()
   end
   local identified,id=pcall(npc.GetID,npc)
@@ -1548,5 +1554,5 @@ function SDGO_BattleAI_GenericUpdate(npc)
 end
 U.faults=0
 U.failures={}
-U.difficulty=C.Difficulty
+U.difficulty=C.GetDifficulty()
 SDGO_BattleAI_Universal=U

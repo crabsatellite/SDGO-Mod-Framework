@@ -15,7 +15,8 @@ import zipfile
 PROTOCOL='sdgo.unit-project'
 SCHEMA_VERSION=1
 METADATA_FIELDS={'description','short_description','gameplay_notes','aliases','search_examples','tags',
-                 'series','model_number','english_name','sources','visibility','declared_unit_id'}
+                 'series','model_number','english_name','sources','visibility','declared_unit_id','ace_pilot'}
+ACE_PILOT_KINDS={'named','role'}
 MEDIA_ROLES={'activity_poster'}
 
 
@@ -48,6 +49,17 @@ def normalize_metadata(value):
     uid=value.get('declared_unit_id')
     if uid is not None and (type(uid) is not int or not 0<uid<=9_999_999):raise ValueError('资料机体编号无效')
     result['declared_unit_id']=uid
+    pilot=value.get('ace_pilot')
+    if pilot is not None:
+        if not isinstance(pilot,dict) or set(pilot)-{'display_name','kind'}:
+            raise ValueError('王牌驾驶员资料字段无效')
+        display_name=plain(pilot.get('display_name',''),'王牌驾驶员显示名',48)
+        if not display_name:raise ValueError('王牌驾驶员显示名不能为空')
+        if '<' in display_name or '>' in display_name or len(display_name.encode('utf-16-le'))//2>64:
+            raise ValueError('王牌驾驶员显示名不符合原生名称字段限制')
+        kind=pilot.get('kind','named')
+        if kind not in ACE_PILOT_KINDS:raise ValueError('王牌驾驶员资料类型无效')
+        result['ace_pilot']={'display_name':display_name,'kind':kind}
     sources=value.get('sources',[])
     if not isinstance(sources,list) or len(sources)>16:raise ValueError('资料来源列表无效')
     result['sources']=[]
@@ -103,7 +115,7 @@ def search_text(draft):
     metadata=normalize_metadata(draft.get('metadata',{}))
     values=[draft.get('name',''),str(draft.get('root_unit_id') or metadata.get('declared_unit_id') or ''),
         metadata['description'],metadata['short_description'],metadata['gameplay_notes'],metadata['series'],metadata['model_number'],
-        metadata['english_name'],*metadata['aliases'],*metadata['tags']]
+        metadata['english_name'],metadata.get('ace_pilot',{}).get('display_name',''),*metadata['aliases'],*metadata['tags']]
     return unicodedata.normalize('NFKC',' '.join(values)).casefold()
 
 

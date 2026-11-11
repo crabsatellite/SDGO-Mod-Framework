@@ -30,6 +30,8 @@
 #include "operator_session_actions.h"
 #include "sdgo/net_route_observer.h"
 #include "sdgo/ai_dialogue_observer.h"
+#include "sdgo/ace_ai_observer.h"
+#include "../game_test_shared/ace_ai_receipts.h"
 
 namespace {
 void CaptureOptionalDialogueFrame(uint32_t number);
@@ -229,6 +231,10 @@ SdgoPvpAiClientGetSnapshotV1Fn getSnapshot;
 SdgoPvpAiClientGetLuaStatusV1Fn getLuaStatus;
 SdgoPvpAiClientGetStartStatusV1Fn getStartStatus;
 SdgoPvpAiClientGetScoreboardStatusV1Fn getScoreboardStatus;
+SdgoAceAiGetPvpClientSnapshotV1Fn getAcePvpSnapshot=nullptr;
+SdgoAceAiGetMissionClientSnapshotV1Fn getAceMissionSnapshot=nullptr;
+SdgoAceAiGetAnnouncementSnapshotV1Fn getAcePvpAnnouncement=nullptr;
+SdgoAceAiGetAnnouncementSnapshotV1Fn getAceMissionAnnouncement=nullptr;
 ScoreboardActions scoreboardInput;
 BattleAiBehaviorProbe battleAiBehavior;
 NativeDeathProbe nativeDeathProbe;
@@ -790,24 +796,24 @@ bool LoadPlan() {
                    missionRoomTitle,
                    "%s imported mission lv2",
                    narrowNonce)<0)return false;
-        } else if(sprintf_s(
-                      missionRoomTitle,
-                      missionRespawns==2
-                          ? "%s !ai3 lv2 inf"
-                          : "%s !ai3 lv2",
-                      narrowNonce)<0)return false;
-        wchar_t actualTitle[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1]{};
-        const DWORD actualTitleLength=GetPrivateProfileStringW(
-            L"run",L"room_title",L"",actualTitle,
-            static_cast<DWORD>(
-                sizeof(actualTitle) / sizeof(actualTitle[0])),
-            job.c_str());
-        const std::wstring expectedTitle(
-            missionRoomTitle,
-            missionRoomTitle+strlen(missionRoomTitle));
-        if(!actualTitleLength ||
-           actualTitleLength>=sizeof(actualTitle)/sizeof(actualTitle[0]) ||
-           expectedTitle!=actualTitle)return false;
+            wchar_t actualTitle[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1]{};
+            const DWORD actualTitleLength=GetPrivateProfileStringW(
+                L"run",L"room_title",L"",actualTitle,
+                static_cast<DWORD>(
+                    sizeof(actualTitle) / sizeof(actualTitle[0])),
+                job.c_str());
+            const std::wstring expectedTitle(
+                missionRoomTitle,
+                missionRoomTitle+strlen(missionRoomTitle));
+            if(!actualTitleLength ||
+               actualTitleLength>=sizeof(actualTitle)/sizeof(actualTitle[0]) ||
+               expectedTitle!=actualTitle)return false;
+        } else {
+            if(!ReadMissionRoomTitle(
+                    job,narrowNonce,missionRespawns==2,
+                    !missionGameModeId && !missionBehaviorProfile,roomTitle) ||
+               strcpy_s(missionRoomTitle,roomTitle)!=0)return false;
+        }
     }
     if (!missionMode && !ReadPvpRoomTitle(job,narrowNonce,randomLoadout,expectedEnemies,expectedAllies,roomTitle)) return false;
     if (!missionMode && !ReadSealedAiTeamCounts(job,expectedAi,roomTitle,expectedAllies,expectedEnemies)) return false;
@@ -5346,10 +5352,38 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
         const auto& p=s.participants[i];if(!p.mapping_valid || !p.valid_registered_object)continue;
         if(p.movement_observed)++moved;if(p.target_valid && p.target_hp>0)++targets;
     }
-    if(context->elapsed_ms<15000 || (!soloImportedMission && (!moved || !targets)))return SDGO_GAME_TEST_WAIT;
-    char message[224];sprintf_s(message,"native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u humans=%u lua=%u tick=%u solo=%u",
-        s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,s.human_participant_count,
-        s.lua_pcall_error_count,s.lua_tick_count,soloImportedMission?1u:0u);context->Observe(message);
+    if(context->elapsed_ms<15000 ||
+       (!soloImportedMission && (!moved || !targets)))
+        return SDGO_GAME_TEST_WAIT;
+    bool actualAce=false;
+    for(uint32_t i=0;i<s.ai_record_count && i<12;++i)
+        actualAce=actualAce ||
+            (s.participants[i].pilot_id & 0xC0000000u)==0xC0000000u;
+    if(actualAce) {
+        SdgoAceAiAnnouncementSnapshotV1 notice{};
+        notice.size=sizeof(notice);
+        notice.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        if(!getAceMissionAnnouncement ||
+           !getAceMissionAnnouncement(&notice) || !notice.sequence)
+            return SDGO_GAME_TEST_WAIT;
+        const bool correct=
+            notice.source==SDGO_ACE_AI_ANNOUNCEMENT_MISSION &&
+            notice.feed_count_after==notice.feed_count_before+1 &&
+            notice.successful_count==1 &&
+            !wcscmp(notice.text,L"我方出现了王牌驾驶员！");
+        context->Assert(
+            correct,
+            "actual mission Aces produced exactly one successful fixed native chat notice");
+        if(!correct)return SDGO_GAME_TEST_FAIL;
+    }
+    char message[224];
+    sprintf_s(
+        message,
+        "native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u humans=%u lua=%u tick=%u solo=%u",
+        s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,
+        s.human_participant_count,s.lua_pcall_error_count,s.lua_tick_count,
+        soloImportedMission?1u:0u);
+    context->Observe(message);
     nativePlayerCombat.Finish(context,scoreboardInput);
     if(soloImportedMission) {
         context->Assert(s.ai_record_count==0 && s.spawned_wingman_count==0 && s.local_wingman_count==0 &&
@@ -5895,8 +5929,9 @@ int __cdecl ObserveThenCapture(const SdgoGameTestContextV1* context) {
         if(result!=SDGO_GAME_TEST_PASS)return result;
         nativeComplete=true;
     }
-    const unsigned target=current=="pages.unit_index.pose_ready" ? 3u:2u;
-    const uint64_t interval=current.find("pages.unit_index.pose_")==0 ? 350:800;
+    const bool battleClip=current=="pvp.ai_spawn" || current=="mission.combat";
+    const unsigned target=battleClip ? 24u:(current=="pages.unit_index.pose_ready" ? 3u:2u);
+    const uint64_t interval=battleClip ? 200:(current.find("pages.unit_index.pose_")==0 ? 350:800);
     if(frame==target)return SDGO_GAME_TEST_PASS;
     if(frame && context->elapsed_ms-capturedAt<interval)return SDGO_GAME_TEST_WAIT;
     if(!requested) {
@@ -5929,7 +5964,8 @@ void WrapNativeCaptures() {
     // a screenshot of an initialization state.
     for(auto& test:capturedCases)
         if(std::strncmp(test.id,"pages.",6)==0||
-           (std::strncmp(test.id,"pvp.",4)==0&&std::strstr(test.id,".ai_spawn")))test.poll=&ObserveThenCapture;
+           (std::strncmp(test.id,"pvp.",4)==0&&std::strstr(test.id,".ai_spawn")) ||
+           std::strcmp(test.id,"mission.combat")==0)test.poll=&ObserveThenCapture;
     provider.cases=capturedCases.data();
 }
 
@@ -6303,6 +6339,72 @@ LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
+void ObserveAceReceipts() {
+    // The test Mod can initialize before an automatic optional companion.
+    // Resolve missing read-only observers after normal Mod loading completes.
+    if (!getAcePvpAnnouncement) {
+        const HMODULE module=GetModuleHandleW(L"ace_ai.dll");
+        if(module)getAcePvpAnnouncement=reinterpret_cast<SdgoAceAiGetAnnouncementSnapshotV1Fn>(
+            GetProcAddress(module,SDGO_ACE_AI_PVP_ANNOUNCEMENT_EXPORT));
+    }
+    if (!getAceMissionAnnouncement || !getAceMissionSnapshot) {
+        const HMODULE module=GetModuleHandleW(L"mission_ai.dll");
+        if(module) {
+            if(!getAceMissionSnapshot)getAceMissionSnapshot=reinterpret_cast<SdgoAceAiGetMissionClientSnapshotV1Fn>(
+                GetProcAddress(module,SDGO_ACE_AI_MISSION_CLIENT_EXPORT));
+            if(!getAceMissionAnnouncement)getAceMissionAnnouncement=reinterpret_cast<SdgoAceAiGetAnnouncementSnapshotV1Fn>(
+                GetProcAddress(module,SDGO_ACE_AI_MISSION_ANNOUNCEMENT_EXPORT));
+        }
+    }
+    static SdgoAceAiPvpClientSnapshotV1 lastPvp{};
+    static SdgoAceAiMissionClientSnapshotV1 lastMission{};
+    static bool havePvp=false,haveMission=false;
+    static uint32_t pvpAnnouncementSequence[2]{},missionAnnouncementSequence=0;
+    static uint32_t playbackSequence=0;
+
+    if(getAcePvpSnapshot) {
+        SdgoAceAiPvpClientSnapshotV1 snapshot{};
+        snapshot.size=sizeof(snapshot);snapshot.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        if(getAcePvpSnapshot(&snapshot) && (!havePvp || memcmp(&snapshot,&lastPvp,sizeof(snapshot)))) {
+            const std::string message=sdgo_game_test_ace::PvpClient(snapshot);
+            sdgo_test::Observe(message.c_str());lastPvp=snapshot;havePvp=true;
+        }
+    }
+    if(getAceMissionSnapshot) {
+        SdgoAceAiMissionClientSnapshotV1 snapshot{};
+        snapshot.size=sizeof(snapshot);snapshot.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        if(getAceMissionSnapshot(&snapshot)) {
+            if(!haveMission || memcmp(&snapshot,&lastMission,sizeof(snapshot))) {
+                const std::string message=sdgo_game_test_ace::MissionClient(snapshot);
+                sdgo_test::Observe(message.c_str());lastMission=snapshot;haveMission=true;
+            }
+            if(snapshot.playback_sequence && snapshot.playback_sequence!=playbackSequence) {
+                const std::string message=sdgo_game_test_ace::Playback(snapshot);
+                sdgo_test::Observe(message.c_str());playbackSequence=snapshot.playback_sequence;
+            }
+        }
+    }
+    if(getAcePvpAnnouncement)for(uint32_t colour=1;colour<=2;++colour) {
+        SdgoAceAiAnnouncementSnapshotV1 snapshot{};
+        snapshot.size=sizeof(snapshot);snapshot.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        snapshot.colour=colour;
+        if(getAcePvpAnnouncement(&snapshot) && snapshot.sequence &&
+           snapshot.sequence!=pvpAnnouncementSequence[colour-1]) {
+            const std::string message=sdgo_game_test_ace::Announcement("pvp",snapshot);
+            sdgo_test::Observe(message.c_str());pvpAnnouncementSequence[colour-1]=snapshot.sequence;
+        }
+    }
+    if(getAceMissionAnnouncement) {
+        SdgoAceAiAnnouncementSnapshotV1 snapshot{};
+        snapshot.size=sizeof(snapshot);snapshot.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        if(getAceMissionAnnouncement(&snapshot) && snapshot.sequence &&
+           snapshot.sequence!=missionAnnouncementSequence) {
+            const std::string message=sdgo_game_test_ace::Announcement("mission",snapshot);
+            sdgo_test::Observe(message.c_str());missionAnnouncementSequence=snapshot.sequence;
+        }
+    }
+}
+
 void __fastcall Update(uint8_t* app, void*) {
     if (verifyQuietRuntime && !quietGraphics.RefreshDeviceHooks()) {
         sdgo_test::Fail("quiet graphics could not preserve the real device's native dispatch chain");
@@ -6333,6 +6435,7 @@ void __fastcall Update(uint8_t* app, void*) {
             }
         }
     }
+    ObserveAceReceipts();
     if (reviewCamera.Enabled()) {
         SdgoPvpAiClientSnapshotV1 pvp{}; const bool havePvp=Snapshot(pvp);
         SdgoMissionAiClientSnapshotV1 missionSnapshot{}; missionSnapshot.size=sizeof(missionSnapshot);
@@ -6458,7 +6561,13 @@ SDGO_MOD_ENTRY {
     modalLoadingVtable=api->Symbol(mod,"flow.native_modal_loading_vtable");
     if (!modalLoadingVtable)sdgo_test::Fail("native modal-loading page identity is unavailable");
     if (!roomListVtable)sdgo_test::Fail("native Game Room page identity is unavailable");
-    getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
+    const HMODULE matchAi=GetModuleHandleW(L"match_ai.dll");
+    const HMODULE aceAi=GetModuleHandleW(L"ace_ai.dll");
+    getSnapshot = reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(GetProcAddress(matchAi, SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT));
+    getAcePvpSnapshot=reinterpret_cast<SdgoAceAiGetPvpClientSnapshotV1Fn>(
+        GetProcAddress(matchAi,SDGO_ACE_AI_MATCH_CLIENT_EXPORT));
+    getAcePvpAnnouncement=aceAi ? reinterpret_cast<SdgoAceAiGetAnnouncementSnapshotV1Fn>(
+        GetProcAddress(aceAi,SDGO_ACE_AI_PVP_ANNOUNCEMENT_EXPORT)) : nullptr;
     api->HookCode(mod,"game.error_name",reinterpret_cast<void*>(&ObserveNativeErrorName),reinterpret_cast<void**>(&originalErrorName));
     if(!nativePopupProbe.Install(api,mod))return 0;
     if((earlyNavigationBeforeInventory || ocAllocateStat>=0 ||
@@ -6471,7 +6580,12 @@ SDGO_MOD_ENTRY {
     getLuaStatus = reinterpret_cast<SdgoPvpAiClientGetLuaStatusV1Fn>(GetProcAddress(GetModuleHandleW(L"match_ai.dll"), SDGO_PVP_AI_CLIENT_LUA_STATUS_EXPORT));
     if (!getLuaStatus) sdgo_test::Fail("production whole-battle Lua counter export is unavailable");
     if(missionMode) {
-        getMissionSnapshot=reinterpret_cast<SdgoMissionAiClientGetSnapshotV1Fn>(GetProcAddress(GetModuleHandleW(L"mission_ai.dll"),SDGO_MISSION_AI_CLIENT_SNAPSHOT_EXPORT));
+        const HMODULE missionAi=GetModuleHandleW(L"mission_ai.dll");
+        getMissionSnapshot=reinterpret_cast<SdgoMissionAiClientGetSnapshotV1Fn>(GetProcAddress(missionAi,SDGO_MISSION_AI_CLIENT_SNAPSHOT_EXPORT));
+        getAceMissionSnapshot=reinterpret_cast<SdgoAceAiGetMissionClientSnapshotV1Fn>(
+            GetProcAddress(missionAi,SDGO_ACE_AI_MISSION_CLIENT_EXPORT));
+        getAceMissionAnnouncement=reinterpret_cast<SdgoAceAiGetAnnouncementSnapshotV1Fn>(
+            GetProcAddress(missionAi,SDGO_ACE_AI_MISSION_ANNOUNCEMENT_EXPORT));
         if(!getMissionSnapshot)sdgo_test::Fail("production native mission observation export is unavailable");
         if(missionBehaviorProfile) {
             getMissionBehaviorStatus=

@@ -22,7 +22,7 @@ template<class C> inline int RoomDifficultyText(std::basic_string_view<C> title)
    while(p<title.size()&&Space(title[p])) ++p;
    begin=p;while(p<title.size()&&!Space(title[p])) ++p;
    auto token=title.substr(begin,p-begin);if(!token.empty()&&token[0]==C('!')) break;
-   if(Word(token,"easy")) result=0;else if(Word(token,"medium")) result=1;else if(Word(token,"hard")) result=2;
+   if(Word(token,"easy")) result=0;else if(Word(token,"normal")||Word(token,"medium")) result=1;else if(Word(token,"hard")) result=2;
   }
   return result;
  }

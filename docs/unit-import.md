@@ -230,7 +230,9 @@ does not apply machine pricing, probabilities or rewards.
 
 The Manager also supports metadata-first `sdgo.unit-project` authoring. Keep
 descriptions, aliases, search examples, sources and original activity posters in
-the project; a portable authoring ZIP carries those files with exact hashes.
+the project; a portable authoring ZIP carries those files with exact hashes. An optional
+`metadata.ace_pilot` object carries the Ace display `display_name` and a `kind` of `named`
+or `role`. When that unit is selected as an Ace, the game uses this name instead of the machine name for the whole battle, including respawns; it is not a hit-triggered label. Team announcements identify only the red or blue team and disclose neither the pilot nor machine name. The display name is limited to 48 Unicode characters and the native field limit of 64 UTF-16 code units. It remains owner content, and projects that omit it retain their previous meaning. Reviewed projects can be compiled with `tools/export_unit_ace_pilots.py` into the managed owner overlay; generic programme packages carry only the base catalog.
 Capsule editors can read the same project library and copy selected images and
 metadata into their own portable catalog before a unit is ready for runtime
 publication. This never registers a prize or applies a machine. User content

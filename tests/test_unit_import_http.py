@@ -41,6 +41,8 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status,200,state);self.state=state;return '/api/units/drafts/'+state['draft']['id']
     def test_real_html_and_module_route(self):
         status,raw=self.request('GET','/panels/units.js');self.assertEqual(status,200);self.assertIn('确认'.encode(),raw)
+        self.assertIn('王牌驾驶员显示名'.encode(),raw)
+        self.assertIn('整场替代机体名'.encode(),raw)
         status,result=self.request('GET','/api/state');self.assertIn('units',{r['id'] for r in result['panels']})
         self.assertEqual(self.request('GET','/units')[0],404)
     def test_wrong_origin_and_token_block_write(self):

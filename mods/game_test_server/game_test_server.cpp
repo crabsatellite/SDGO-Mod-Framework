@@ -23,7 +23,9 @@
 #include "sdgo/newcomer_protection_observer.h"
 #include "sdgo/pvp_ai_observer.h"
 #include "sdgo/room_titles_lookup.h"
+#include "sdgo/ace_ai_observer.h"
 #include "sdgo/sdgo_api.h"
+#include "../game_test_shared/ace_ai_receipts.h"
 
 namespace
 {
@@ -31,6 +33,8 @@ namespace
     constexpr unsigned kDrainBatch = 64;
     constexpr unsigned kDamageQueueCapacity = 512;
     constexpr unsigned kDamageDrainBatch = 64;
+    constexpr unsigned kAceQueueCapacity = 512;
+    constexpr unsigned kAceDrainBatch = 64;
     constexpr size_t kRoomMode = 0x05;
     constexpr size_t kRoomTitleLength = 0x79;
     constexpr size_t kRoomTitle = 0x7A;
@@ -145,6 +149,13 @@ namespace
         uint8_t rawTitle[20] = {};
     };
 
+    struct AceEvent
+    {
+        uint8_t scope = 0; // 1: PvP, 2: mission
+        uint8_t reserved[3] = {};
+        SdgoAceAiServerSnapshotV1 snapshot{};
+    };
+
     using RecordDamageFn = uint32_t(__thiscall*)(
         void* room, void* victimPilot, void* attackerPilot, void* victimUnit,
         uint32_t effectiveLoss, int32_t deathFlag);
@@ -168,6 +179,12 @@ namespace
     unsigned g_damageQueueRead = 0;
     unsigned g_damageQueueWrite = 0;
     unsigned g_damageQueueCount = 0;
+    AceEvent g_aceQueue[kAceQueueCapacity] = {};
+    unsigned g_aceQueueRead = 0;
+    unsigned g_aceQueueWrite = 0;
+    unsigned g_aceQueueCount = 0;
+    AceEvent g_lastAce[2] = {};
+    bool g_haveLastAce[2] = {};
     RecordDamageFn g_recordDamage = nullptr;
     bool g_deathEnabled = false;
     bool g_deathSetupFailed = false;
@@ -175,6 +192,7 @@ namespace
     volatile LONG g_expectedHost = 0;
     volatile LONG g_dropped = 0;
     volatile LONG g_damageDropped = 0;
+    volatile LONG g_aceDropped = 0;
     volatile LONG g_damageSequence = 0;
     volatile LONG g_damageQualificationQueued = 0;
     volatile LONG g_abortWorker = 0;
@@ -727,19 +745,70 @@ namespace
         LeaveCriticalSection(&g_queueLock);
     }
 
+    void QueueAce(const AceEvent& event)
+    {
+        if (event.scope < 1 || event.scope > 2 ||
+            event.snapshot.size < sizeof(event.snapshot) ||
+            event.snapshot.version != SDGO_ACE_AI_OBSERVER_VERSION ||
+            event.snapshot.unit_count > 12 || !event.snapshot.room_cookie)
+            return;
+        if (!TryEnterCriticalSection(&g_queueLock)) {
+            InterlockedIncrement(&g_aceDropped);
+            return;
+        }
+        const unsigned index = event.scope - 1;
+        if (g_haveLastAce[index] &&
+            std::memcmp(
+                &g_lastAce[index].snapshot, &event.snapshot,
+                sizeof(event.snapshot)) == 0) {
+            LeaveCriticalSection(&g_queueLock);
+            return;
+        }
+        if (g_aceQueueCount == kAceQueueCapacity) {
+            InterlockedIncrement(&g_aceDropped);
+        } else {
+            g_aceQueue[g_aceQueueWrite] = event;
+            g_aceQueueWrite = (g_aceQueueWrite + 1) % kAceQueueCapacity;
+            ++g_aceQueueCount;
+            g_lastAce[index] = event;
+            g_haveLastAce[index] = true;
+        }
+        LeaveCriticalSection(&g_queueLock);
+    }
+
+    void __cdecl ObserveAceServerSnapshot(
+        const SdgoAceAiServerSnapshotV1* snapshot, void* user)
+    {
+        const DWORD incomingError = GetLastError();
+        __try {
+            const uintptr_t scope = reinterpret_cast<uintptr_t>(user);
+            if (snapshot && scope >= 1 && scope <= 2 &&
+                snapshot->size >= sizeof(*snapshot) &&
+                snapshot->version == SDGO_ACE_AI_OBSERVER_VERSION &&
+                snapshot->unit_count <= 12 && snapshot->room_cookie) {
+                AceEvent event{};
+                event.scope = static_cast<uint8_t>(scope);
+                std::memcpy(&event.snapshot, snapshot, sizeof(event.snapshot));
+                QueueAce(event);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            InterlockedIncrement(&g_aceDropped);
+        }
+        SetLastError(incomingError);
+    }
     uint32_t __fastcall ObserveRecordDamage(
         void* room, void*, void* victimPilot, void* attackerPilot,
         void* victimUnit, uint32_t effectiveLoss, int32_t deathFlag)
     {
         const DWORD incomingError = GetLastError();
         DamageEvent event = {};
+        bool inspected = false;
+        bool matched = false;
         __try {
-            const bool matched = CaptureDamage(
+            matched = CaptureDamage(
                 room, victimPilot, attackerPilot, victimUnit,
                 effectiveLoss, deathFlag, &event);
-            QueueDamageQualificationOnce(event);
-            if (matched)
-                QueueDamage(event);
+            inspected = true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
         SetLastError(incomingError);
@@ -747,6 +816,14 @@ namespace
             room, victimPilot, attackerPilot, victimUnit, effectiveLoss,
             deathFlag);
         const DWORD originalError = GetLastError();
+        __try {
+            if (inspected) {
+                QueueDamageQualificationOnce(event);
+                if (matched)
+                    QueueDamage(event);
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
         SetLastError(originalError);
         return result;
     }
@@ -824,6 +901,19 @@ namespace
             g_damageQueueRead =
                 (g_damageQueueRead + 1) % kDamageQueueCapacity;
             --g_damageQueueCount;
+        }
+        LeaveCriticalSection(&g_queueLock);
+        return count;
+    }
+
+    unsigned DrainAce(AceEvent* output)
+    {
+        EnterCriticalSection(&g_queueLock);
+        unsigned count = 0;
+        while (count < kAceDrainBatch && g_aceQueueCount != 0) {
+            output[count++] = g_aceQueue[g_aceQueueRead];
+            g_aceQueueRead = (g_aceQueueRead + 1) % kAceQueueCapacity;
+            --g_aceQueueCount;
         }
         LeaveCriticalSection(&g_queueLock);
         return count;
@@ -1076,6 +1166,24 @@ namespace
             "}\n";
     }
 
+    std::string AceJson(const AceEvent& event)
+    {
+        const char* scope = event.scope == 1 ? "pvp" : "mission";
+        const std::string message =
+            sdgo_game_test_ace::Server(scope, event.snapshot);
+        return
+            "{\"run_id\":\"" + EscapeJson(g_config.runId) +
+            "\",\"role\":\"server\",\"suite\":\"" +
+            EscapeJson(g_config.suite) +
+            "\",\"event\":\"observation\",\"pid\":" +
+            std::to_string(GetCurrentProcessId()) +
+            ",\"nonce\":\"" + EscapeJson(g_config.nonce) +
+            "\",\"room_cookie\":" +
+            std::to_string(event.snapshot.room_cookie) +
+            ",\"message\":\"" + EscapeJson(message.c_str()) +
+            "\"}\n";
+    }
+
     std::string DamageJson(const DamageEvent& event)
     {
         const char* source =
@@ -1210,6 +1318,9 @@ namespace
              ",\"damage_dropped\":" +
              std::to_string(static_cast<unsigned long>(
                  InterlockedCompareExchange(&g_damageDropped, 0, 0))) +
+             ",\"ace_dropped\":" +
+             std::to_string(static_cast<unsigned long>(
+                 InterlockedCompareExchange(&g_aceDropped, 0, 0))) +
             "}\n";
         HANDLE file = CreateFileW(
             temporary.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr,
@@ -1713,6 +1824,13 @@ namespace
                     "native damage queue overflowed; death evidence was lost");
                 statusChanged = true;
             }
+            if (InterlockedCompareExchange(&g_aceDropped, 0, 0) != 0 &&
+                lifecycle.outcome != Lifecycle::Fail) {
+                Fail(
+                    &lifecycle,
+                    "Ace snapshot queue overflowed; native evidence was lost");
+                statusChanged = true;
+            }
 
             SdgoPvpAiObserverEventV1 batch[kDrainBatch] = {};
             unsigned count = 0;
@@ -1767,6 +1885,17 @@ namespace
                             before.roomCookie != lifecycle.roomCookie) {
                             statusChanged = true;
                         }
+                    }
+                }
+            }
+            AceEvent aceBatch[kAceDrainBatch] = {};
+            while ((count = DrainAce(aceBatch)) != 0) {
+                for (unsigned i = 0; i < count; ++i) {
+                    if (!WriteReceipt(AceJson(aceBatch[i]))) {
+                        Fail(
+                            &lifecycle,
+                            "Ace snapshot receipt could not be flushed");
+                        statusChanged = true;
                     }
                 }
             }
@@ -1936,6 +2065,32 @@ SDGO_MOD_ENTRY
         } else {
             g_damageSource = DamageSource::BattleRewardsBridge;
         }
+    }
+
+    if (!missionBehaviorRun) {
+        const auto registerAceProvider = [&](HMODULE provider,
+                                             const char* exportName,
+                                             uintptr_t scope) {
+            const auto registerObserver = provider
+                ? reinterpret_cast<SdgoAceAiRegisterServerObserverV1Fn>(
+                      GetProcAddress(provider, exportName))
+                : nullptr;
+            if (!registerObserver)
+                return;
+            const SdgoAceAiServerObserverSinkV1 aceSink = {
+                sizeof(aceSink), SDGO_ACE_AI_OBSERVER_VERSION,
+                &ObserveAceServerSnapshot, reinterpret_cast<void*>(scope)};
+            if (!registerObserver(&aceSink))
+                api->Log(
+                    mod, SDGO_LOG_ERROR,
+                    "GameTest server observer: Ace snapshot provider rejected registration");
+        };
+        registerAceProvider(
+            GetModuleHandleW(L"pvp_ai.dll"),
+            SDGO_ACE_AI_PVP_SERVER_OBSERVER_EXPORT, 1);
+        registerAceProvider(
+            GetModuleHandleW(L"coop_ai.dll"),
+            SDGO_ACE_AI_MISSION_SERVER_OBSERVER_EXPORT, 2);
     }
 
     SetEvent(g_startGate);

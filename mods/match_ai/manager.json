@@ -36,6 +36,7 @@
   "mechanism": "客户端在配套对战模式实例化 AI 机体，等原生倒计时解除玩家控制后同步启用 AI，并同步 TAB 原生战绩列表人数、显示/复活与原生 AI 调用。服务端 pvp_ai 提供对应席位和结算身份。",
   "provides": {
     "mission.lifecycle.client": 1,
-    "battle.events.client": 1
+    "battle.events.client": 1,
+    "battle.start.units.client": 1
   }
 }
