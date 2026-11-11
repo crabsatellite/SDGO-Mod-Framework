@@ -7,6 +7,7 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/ace_ai_observer.h"
 #include "sdgo/ace_ai_client.h"
+#include "sdgo/ai_start_units.h"
 #include "pilot_catalog.h"
 
 namespace {
@@ -34,6 +35,9 @@ struct NameplateBinding {
 };
 std::array<NameplateBinding, 12> g_nameplates{};
 uint32_t g_nameplateGeneration = 0;
+using InitUnitDataFn = void(__thiscall*)(uint8_t*,const void*,uint32_t);
+InitUnitDataFn g_originalInitUnitData = nullptr;
+SdgoAiStartUnitV1Fn g_startUnit = nullptr;
 
 bool NameplateMatches(const NameplateBinding& binding, const uint8_t* unit) {
     __try {
@@ -45,6 +49,38 @@ bool NameplateMatches(const NameplateBinding& binding, const uint8_t* unit) {
         const uint32_t npc = *reinterpret_cast<const uint32_t*>(unit + 0x3238);
         return npc >= 3604001 && npc <= 3607000;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+void RestoreAdvertisedMaximum(uint8_t* unit) {
+    __try {
+        for(const auto& binding:g_nameplates) {
+            if(!NameplateMatches(binding,unit)) continue;
+            if(!g_startUnit) {
+                const HMODULE match=GetModuleHandleW(L"match_ai.dll");
+                if(match)g_startUnit=reinterpret_cast<SdgoAiStartUnitV1Fn>(
+                    GetProcAddress(match,SDGO_AI_START_UNIT_EXPORT));
+            }
+            if(!g_startUnit)return;
+            const uint32_t npc=*reinterpret_cast<uint32_t*>(unit+0x3238);
+            const int32_t form=*reinterpret_cast<int32_t*>(unit+0x2EE4);
+            SdgoAiStartUnitV1 request{sizeof(request),SDGO_AI_START_UNIT_VERSION,
+                binding.pilot,npc,form,g_nameplateGeneration,0,0};
+            if(g_startUnit(&request)!=1 || request.generation!=g_nameplateGeneration ||
+               !request.max_hp || request.max_hp>0x7fffffffu ||
+               request.pilot_id!=binding.pilot || request.npc_id!=npc || request.form!=form ||
+               !NameplateMatches(binding,unit))return;
+            // InitUnitData restores a machine's original maximum on internal form
+            // changes. The server-start value is authoritative; current HP is not
+            // part of that packet and must remain exactly as the native path left it.
+            *reinterpret_cast<uint32_t*>(unit+0x3C)=request.max_hp;
+            return;
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+void __fastcall InitUnitData(uint8_t* unit,void*,const void* definition,uint32_t options) {
+    g_originalInitUnitData(unit,definition,options);
+    RestoreAdvertisedMaximum(unit);
 }
 
 // Native CBaseGameUnit message 6 owns this renderer. The original creates and
@@ -233,7 +269,9 @@ SDGO_MOD_ENTRY
         !Bind(g_stringCtor, "flow.native_wstring_ctor") ||
         !Bind(g_appendLine, "dialogue.battle_chat.append") ||
         !api->HookCode(mod, "ace.unit_nameplate", reinterpret_cast<void*>(&Nameplate),
-                       reinterpret_cast<void**>(&g_originalNameplate)))
+                       reinterpret_cast<void**>(&g_originalNameplate)) ||
+        !api->HookCode(mod,"ace.unit_init_data",reinterpret_cast<void*>(&InitUnitData),
+                       reinterpret_cast<void**>(&g_originalInitUnitData)))
         return 0;
     g_active = true;
     api->Log(mod, SDGO_LOG_INFO, "ready: %u Ace pilot identities",

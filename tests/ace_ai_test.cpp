@@ -17,6 +17,20 @@ std::wstring appendedText;
 std::wstring nameplateText;
 uint32_t nameplateColour=0, nameplatePilot=0;
 int nameplateCalls=0;
+const void* initializedDefinition=nullptr;
+uint32_t initializedOptions=0;
+bool advertisedAvailable=true;
+void __fastcall NativeInitUnitData(uint8_t* unit,void*,const void* definition,uint32_t options) {
+    initializedDefinition=definition;initializedOptions=options;
+    ai_test::Put<uint32_t>(unit,0x3C,13500u);
+    ai_test::Put<uint32_t>(unit,0x38,9000u);
+}
+int __cdecl AdvertisedUnit(SdgoAiStartUnitV1* request) {
+    CHECK(request->pilot_id==0xE0000002u&&request->npc_id==3604002u&&
+          request->form==0&&request->expected_generation==7u);
+    if(!advertisedAvailable)return 0;
+    request->generation=7;request->max_hp=16200;return 1;
+}
 void __fastcall NativeNameplate(uint8_t*,void*,const void* text,uint32_t colour,uint32_t pilot) {
     nameplateText=*static_cast<const std::wstring*>(text);
     nameplateColour=colour;nameplatePilot=pilot;++nameplateCalls;
@@ -76,6 +90,8 @@ void Reset() {
     g_originalNameplate=reinterpret_cast<NameplateFn>(&NativeNameplate);
     for(auto& binding:g_nameplates)binding={};
     g_nameplateGeneration=0;nameplateCalls=0;nameplateText.clear();
+    g_originalInitUnitData=reinterpret_cast<InitUnitDataFn>(&NativeInitUnitData);
+    g_startUnit=&AdvertisedUnit;advertisedAvailable=true;
 }
 }
 
@@ -165,6 +181,17 @@ int main() {
     ai_test::Put<uint32_t>(actor.data(),0x3238,3604002u);
     Nameplate(actor.data(),nullptr,&machine,5u,6u);
     CHECK(nameplateText==L"阿姆罗·雷");
+
+    SCENARIO("native internal form initialization restores only the exact advertised maximum after the original");
+    InitUnitData(actor.data(),nullptr,plate.data(),0x76543210u);
+    CHECK(initializedDefinition==plate.data()&&initializedOptions==0x76543210u);
+    CHECK(ai_test::Get<uint32_t>(actor.data(),0x3C)==16200u&&
+          ai_test::Get<uint32_t>(actor.data(),0x38)==9000u);
+    advertisedAvailable=false;
+    InitUnitData(actor.data(),nullptr,plate.data(),0);
+    CHECK(ai_test::Get<uint32_t>(actor.data(),0x3C)==13500u&&
+          ai_test::Get<uint32_t>(actor.data(),0x38)==9000u);
+    advertisedAvailable=true;
 
     SCENARIO("ordinary AI, enemy NPCs and reused actor identities keep native names");
     ai_test::Put<uint32_t>(actor.data(),0x2B68,0x80000002u);

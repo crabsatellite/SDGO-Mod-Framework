@@ -115,6 +115,7 @@ class AceAiManagerContractTests(unittest.TestCase):
             {
                 "host",
                 "ace.unit_nameplate",
+                "ace.unit_init_data",
                 "dialogue.battle_chat.ctor",
                 "dialogue.battle_chat.dtor",
                 "dialogue.battle_chat.append",
@@ -126,6 +127,7 @@ class AceAiManagerContractTests(unittest.TestCase):
         self.assertEqual("0x00C97000", fragment.get("host", "size_of_image"))
         for section in (
             "ace.unit_nameplate",
+            "ace.unit_init_data",
             "dialogue.battle_chat.ctor",
             "dialogue.battle_chat.dtor",
             "dialogue.battle_chat.append",
