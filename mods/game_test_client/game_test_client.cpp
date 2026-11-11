@@ -6036,6 +6036,22 @@ LONG CALLBACK NativeFault(EXCEPTION_POINTERS* fault) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 void ObserveAceReceipts() {
+    // The test Mod can initialize before an automatic optional companion.
+    // Resolve missing read-only observers after normal Mod loading completes.
+    if (!getAcePvpAnnouncement) {
+        const HMODULE module=GetModuleHandleW(L"ace_ai.dll");
+        if(module)getAcePvpAnnouncement=reinterpret_cast<SdgoAceAiGetAnnouncementSnapshotV1Fn>(
+            GetProcAddress(module,SDGO_ACE_AI_PVP_ANNOUNCEMENT_EXPORT));
+    }
+    if (!getAceMissionAnnouncement || !getAceMissionSnapshot) {
+        const HMODULE module=GetModuleHandleW(L"mission_ai.dll");
+        if(module) {
+            if(!getAceMissionSnapshot)getAceMissionSnapshot=reinterpret_cast<SdgoAceAiGetMissionClientSnapshotV1Fn>(
+                GetProcAddress(module,SDGO_ACE_AI_MISSION_CLIENT_EXPORT));
+            if(!getAceMissionAnnouncement)getAceMissionAnnouncement=reinterpret_cast<SdgoAceAiGetAnnouncementSnapshotV1Fn>(
+                GetProcAddress(module,SDGO_ACE_AI_MISSION_ANNOUNCEMENT_EXPORT));
+        }
+    }
     static SdgoAceAiPvpClientSnapshotV1 lastPvp{};
     static SdgoAceAiMissionClientSnapshotV1 lastMission{};
     static bool havePvp=false,haveMission=false;
