@@ -1,6 +1,6 @@
 {
  "schema": "sdgo.map-mission",
- "schema_version": 1,
+ "schema_version": 2,
  "mission_key": "sdgo-sample.twin-valley-fortress.odessa",
  "name": {
   "zh": "奥德萨作战",
@@ -28,7 +28,7 @@
    "第2阶段：摧毁3座导弹阵地",
    "第3阶段：掩护钢坦克90秒",
    "第4阶段：击破黑色三连星",
-   "第5阶段：突破基地防线，击破指挥官，60秒内击破核弹头"
+   "第5阶段：击破基地指挥官，肃清残兵，60秒内击破核弹头"
   ]
  },
  "difficulties": [
@@ -216,6 +216,10 @@
    "name": {
     "zh": "大魔（加亚）",
     "en": "Dom Gaia"
+   },
+   "cutin": {
+    "native_sprite": "sprs\\8879.spr",
+    "line": "l10"
    }
   },
   "mash": {
@@ -423,20 +427,6 @@
    }
   }
  },
- "banners": {
-  "tristars": {
-   "image": "images/banner_tristars.png"
-  },
-  "nuke": {
-   "image": "images/banner_nuke.png"
-  },
-  "gyan": {
-   "image": "images/banner_gyan.png"
-  },
-  "complete": {
-   "image": "images/banner_complete.png"
-  }
- },
  "area": [
   -4600,
   3000,
@@ -505,7 +495,7 @@
        -1900.0
       ]
      ],
-     "at": 1
+     "at": 0
     },
     {
      "npc": "zaku",
@@ -541,7 +531,7 @@
        -3079.4228634059946
       ]
      ],
-     "at": 1,
+     "at": 0,
      "every": 2
     }
    ],
@@ -593,7 +583,7 @@
        -1900.0
       ]
      ],
-     "at": 1
+     "at": 0
     },
     {
      "npc": "zaku_bazooka",
@@ -619,7 +609,7 @@
        -3700.0
       ]
      ],
-     "at": 2,
+     "at": 0,
      "every": 3
     },
     {
@@ -715,7 +705,7 @@
        -500.0
       ]
      ],
-     "at": 1,
+     "at": 0,
      "min_free": 3
     },
     {
@@ -829,7 +819,7 @@
        700.0
       ]
      ],
-     "at": 1
+     "at": 0
     },
     {
      "npc": "dopp_fly",
@@ -855,7 +845,7 @@
        -1000.0
       ]
      ],
-     "at": 6,
+     "at": 0,
      "every": 4
     },
     {
@@ -929,9 +919,7 @@
    },
    "enter": {
     "cutscene": "tristars",
-    "lines": [
-     "l10"
-    ]
+    "lines": []
    },
    "spawns": [
     {
@@ -943,7 +931,7 @@
        1300.0
       ]
      ],
-     "at": 1,
+     "at": 0,
      "min_free": 3
     },
     {
@@ -955,7 +943,7 @@
        1650.0
       ]
      ],
-     "at": 1
+     "at": 0
     },
     {
      "npc": "ortega",
@@ -966,7 +954,7 @@
        2000.0
       ]
      ],
-     "at": 1
+     "at": 0
     },
     {
      "npc": "tristar_zaku",
@@ -1020,18 +1008,86 @@
   {
    "key": "core",
    "objective": {
-    "zh": "突破基地防线（击破12台）"
+    "zh": "突入基地核心：击破基地指挥官（2台）"
    },
    "slots": {
     "ally": 0,
-    "enemy": 8
+    "enemy": 6
    },
    "enter": {
     "lines": [
      "l11",
-     "l12"
+     "l12",
+     "l12a"
     ],
     "sector": "north_valley"
+   },
+   "spawns": [
+    {
+     "npc": "commander",
+     "positions": [
+      [
+       -900.0,
+       133.3,
+       5600.0
+      ],
+      [
+       900.0,
+       116.4,
+       5600.0
+      ]
+     ],
+     "at": 0
+    },
+    {
+     "npc": "dom",
+     "positions": [
+      [
+       -1500.0,
+       145.7,
+       5200.0
+      ],
+      [
+       1500.0,
+       134.7,
+       5200.0
+      ],
+      [
+       0.0,
+       118.9,
+       6000.0
+      ]
+     ],
+     "at": 4,
+     "every": 3
+    }
+   ],
+   "goal": {
+    "kill": [
+     {
+      "npc": "commander",
+      "count": 2
+     }
+    ]
+   },
+   "fail": [
+    {
+     "time_limit": 240
+    }
+   ],
+   "reward": {
+    "points": 80,
+    "unit_exp": 150
+   }
+  },
+  {
+   "key": "core_mopup",
+   "objective": {
+    "zh": "肃清基地残余守军（12台）"
+   },
+   "slots": {
+    "ally": 0,
+    "enemy": 8
    },
    "spawns": [
     {
@@ -1058,7 +1114,7 @@
        3200.0
       ]
      ],
-     "at": 3,
+     "at": 0,
      "every": 3
     },
     {
@@ -1137,78 +1193,6 @@
    }
   },
   {
-   "key": "command",
-   "objective": {
-    "zh": "击破基地指挥官（2台）"
-   },
-   "slots": {
-    "ally": 0,
-    "enemy": 6
-   },
-   "enter": {
-    "lines": [
-     "l12a"
-    ]
-   },
-   "spawns": [
-    {
-     "npc": "commander",
-     "positions": [
-      [
-       -900.0,
-       133.3,
-       5600.0
-      ],
-      [
-       900.0,
-       116.4,
-       5600.0
-      ]
-     ],
-     "at": 2
-    },
-    {
-     "npc": "dom",
-     "positions": [
-      [
-       -1500.0,
-       145.7,
-       5200.0
-      ],
-      [
-       1500.0,
-       134.7,
-       5200.0
-      ],
-      [
-       0.0,
-       118.9,
-       6000.0
-      ]
-     ],
-     "at": 4,
-     "every": 3
-    }
-   ],
-   "goal": {
-    "kill": [
-     {
-      "npc": "commander",
-      "count": 2
-     }
-    ]
-   },
-   "fail": [
-    {
-     "time_limit": 240
-    }
-   ],
-   "reward": {
-    "points": 80,
-    "unit_exp": 150
-   }
-  },
-  {
    "key": "nuke",
    "objective": {
     "zh": "60秒内击破核弹头"
@@ -1233,7 +1217,7 @@
        5300.0
       ]
      ],
-     "at": 1,
+     "at": 0,
      "min_free": 3
     },
     {
@@ -1245,7 +1229,7 @@
        4700.0
       ]
      ],
-     "at": 1
+     "at": 0
     },
     {
      "npc": "dopp_kai",
@@ -1568,10 +1552,6 @@
      ]
     },
     {
-     "t": 6.5,
-     "banner": "tristars"
-    },
-    {
      "t": 4.0,
      "line": "l09"
     }
@@ -1666,14 +1646,6 @@
     {
      "t": 1.0,
      "sound": "0190.zsd"
-    },
-    {
-     "t": 2.5,
-     "banner": "nuke"
-    },
-    {
-     "t": 5.5,
-     "banner": "gyan"
     }
    ]
   },
@@ -1784,12 +1756,9 @@
     {
      "t": 5.5,
      "line": "l16"
-    },
-    {
-     "t": 7.0,
-     "banner": "complete"
     }
    ]
   }
- }
+ },
+ "transition_delay": "immediate"
 }
