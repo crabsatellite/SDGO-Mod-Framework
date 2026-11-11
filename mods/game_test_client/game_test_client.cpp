@@ -5089,6 +5089,20 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
         if(p.movement_observed)++moved;if(p.target_valid && p.target_hp>0)++targets;
     }
     if(context->elapsed_ms<15000 || !moved || !targets)return SDGO_GAME_TEST_WAIT;
+    bool actualAce=false;
+    for(uint32_t i=0;i<s.ai_record_count && i<12;++i)
+        actualAce=actualAce || (s.participants[i].pilot_id & 0xC0000000u)==0xC0000000u;
+    if(actualAce) {
+        SdgoAceAiAnnouncementSnapshotV1 notice{};
+        notice.size=sizeof(notice);notice.version=SDGO_ACE_AI_OBSERVER_VERSION;
+        if(!getAceMissionAnnouncement || !getAceMissionAnnouncement(&notice) || !notice.sequence)
+            return SDGO_GAME_TEST_WAIT;
+        const bool correct=notice.source==SDGO_ACE_AI_ANNOUNCEMENT_MISSION &&
+            notice.feed_count_after==notice.feed_count_before+1 && notice.successful_count==1 &&
+            !wcscmp(notice.text,L"我方出现了王牌驾驶员！");
+        context->Assert(correct,"actual mission Aces produced exactly one successful fixed native chat notice");
+        if(!correct)return SDGO_GAME_TEST_FAIL;
+    }
     char message[192];sprintf_s(message,"native mission bounded observation mode=%u generation=%u spawned=%u moved=%u targets=%u lua=%u tick=%u",
         s.room_mode,s.battle_generation,s.spawned_wingman_count,moved,targets,s.lua_pcall_error_count,s.lua_tick_count);context->Observe(message);
     nativePlayerCombat.Finish(context,scoreboardInput);

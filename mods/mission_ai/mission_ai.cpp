@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "sdgo/mission_ai_client_observer.h"
+#include "sdgo/ai_start_units.h"
 #include "sdgo/ace_ai_observer.h"
 #include "sdgo/mission_ai_stage_warp_observer.h"
 #include "sdgo/sdgo_api.h"
@@ -222,6 +223,7 @@ namespace
     IsPlayerObjectFn g_isPlayerObject = nullptr;
     PlaybackUnitFn g_playbackUnit = nullptr;
     MatchPlaybackContextFn g_matchPlaybackContext = nullptr;
+    SdgoAiStartUnitV1Fn g_matchStartUnit = nullptr;
     thread_local uint32_t g_pendingRespawnObject = 0;
     thread_local int g_pendingRespawnColour = -1;
     thread_local SdgoAceAiMissionPlaybackContextV1
@@ -273,6 +275,7 @@ namespace
         uint32_t unitDataId = 0;
         uint32_t recordNpcId = 0;
         uint32_t profileGeneration = 0;
+        uint32_t startUnitGeneration = 0;
         std::wstring acePilotName;
         bool profileInitialized = false;
         bool profileInitial = true;
@@ -310,6 +313,71 @@ namespace
         uint8_t* mode = service ? *reinterpret_cast<uint8_t**>(service + 0x0C) : nullptr;
         return mode && mode == g_observedMode &&
             *reinterpret_cast<const void* const*>(mode) == g_game.missionVtable;
+    }
+
+    bool ApplyAdvertisedAceHealth(
+        ObservedWingman& wingman, bool initializeFreshCurrent)
+    {
+        if (!wingman.ace || !wingman.spawnedUnit || !g_matchStartUnit ||
+            (!initializeFreshCurrent && wingman.startUnitGeneration == 0))
+            return false;
+        __try {
+            uint8_t* unit = wingman.spawnedUnit;
+            const int form =
+                *reinterpret_cast<const int*>(unit + kUnitDeckIndex);
+            if (form < 0 || form >= 4)
+                return false;
+            const uint32_t expectedGeneration = initializeFreshCurrent ?
+                0u : wingman.startUnitGeneration;
+            const uint32_t currentNpc =
+                *reinterpret_cast<const uint32_t*>(unit + kUnitNpcDataId);
+            if (!currentNpc) return false;
+            SdgoAiStartUnitV1 request{
+                sizeof(request), SDGO_AI_START_UNIT_VERSION,
+                wingman.pilotId, currentNpc, form,
+                expectedGeneration, 0, 0};
+            if (g_matchStartUnit(&request) != 1 ||
+                request.pilot_id != wingman.pilotId ||
+                request.npc_id != currentNpc ||
+                request.form != form ||
+                request.expected_generation != expectedGeneration ||
+                request.generation == 0 || request.max_hp == 0 ||
+                request.max_hp > 0x7fffffffu)
+                return false;
+            if (*reinterpret_cast<const uint32_t*>(unit + kUnitObjectId) !=
+                    wingman.objectId ||
+                *reinterpret_cast<const uint32_t*>(unit + kUnitServerId) !=
+                    wingman.pilotId ||
+                *reinterpret_cast<const uint32_t*>(unit + kUnitNpcDataId) !=
+                    currentNpc)
+                return false;
+            const uint32_t nativeMaximum =
+                *reinterpret_cast<const uint32_t*>(unit + kObjectMaxHp);
+            const uint32_t nativeCurrent =
+                *reinterpret_cast<const uint32_t*>(unit + kObjectHp);
+            const bool freshFullSeed = initializeFreshCurrent &&
+                nativeMaximum != 0 && nativeMaximum <= 0x7fffffffu &&
+                nativeCurrent == nativeMaximum;
+            *reinterpret_cast<uint32_t*>(unit + kObjectMaxHp) = request.max_hp;
+            if (freshFullSeed)
+                *reinterpret_cast<uint32_t*>(unit + kObjectHp) = request.max_hp;
+            wingman.startUnitGeneration = request.generation;
+            if (nativeMaximum != request.max_hp)
+                g_api->Log(
+                    g_mod, SDGO_LOG_INFO,
+                    "mission AI %08lX form %d: native max HP %lu -> advertised %lu%s",
+                    static_cast<unsigned long>(wingman.pilotId), form,
+                    static_cast<unsigned long>(nativeMaximum),
+                    static_cast<unsigned long>(request.max_hp),
+                    freshFullSeed ? ", fresh full HP initialized" : "");
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(
+                g_mod, SDGO_LOG_WARN,
+                "mission AI %08lX: applying advertised HP failed (%08lX)",
+                static_cast<unsigned long>(wingman.pilotId), GetExceptionCode());
+            return false;
+        }
     }
 
     int BattleDifficulty(const uint8_t* room)
@@ -608,11 +676,20 @@ namespace
         const ObservedWingman& wingman,
         const SdgoAceAiMissionPlaybackContextV1& context)
     {
+        // Read the completed actor before acquiring the receipt lock. A changed
+        // native form can have another machine while its Ace pilot stays fixed.
+        uint32_t machine = 0;
+        __try {
+            const uint8_t* npc = wingman.spawnedUnit ?
+                *reinterpret_cast<const uint8_t* const*>(
+                    wingman.spawnedUnit + kUnitNpcData) : nullptr;
+            if (npc) machine = *reinterpret_cast<const uint32_t*>(npc + 0x69);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
         AcquireSRWLockExclusive(&g_playbackLock);
         g_lastPlaybackObject = context.object_id;
         g_lastPlaybackGeneration = wingman.profileGeneration;
         g_lastPlaybackPilot = wingman.pilotId;
-        g_lastPlaybackMachine = wingman.unitDataId;
+        g_lastPlaybackMachine = machine;
         g_lastPlaybackSlot = wingman.slot;
         g_lastPlaybackColour = context.colour;
         g_lastPlaybackResult = context.native_result;
@@ -637,14 +714,18 @@ namespace
                     *reinterpret_cast<uint32_t*>(unit + kUnitServerId) != wingman.pilotId)
                     return;
                 wingman.spawnedUnit = unit;
+                SdgoAceAiMissionPlaybackContextV1 context{};
+                const bool exactPlayback =
+                    CurrentPlaybackContext(object, &context);
+                if (exactPlayback)
+                    ApplyAdvertisedAceHealth(wingman, false);
                 wingman.aceNameApplied = false;
                 wingman.profileInitial = false;
                 ApplyAcePilotName(um, wingman);
                 wingman.profileInitialized = InitializeBattleAiWingman(
                     unit, wingman.effectiveDifficulty, false,
                     &wingman.profileGeneration);
-                SdgoAceAiMissionPlaybackContextV1 context{};
-                if (CurrentPlaybackContext(object, &context))
+                if (exactPlayback)
                     PublishPlaybackReceipt(wingman, context);
                 return;
             }
@@ -1447,6 +1528,7 @@ namespace
             observed.recordNpcId = npcData;
             g_observedWingmen.push_back(observed);
             ObservedWingman& stored = g_observedWingmen.back();
+            ApplyAdvertisedAceHealth(stored, true);
             ApplyAcePilotName(um, stored);
             stored.profileInitialized = InitializeBattleAiWingman(
                 unit, stored.effectiveDifficulty, true,
@@ -1957,6 +2039,8 @@ namespace
                 *reinterpret_cast<const uint32_t*>(unit + kUnitServerId) ==
                     wingman.pilotId) {
                 copied.active = 1;
+                copied.npc_id =
+                    *reinterpret_cast<const uint32_t*>(unit + kUnitNpcDataId);
                 copied.current_hp =
                     *reinterpret_cast<const uint32_t*>(unit + kObjectHp);
                 copied.max_hp =
@@ -2150,7 +2234,11 @@ SDGO_MOD_ENTRY
         g_matchPlaybackContext =
             reinterpret_cast<MatchPlaybackContextFn>(GetProcAddress(
                 match, SDGO_ACE_AI_MATCH_PLAYBACK_CONTEXT_EXPORT));
+        g_matchStartUnit =
+            reinterpret_cast<SdgoAiStartUnitV1Fn>(GetProcAddress(
+                match, SDGO_AI_START_UNIT_EXPORT));
         if (!share || !g_matchAiMissionTick || !g_matchPlaybackContext ||
+            !g_matchStartUnit ||
             !share(reinterpret_cast<const SdgoMissionClientLifecycleV1*>(&lifecycle))) {
             api->Log(mod, SDGO_LOG_ERROR, "matching match_ai lifecycle bridge is required; update both Mods");
             return 0;

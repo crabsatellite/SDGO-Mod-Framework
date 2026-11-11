@@ -4,6 +4,7 @@
 
 namespace fixture {
 using ai_test::Put;
+using ai_test::Get;
 std::array<uint8_t, 0x640> mode{};
 std::array<uint8_t, 0x640> derivedMode{};
 std::array<uint8_t, 0x80> room{};
@@ -30,6 +31,15 @@ bool appendSuccess = true;
 int lineCtors = 0, lineDtors = 0, appendCalls = 0;
 std::wstring appendedText;
 SdgoAceAiMissionPlaybackContextV1 playbackContext{};
+uint32_t createdCurrentHp = 1200;
+uint32_t createdMaxHp = 1200;
+uint32_t startUnitGeneration = 7;
+uint32_t startUnitMaxHp = 1440;
+uint32_t startUnitNpc = 5001;
+int32_t startUnitForm = 0;
+bool startUnitAvailable = true;
+int startUnitCalls = 0;
+SdgoAiStartUnitV1 lastStartUnit{};
 
 uint8_t* __cdecl App() { return app.data(); }
 bool __cdecl Network() { return true; }
@@ -49,7 +59,9 @@ uint8_t* __fastcall Create(uint8_t*, void*, uint32_t npcId, float, float, float,
     Put(unit, kUnitObjectId, 1001u + index);
     Put(unit, kUnitTeam, static_cast<uint32_t>(team));
     Put(unit, kUnitNpcData, npcDefinitions[index].data());
-    Put(unit, kUnitNpcDataId, ai_test::Get<uint32_t>(npcDefinitions[index].data(), 0x69));
+    Put(unit, kUnitNpcDataId, npcId);
+    Put(unit, kObjectHp, createdCurrentHp);
+    Put(unit, kObjectMaxHp, createdMaxHp);
     CHECK(ai_test::Get<uint32_t>(npcDefinitions[index].data(), 0) == npcId);
     ++created;
     return unit;
@@ -97,6 +109,21 @@ int __cdecl MatchPlaybackContext(
         output->version != SDGO_ACE_AI_OBSERVER_VERSION ||
         !playbackContext.active) return 0;
     *output = playbackContext;
+    return 1;
+}
+int __cdecl StartUnit(SdgoAiStartUnitV1* request) {
+    ++startUnitCalls;
+    if (!request || request->size != sizeof(*request) ||
+        request->version != SDGO_AI_START_UNIT_VERSION)
+        return 0;
+    lastStartUnit = *request;
+    if (!startUnitAvailable || request->npc_id != startUnitNpc ||
+        request->form != startUnitForm ||
+        (request->expected_generation != 0 &&
+         request->expected_generation != startUnitGeneration))
+        return 0;
+    request->generation = startUnitGeneration;
+    request->max_hp = startUnitMaxHp;
     return 1;
 }
 int __cdecl BeginProfiles(uint32_t generation) {
@@ -177,7 +204,16 @@ void Reset(int h, int a, bool master) {
     g_originalUpdate = reinterpret_cast<MissionUpdateFn>(&Update);
     g_matchAiMissionTick = nullptr;
     g_matchPlaybackContext = nullptr;
+    g_matchStartUnit = nullptr;
     playbackContext = {};
+    createdCurrentHp = createdMaxHp = 1200;
+    startUnitGeneration = 7;
+    startUnitMaxHp = 1440;
+    startUnitNpc = 5001;
+    startUnitForm = 0;
+    startUnitAvailable = true;
+    startUnitCalls = 0;
+    lastStartUnit = {};
     g_localPlaybackContext = {};
     g_battleAiModule = nullptr; g_battleAiBeginBattle = &BeginProfiles; g_battleAiInitializeUnit = &InitProfile;
     g_aceAiModule = nullptr; g_acePilotName = &AceName;
@@ -249,6 +285,102 @@ int main() {
     CHECK(created == 1 && assigned == 1 && g_wingmen.size() == 1);
     Reset(1, 3, true); g_game.missionVtable = nullptr; MissionInit(mode.data(), nullptr);
     CHECK(initialized == 1 && created == 0);
+
+    SCENARIO("mission Ace binds authoritative start health and only seeds an exact fresh full actor");
+    Reset(1, 1, true); SetAceRecord(0);
+    g_matchStartUnit = &StartUnit;
+    MissionInit(mode.data(), nullptr);
+    CHECK(startUnitCalls == 1 && g_observedWingmen.size() == 1 &&
+          g_observedWingmen[0].startUnitGeneration == 7u);
+    CHECK(lastStartUnit.pilot_id == g_observedWingmen[0].pilotId &&
+          lastStartUnit.npc_id == 5001u && lastStartUnit.form == 0 &&
+          lastStartUnit.expected_generation == 0);
+    CHECK(Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1440u &&
+          Get<uint32_t>(units[0].data(), kObjectHp) == 1440u);
+
+    Reset(1, 1, true); SetAceRecord(0);
+    createdCurrentHp = 900; createdMaxHp = 1200;
+    g_matchStartUnit = &StartUnit;
+    MissionInit(mode.data(), nullptr);
+    CHECK(Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1440u &&
+          Get<uint32_t>(units[0].data(), kObjectHp) == 900u);
+
+    Reset(1, 1, true);
+    g_matchStartUnit = &StartUnit;
+    MissionInit(mode.data(), nullptr);
+    CHECK(startUnitCalls == 0 &&
+          Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1200u &&
+          Get<uint32_t>(units[0].data(), kObjectHp) == 1200u);
+
+    Reset(1, 1, true); SetAceRecord(0);
+    MissionInit(mode.data(), nullptr);
+    CHECK(g_observedWingmen[0].ace &&
+          g_observedWingmen[0].startUnitGeneration == 0 &&
+          Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1200u &&
+          Get<uint32_t>(units[0].data(), kObjectHp) == 1200u);
+
+    SCENARIO("mission Ace respawn changes maximum only for exact native playback and bound generation");
+    Reset(1, 1, true); SetAceRecord(0);
+    g_matchStartUnit = &StartUnit;
+    MissionInit(mode.data(), nullptr);
+    Put<uint32_t>(units[0].data(), kObjectHp, 400u);
+    Put<uint32_t>(units[0].data(), kObjectMaxHp, 1200u);
+    startUnitMaxHp = 1500;
+    playbackContext = {sizeof(playbackContext),
+        SDGO_ACE_AI_OBSERVER_VERSION, 1001u, 2u, 17u, 1u};
+    g_matchPlaybackContext = &MatchPlaybackContext;
+    MissionRespawnComplete(um, 1001u);
+    CHECK(startUnitCalls == 2 && lastStartUnit.expected_generation == 7u &&
+          Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1500u &&
+          Get<uint32_t>(units[0].data(), kObjectHp) == 400u);
+
+    Put<uint32_t>(units[0].data(), kObjectMaxHp, 1200u);
+    startUnitMaxHp = 1600;
+    playbackContext.active = 0;
+    MissionRespawnComplete(um, 1001u);
+    CHECK(startUnitCalls == 2 &&
+          Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1200u &&
+          Get<uint32_t>(units[0].data(), kObjectHp) == 400u);
+
+    playbackContext.active = 1;
+    startUnitGeneration = 8;
+    MissionRespawnComplete(um, 1001u);
+    CHECK(startUnitCalls == 3 &&
+          Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1200u &&
+          Get<uint32_t>(units[0].data(), kObjectHp) == 400u);
+
+    startUnitGeneration = 7;
+    Put<uint32_t>(units[0].data(), kUnitNpcDataId, 9999u);
+    MissionRespawnComplete(um, 1001u);
+    CHECK(startUnitCalls == 4 &&
+          Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1200u &&
+          Get<uint32_t>(units[0].data(), kObjectHp) == 400u);
+
+    SCENARIO("mission native form changes query the actual advertised NPC without changing pilot identity or healing");
+    Reset(1, 1, true); SetAceRecord(0); g_matchStartUnit = &StartUnit;
+    MissionInit(mode.data(), nullptr);
+    startUnitNpc = 5002; startUnitForm = 1; startUnitMaxHp = 1660;
+    Put<uint32_t>(npcDefinitions[1].data(), 0, 5002u);
+    Put<uint32_t>(npcDefinitions[1].data(), 0x69, 10002u);
+    Put(units[0].data(), kUnitNpcData, npcDefinitions[1].data());
+    Put<uint32_t>(units[0].data(), kUnitNpcDataId, 5002u);
+    Put<int32_t>(units[0].data(), kUnitDeckIndex, 1);
+    Put<uint32_t>(units[0].data(), kObjectHp, 400u);
+    Put<uint32_t>(units[0].data(), kObjectMaxHp, 1200u);
+    playbackContext = {sizeof(playbackContext), SDGO_ACE_AI_OBSERVER_VERSION, 1001u, 2u, 17u, 1u};
+    g_matchPlaybackContext = &MatchPlaybackContext;
+    MissionRespawnComplete(um, 1001u);
+    CHECK(lastStartUnit.npc_id == 5002u && lastStartUnit.form == 1 &&
+          lastStartUnit.expected_generation == 7u);
+    CHECK(Get<uint32_t>(units[0].data(), kObjectMaxHp) == 1660u &&
+          Get<uint32_t>(units[0].data(), kObjectHp) == 400u);
+    CHECK(g_observedWingmen[0].recordNpcId == 5001u &&
+          g_observedWingmen[0].acePilotName == L"王牌甲");
+    SdgoAceAiMissionClientSnapshotV1 formHealth{};
+    formHealth.size = sizeof(formHealth); formHealth.version = SDGO_ACE_AI_OBSERVER_VERSION;
+    CHECK(SdgoMissionAiGetAceSnapshotV1(&formHealth) == 1 &&
+          formHealth.units[0].npc_id == 5002u && formHealth.units[0].machine_id == 10002u &&
+          formHealth.playback_machine_id == 10002u);
 
     SCENARIO("friendly Ace uses machine id for name and promoted profile from first life through respawn");
     Reset(1, 1, true); SetAceRecord(0); MissionInit(mode.data(), nullptr);

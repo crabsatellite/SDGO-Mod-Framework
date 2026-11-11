@@ -20,6 +20,7 @@ std::array<uint8_t, 12 * kRecordSize> humans{}, ais{};
 std::array<std::array<uint8_t, 0x3400>, 12> units{};
 std::array<uint8_t, 0x3400> localPlayer{};
 int nativeReadyState = -1, nativeReadyCalls = 0;
+bool nativeReadyEnablesControl = true;
 std::array<std::array<uint8_t, 0x3400>, 2> searchHumans{};
 bool searchHumanLookup = false, throwLockSearch = false;
 uint32_t selectedSearchTarget = 0;
@@ -131,7 +132,9 @@ void __fastcall StopNativeInput(uint8_t*, void*) {}
 void __fastcall NativeReady(uint8_t* svc, void*) {
     ++nativeReadyCalls;
     if (nativeReadyState >= 0) Put<uint32_t>(svc, kServiceReadyState, nativeReadyState);
-    if (Get<uint32_t>(svc, kServiceReadyState) == 3) localPlayer[kPlayerControlEnabled] = 1;
+    if (nativeReadyEnablesControl &&
+        Get<uint32_t>(svc, kServiceReadyState) == 3)
+        localPlayer[kPlayerControlEnabled] = 1;
 }
 void __fastcall RosterInit(uint8_t*, void*, void*, void*) {}
 int rosterDraws = 0;
@@ -469,7 +472,7 @@ int __cdecl MissionReady(uint8_t* readyMode) {
     ++missionReadyCalls;
     missionReadySawRelease = readyMode == mode.data() &&
         Get<uint32_t>(service.data(), kServiceReadyState) == 3 &&
-        localPlayer[kPlayerControlEnabled] != 0;
+        g_missionPostNativeReadyMode == readyMode;
     return missionReadyCalls >= missionReadySucceedsAfter ? 1 : 0;
 }
 void __fastcall Udp(uint8_t* wait, void*) {
@@ -535,6 +538,7 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     Put(service.data(), kServiceMode, mode.data()); Put(app.data(), kAppGameMain, service.data());
     localPlayer.fill(0); manager.fill(0); Put(manager.data(), kManagerPlayer, localPlayer.data());
     nativeReadyState = -1; nativeReadyCalls = 0;
+    nativeReadyEnablesControl = true;
     g_originalGameReady = reinterpret_cast<GameReadyFn>(&NativeReady);
     Put<uint16_t>(room.data(), kModeRoomMode, static_cast<uint16_t>(roomMode));
     std::fill(std::begin(g_vtables), std::end(g_vtables), nullptr); g_vtables[classIndex] = vtable.data();
@@ -571,6 +575,7 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     missionPlaybackSeen = {};
     missionPlaybackQueryResult = 0;
     g_missionReadyMode = nullptr;
+    g_missionPostNativeReadyMode = nullptr;
     g_missionReadyComplete = false;
     missionReadyCalls = 0;
     missionReadySucceedsAfter = 1;
@@ -711,6 +716,11 @@ int main() {
     CHECK(SdgoMatchAiRegisterMissionV1(
               reinterpret_cast<const SdgoMissionClientLifecycleV1*>(
                   &missionV2)) == 1);
+    Put<uint32_t>(service.data(), kServiceReadyState, 3);
+    CHECK(SdgoMatchAiMissionTickV1(mode.data()) == 1 &&
+          missionReadyCalls == 0 &&
+          g_missionPostNativeReadyMode == nullptr);
+    Put<uint32_t>(service.data(), kServiceReadyState, 2);
     SetSlotColour(um, nullptr, 1000, 2);
     CHECK(slotColourIndex == 4 && slotColourValue == 2);
     CHECK(g_missionRespawnPending.size() == 1 &&
@@ -730,13 +740,18 @@ int main() {
     CHECK(SdgoMatchAiGetMissionPlaybackContextV1(&inactivePlayback) == 0);
     missionReadySucceedsAfter = 2;
     nativeReadyState = 3;
+    nativeReadyEnablesControl = false;
     GameReady(service.data(), nullptr);
     CHECK(missionReadyCalls == 1 && missionReadySawRelease &&
+          localPlayer[kPlayerControlEnabled] == 0 &&
+          g_missionPostNativeReadyMode == mode.data() &&
           !g_missionReadyComplete);
     CHECK(SdgoMatchAiMissionTickV1(mode.data()) == 1);
     CHECK(missionReadyCalls == 2 && g_missionReadyComplete);
     CHECK(SdgoMatchAiMissionTickV1(mode.data()) == 1 &&
           missionReadyCalls == 2);
+    CHECK(!MissionControlReleased(room.data()) &&
+          g_missionPostNativeReadyMode == nullptr);
 
     SCENARIO("same-target native transform notices preserve the locally owned AI controller");
     const int transformModes[]={1,3,6,9,7};
@@ -1242,6 +1257,86 @@ int main() {
     CHECK(deck && deck->units == 3 && deck->npc[2] == 102 && deck->lifeCost[2] == 457);
     CHECK(!FindStartDeck(7)); packet.fill(0); ReadStartDecks(packet.data()); CHECK(!FindStartDeck(kAiPilotBit | 100));
     CHECK(!GuardedReadStartDecks(nullptr)); CHECK(!FindStartDeck(kAiPilotBit | 100));
+
+    SCENARIO("read-only start-unit bridge validates Ace identity, generation, form, mode, NPC and maximum");
+    Reset(0, 1);
+    const uint32_t startAcePilot = kAiPilotBit |
+        battle_ai::ace::kAcePilotBit |
+        (static_cast<uint32_t>(battle_ai::Difficulty::Hard) << 28) | 77u;
+    StartEntry(0, startAcePilot, 0, {100}, {16200});
+    ReadStartDecks(packet.data());
+    SdgoAiStartUnitV1 startUnit{
+        sizeof(startUnit), SDGO_AI_START_UNIT_VERSION,
+        startAcePilot, 100u, 0, 0, 0xaaaaaaaau, 0xbbbbbbbbu};
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 1);
+    const uint32_t startGeneration = startUnit.generation;
+    CHECK(startGeneration != 0 && startUnit.max_hp == 16200u &&
+          startUnit.pilot_id == startAcePilot && startUnit.npc_id == 100u &&
+          startUnit.form == 0 && startUnit.expected_generation == 0);
+    startUnit.expected_generation = startGeneration;
+    startUnit.generation = 0;
+    startUnit.max_hp = 0;
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 1 &&
+          startUnit.generation == startGeneration && startUnit.max_hp == 16200u);
+    startUnit.expected_generation = startGeneration + 1;
+    startUnit.generation = 0x11111111u;
+    startUnit.max_hp = 0x22222222u;
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0 &&
+          startUnit.generation == 0x11111111u && startUnit.max_hp == 0x22222222u);
+    startUnit.expected_generation = 0;
+    startUnit.npc_id = 101;
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0);
+    startUnit.npc_id = 100;
+    startUnit.form = 1;
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0);
+    startUnit.form = 0;
+    startUnit.pilot_id &= ~battle_ai::ace::kAcePilotBit;
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0);
+    startUnit.pilot_id = startAcePilot | battle_ai::ace::kAceDifficultyMask;
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0);
+    startUnit.pilot_id = startAcePilot;
+    startUnit.size = sizeof(startUnit) - 1;
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0);
+    startUnit.size = sizeof(startUnit);
+    startUnit.version = SDGO_AI_START_UNIT_VERSION + 1;
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0);
+    CHECK(SdgoMatchAiGetStartUnitV1(nullptr) == 0);
+
+    Reset(0, 5);
+    StartEntry(0, startAcePilot, 0, {100}, {16200});
+    ReadStartDecks(packet.data());
+    startUnit = {sizeof(startUnit), SDGO_AI_START_UNIT_VERSION,
+        startAcePilot, 100u, 0, 0, 0, 0};
+    CHECK(g_botMode == nullptr &&
+          SdgoMatchAiGetStartUnitV1(&startUnit) == 1 &&
+          startUnit.max_hp == 16200u);
+
+    Reset(2, 6);
+    StartEntry(0, startAcePilot, 0, {100}, {16200});
+    ReadStartDecks(packet.data());
+    startUnit = {sizeof(startUnit), SDGO_AI_START_UNIT_VERSION,
+        startAcePilot, 100u, 0, 0, 0x33333333u, 0x44444444u};
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0 &&
+          startUnit.generation == 0x33333333u &&
+          startUnit.max_hp == 0x44444444u);
+
+    Reset(4, 7);
+    StartEntry(0, startAcePilot, 2, {100, 101}, {16200, 17000});
+    ReadStartDecks(packet.data());
+    startUnit = {sizeof(startUnit), SDGO_AI_START_UNIT_VERSION,
+        startAcePilot, 101u, 1, 0, 0, 0};
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 1 &&
+          startUnit.max_hp == 17000u);
+    startUnit.form = 2;
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0);
+    packet.fill(0);
+    StartEntry(0, startAcePilot, 1, {100}, {0x80000000u});
+    ReadStartDecks(packet.data());
+    startUnit = {sizeof(startUnit), SDGO_AI_START_UNIT_VERSION,
+        startAcePilot, 100u, 0, 0, 0x55555555u, 0x66666666u};
+    CHECK(SdgoMatchAiGetStartUnitV1(&startUnit) == 0 &&
+          startUnit.generation == 0x55555555u &&
+          startUnit.max_hp == 0x66666666u);
 
     SCENARIO("ordinary-mode Ace health accepts the native zero-count active unit and seeds a fresh full actor");
     Reset(0, 1); Records(1, 1);

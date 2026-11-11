@@ -1,10 +1,11 @@
 import configparser
+import copy
 import math
 from pathlib import Path
 import tempfile
 import unittest
 
-from manager import configuration, registry, storage
+from manager import configuration, dependencies, registry, storage
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -138,6 +139,29 @@ class AceAiManagerContractTests(unittest.TestCase):
         self.assertTrue(SERVER_KEYS.isdisjoint(
             {field["key"] for field in self.client.get("settings", [])}
         ))
+
+    def test_required_shared_bridge_cannot_be_disabled_or_replaced_with_pre_ace_version(self):
+        nodes = [
+            {"id": "ace_ai", "host": "player", "role": "client", "enabled": True,
+             "version": "0.1.0", "settings": {}, "contract": self.client},
+            {"id": "match_ai", "host": "player", "role": "client", "enabled": True,
+             "version": "0.1.17", "settings": {}, "contract": {
+                 "provides": {"battle.start.units.client": 1}}},
+            {"id": "battle_ai", "host": "player", "role": "client", "enabled": True,
+             "version": "0.4.15", "settings": {}, "contract": {}},
+        ]
+        self.assertEqual([], dependencies.issues(nodes))
+        missing = copy.deepcopy(nodes); missing[1]["enabled"] = False
+        with self.assertRaisesRegex(ValueError, "match_ai"):
+            dependencies.enforce_transition(nodes, missing)
+        old = copy.deepcopy(nodes); old[1]["version"] = "0.1.16"
+        with self.assertRaisesRegex(ValueError, "match_ai"):
+            dependencies.enforce_transition(nodes, old)
+        missing_api = copy.deepcopy(nodes); missing_api[1]["contract"] = {}
+        with self.assertRaisesRegex(ValueError, "match_ai"):
+            dependencies.enforce_transition(nodes, missing_api)
+        ace_off = copy.deepcopy(missing); ace_off[0]["enabled"] = False
+        self.assertEqual([], dependencies.issues(ace_off))
 
     def test_configuration_contract_fingerprints_owner_overlay_but_not_public_program_catalog(self):
         client_manifest = storage.ini_values(

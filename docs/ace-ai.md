@@ -23,6 +23,14 @@ with the server owner's client package or update.
 Install matching parts from one framework release and restart the affected game and BattleServer processes.
 The client has no independent chance roll or attribute policy.
 
+The Ace client requires the bundled `match_ai` shared battle-start/respawn bridge and `battle_ai` controller;
+Manager validates these dependencies. Mission Aces also use this shared bridge. It does not add AI to PvP
+rooms that have not requested them. Ordinary mission wingmen remain usable independently when Ace is off.
+HP display uses the values supplied by the server, with no separate client multiplier.
+
+Opening notices use the game's existing battle chat and the same native entry path as AI dialogue.
+They do not require the AI dialogue service or any API configuration.
+
 ## What players see
 
 For an Ace selected by the server, the actual in-game display name is the authored pilot name instead of the

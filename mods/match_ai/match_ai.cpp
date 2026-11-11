@@ -41,6 +41,7 @@
 
 #include <windows.h>
 #include "sdgo/mission_ai_lifecycle.h"
+#include "sdgo/ai_start_units.h"
 
 static SdgoMissionClientLifecycleV1* g_missionLifecycle = nullptr;
 
@@ -324,6 +325,7 @@ namespace
     thread_local std::vector<MissionRespawnPending> g_missionRespawnPending;
     thread_local SdgoAceAiMissionPlaybackContextV1 g_missionPlaybackContext{};
     uint8_t* g_missionReadyMode = nullptr;
+    uint8_t* g_missionPostNativeReadyMode = nullptr;
     bool g_missionReadyComplete = false;
     HMODULE g_battleAiModule = nullptr;
     BattleAiInitializeUnitFn g_battleAiInitializeUnit = nullptr;
@@ -636,6 +638,8 @@ namespace
     // GridData::Find 0x0059D2B0), and on a respawn its NPC data is set to the new entry's
     // before message 7 (CNPC::Add re-inits the AI script from it) and the deck switched
     // after it, as CPlayer does.
+    uint8_t* CurrentMode();
+
     constexpr int kPacketBattleStart = 0x6C3;
     constexpr size_t kStartPacketSlots = 0x20;
     constexpr size_t kStartSlotStride = 0x10F;
@@ -706,23 +710,32 @@ namespace
         return nullptr;
     }
 
-    bool ImplicitSingleUnitStartDeck(const StartDeck& deck, int form)
+    bool ImplicitSingleUnitStartDeckForCurrentMode(
+        const StartDeck& deck, int form)
     {
-        if (deck.units != 0 || form != 0 || !g_botMode)
+        if (deck.units != 0 || form != 0)
             return false;
         __try {
-            const uint8_t* room = *reinterpret_cast<uint8_t* const*>(g_botMode + kModeRoom);
+            uint8_t* mode = CurrentMode();
+            const uint8_t* room = mode ?
+                *reinterpret_cast<uint8_t* const*>(mode + kModeRoom) : nullptr;
             if (!room)
                 return false;
             const uint16_t roomMode =
                 *reinterpret_cast<const uint16_t*>(room + kModeRoomMode);
-            // Native ordinary-mode starts advertise zero deck units even though the
-            // first copied unit block is the active machine.  Tag/grid modes use the
-            // count as deck authority, so an absent count must stay fail-closed there.
+            // Native ordinary-mode and mission starts advertise zero deck units even
+            // though the first copied unit block is the active machine.  Tag/grid
+            // modes use the count as deck authority, so an absent count stays closed.
             return roomMode != 6 && roomMode != 7;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
             return false;
         }
+    }
+
+    bool ImplicitSingleUnitStartDeck(const StartDeck& deck, int form)
+    {
+        return g_botMode && CurrentMode() == g_botMode &&
+            ImplicitSingleUnitStartDeckForCurrentMode(deck, form);
     }
 
     bool ApplyAdvertisedAceHealth(Bot& bot, int form, bool initializeFreshCurrent)
@@ -821,6 +834,7 @@ namespace
             } __except (EXCEPTION_EXECUTE_HANDLER) { createReply = false; }
         }
         if ((opcode & 0xFFFF) == kPacketBattleStart && packet) {
+            g_missionPostNativeReadyMode = nullptr;
             InterlockedIncrement(&g_receivedBattleStartCount);
             InterlockedExchange(&g_receivedBattleStartMode,ReadReceivedBattleMode());
             if (!GuardedReadStartDecks(static_cast<const uint8_t*>(packet)))
@@ -1360,10 +1374,20 @@ namespace
     {
         g_originalGameReady(service);
         if (service) {
-            DispatchMissionReady(
-                *reinterpret_cast<uint8_t**>(service + kServiceMode), true);
+            uint8_t* mode = nullptr;
+            __try {
+                mode = *reinterpret_cast<uint8_t**>(service + kServiceMode);
+                g_missionPostNativeReadyMode =
+                    mode && *reinterpret_cast<uint32_t*>(
+                        service + kServiceReadyState) == 3 ? mode : nullptr;
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+                g_missionPostNativeReadyMode = nullptr;
+            }
+            DispatchMissionReady(mode, true);
             if (!GuardedEnable(service))
                 g_api->Log(g_mod, SDGO_LOG_ERROR, "exception while switching on the AI players");
+        } else {
+            g_missionPostNativeReadyMode = nullptr;
         }
     }
 
@@ -1487,21 +1511,30 @@ namespace
 
     bool MissionControlReleased(uint8_t* mode)
     {
-        if (!mode || !g_gameApp || !g_game.unitManager) return false;
+        if (!mode || !g_gameApp) {
+            g_missionPostNativeReadyMode = nullptr;
+            return false;
+        }
+        if (g_missionPostNativeReadyMode != mode) {
+            g_missionPostNativeReadyMode = nullptr;
+            return false;
+        }
         __try {
             uint8_t* app = g_gameApp();
             uint8_t* service =
                 app ? *reinterpret_cast<uint8_t**>(app + kAppGameMain) : nullptr;
             if (!service ||
                 *reinterpret_cast<uint8_t**>(service + kServiceMode) != mode ||
-                *reinterpret_cast<uint32_t*>(service + kServiceReadyState) != 3)
+                *reinterpret_cast<uint32_t*>(service + kServiceReadyState) != 3) {
+                g_missionPostNativeReadyMode = nullptr;
                 return false;
-            auto* manager = static_cast<uint8_t*>(*g_game.unitManager);
-            if (!manager) return false;
-            if (g_game.isObserver && g_game.isObserver(manager)) return true;
-            auto* player = *reinterpret_cast<uint8_t**>(manager + kManagerPlayer);
-            return player && player[kPlayerControlEnabled] != 0;
+            }
+            // Native GameReady has a valid branch which reaches ready state 3 but
+            // skips the helper that sets player+0x31E9.  The post-original exact-mode
+            // latch is the authority for Mission; PvP keeps its separate assertions.
+            return true;
         } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_missionPostNativeReadyMode = nullptr;
             return false;
         }
     }
@@ -3400,6 +3433,41 @@ namespace
 }
 
 #include "observer.inl"
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMatchAiGetStartUnitV1(SdgoAiStartUnitV1* request)
+{
+    __try {
+        if (!request || request->size != sizeof(*request) ||
+            request->version != SDGO_AI_START_UNIT_VERSION ||
+            request->npc_id == 0 || request->form < 0 || request->form >= 4)
+            return 0;
+        const auto decoded = battle_ai::ace::DecodePilotId(
+            request->pilot_id, battle_ai::Difficulty::Medium);
+        if (!decoded.ace)
+            return 0;
+        const StartDeck* deck = FindStartDeck(request->pilot_id);
+        if (!deck || deck->generation == 0 ||
+            (request->expected_generation != 0 &&
+             request->expected_generation != deck->generation))
+            return 0;
+        const bool implicitSingle =
+            ImplicitSingleUnitStartDeckForCurrentMode(*deck, request->form);
+        if (!implicitSingle &&
+            (deck->units < 1 || deck->units > 4 ||
+             request->form >= deck->units))
+            return 0;
+        const uint32_t advertised = deck->maxHp[request->form];
+        if (deck->npc[request->form] != request->npc_id ||
+            advertised == 0 || advertised > 0x7fffffffu)
+            return 0;
+        request->generation = deck->generation;
+        request->max_hp = advertised;
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
 
 extern "C" __declspec(dllexport) uint32_t __cdecl SdgoMatchAiGetLifeCostV1(uint32_t pilot) {
     for(const auto& bot:g_botTable)if(bot.pilotId==pilot) {

@@ -17,7 +17,9 @@
     "required": [
       {
         "id": "match_ai",
-        "minimum": "0.1.17"
+        "minimum": "0.1.17",
+        "capability": "battle.start.units.client",
+        "capability_version": 1
       },
       {
         "id": "battle_ai",
