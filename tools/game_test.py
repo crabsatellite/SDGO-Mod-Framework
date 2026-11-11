@@ -3673,6 +3673,10 @@ def prepare(
             mission_game_mode_id,
             mission_respawns,
         )
+        if mission_ai_count == 0:
+            # The sealed extended title must reach the server's title broker;
+            # a disabled client provider would silently submit a legacy name.
+            extra_mods = tuple(dict.fromkeys((*extra_mods, 'room_titles')))
         if mission_behavior_profile is not None:
             extra_mods=tuple(dict.fromkeys((
                 *extra_mods,
@@ -4029,6 +4033,13 @@ def prepare(
             bind_staged_loader=bind_staged_loader,
             skip_staged_mods=tuple(name for name,selected in
                 (('unit_catalog',unit_payload is not None),('capsule_catalog',capsule_binding is not None)) if selected))
+        if mission_mode is not None and mission_ai_count == 0:
+            settings_path = client / 'sdgo/sdgo.ini'
+            settings = read_ini(settings_path)
+            if not settings.has_section('features'):
+                settings.add_section('features')
+            settings['features']['room-titles'] = '1'
+            write_ini(settings_path, settings)
         if mission_behavior_profile is not None:
             configure_mission_behavior_client(
                 client,

@@ -405,6 +405,30 @@ rva=state
         with self.assertRaises(game_test.GameTestError):self.prepare(unit_package=self.root/'missing.zip')
         self.assertFalse((self.root/'run').exists())
 
+    def test_zero_wingmen_import_requires_the_client_extended_title_provider(self):
+        profile = game_test.read_ini(self.account_profile)
+        profile['registration']['state'] = 'existing_account'
+        game_test.write_ini(self.account_profile, profile)
+        settings = game_test.read_ini(self.template / 'sdgo/sdgo.ini')
+        settings['features']['room-titles'] = '0'
+        game_test.write_ini(self.template / 'sdgo/sdgo.ini', settings)
+        staged = self.stage / 'client/sdgo/mods/room_titles'
+        staged.mkdir()
+        (staged / 'room_titles.dll').write_bytes(b'extended title fixture')
+        (staged / 'mod.ini').write_text(
+            '[mod]\nid=room_titles\ncategory=gameplay\nfeature=room-titles\n'
+            f'version=0.2.4\ndll=room_titles.dll\nhosts={game_test.HOST_KEY}\nenabled=0\n', encoding='ascii')
+        run = self.prepare(mission_mode=5, mission_game_mode_id=88072, mission_ai_count=0)
+        mod = game_test.read_ini(run / 'client/sdgo/mods/room_titles/mod.ini')
+        gates = game_test.read_ini(run / 'client/sdgo/sdgo.ini')
+        self.assertEqual(mod['mod']['enabled'], '1')
+        self.assertEqual(gates['mods']['room_titles'], '1')
+        self.assertEqual(gates['features']['room-titles'], '1')
+        with self.assertRaisesRegex(game_test.GameTestError, 'room_titles'):
+            self.prepare('disabled-provider', mission_mode=5, mission_game_mode_id=88072,
+                         mission_ai_count=0, disabled_mods=('room_titles',))
+        self.assertFalse((self.root / 'disabled-provider').exists())
+
     def test_room_style_preview_roundtrips_through_the_sealed_job(self):
         for mode in ('pvp', 'mission'):
             run_dir = self.prepare('style-' + mode, room_titles_only=True, room_style_preview=mode)
