@@ -409,6 +409,7 @@ namespace
     int g_viewStateLogs = 0;   // diagnostics: dead view clicks logged this game
     bool g_logDiagnostics = false;
     bool g_aceAnnouncementDone[3] = {};
+    bool g_aceAnnouncementProviderLogged = false;
 
 
     struct ModeClass
@@ -1199,6 +1200,13 @@ namespace
         for (const Bot& bot : g_botTable)
             if (bot.ace && (bot.colour == 1 || bot.colour == 2)) present[bot.colour] = true;
         ResolveAceProvider();
+        if (!g_aceAnnouncementProviderLogged && (present[1] || present[2])) {
+            g_aceAnnouncementProviderLogged = true;
+            g_api->Log(g_mod, SDGO_LOG_INFO,
+                       "Ace chat candidates: red=%u blue=%u provider=%u",
+                       present[1] ? 1u : 0u, present[2] ? 1u : 0u,
+                       g_aceAnnounceTeam ? 1u : 0u);
+        }
         if (!g_aceAnnounceTeam) return;
         for (uint32_t colour = 1; colour <= 2; ++colour) {
             if (!present[colour] || g_aceAnnouncementDone[colour]) continue;
