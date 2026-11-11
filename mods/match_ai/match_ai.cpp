@@ -142,6 +142,8 @@ namespace
     constexpr size_t kRecordNpcData = 0x44;
     constexpr size_t kStartPointPos = 0x24;     // x, y, z floats
     constexpr size_t kUnitObjectId = 0x04;
+    constexpr size_t kUnitCurrentHp = 0x38;
+    constexpr size_t kUnitMaxHp = 0x3C;
     constexpr size_t kUnitServerId = 0x2B68;
     constexpr size_t kUnitNpcData = 0x320C;     // npc data*, name (wchar) at +5
     constexpr size_t kUnitNpcDataId = 0x3238;   // u32
@@ -388,6 +390,7 @@ namespace
         int form = 0;
         int pendingForm = -1;
         uint32_t generation = 0;
+        uint32_t startDeckGeneration = 0;
         bool pendingInitialize = false;
         bool missionLifeObserved = false;
         bool missionAlive = false;
@@ -641,6 +644,10 @@ namespace
     constexpr size_t kStartSlotUnitBlocks = 0x0E;
     constexpr size_t kStartUnitBlock = 0x32;
 
+    // Native 0x004B61E0 copies the first 0x32 bytes of each authoritative
+    // server unit record into this packet block.  Server unit +4 is its
+    // post-policy maximum HP; +0x34 current HP is deliberately not copied.
+    constexpr size_t kStartUnitMaxHp = 0x04;
     constexpr size_t kStartUnitLifeCost = 0x08; // u16, unit record +8: the life cost the server counts
 
     struct StartDeck
@@ -649,9 +656,12 @@ namespace
         int points;
         int units;
         uint32_t npc[4];
+        uint32_t maxHp[4];
         int lifeCost[4];
+        uint32_t generation;
     };
     StartDeck g_startDecks[12] = {};
+    uint32_t g_startDeckGeneration = 0;
     volatile LONG g_receivedBattleStartCount = 0;
     volatile LONG g_receivedBattleStartMode = 0;
     volatile LONG g_createReplyVersion = 0;
@@ -662,6 +672,8 @@ namespace
     void ReadStartDecks(const uint8_t* packet)
     {
         memset(g_startDecks, 0, sizeof(g_startDecks));
+        if (++g_startDeckGeneration == 0) ++g_startDeckGeneration;
+        const uint32_t generation = g_startDeckGeneration;
         for (int slot = 0; slot < 12; ++slot) {
             const uint8_t* entry = packet + kStartPacketSlots + slot * kStartSlotStride;
             uint32_t pilotId = *reinterpret_cast<const uint32_t*>(entry);
@@ -671,9 +683,11 @@ namespace
             deck.pilotId = pilotId;
             deck.points = entry[kStartSlotPoints];
             deck.units = entry[kStartSlotUnits];
+            deck.generation = generation;
             for (int i = 0; i < 4; ++i) {
                 const uint8_t* block = entry + kStartSlotUnitBlocks + i * kStartUnitBlock;
                 deck.npc[i] = *reinterpret_cast<const uint32_t*>(block);
+                deck.maxHp[i] = *reinterpret_cast<const uint32_t*>(block + kStartUnitMaxHp);
                 deck.lifeCost[i] = *reinterpret_cast<const uint16_t*>(block + kStartUnitLifeCost);
             }
             g_api->Log(g_mod, SDGO_LOG_INFO,
@@ -690,6 +704,75 @@ namespace
             if (deck.pilotId == pilotId && pilotId != 0)
                 return &deck;
         return nullptr;
+    }
+
+    bool ImplicitSingleUnitStartDeck(const StartDeck& deck, int form)
+    {
+        if (deck.units != 0 || form != 0 || !g_botMode)
+            return false;
+        __try {
+            const uint8_t* room = *reinterpret_cast<uint8_t* const*>(g_botMode + kModeRoom);
+            if (!room)
+                return false;
+            const uint16_t roomMode =
+                *reinterpret_cast<const uint16_t*>(room + kModeRoomMode);
+            // Native ordinary-mode starts advertise zero deck units even though the
+            // first copied unit block is the active machine.  Tag/grid modes use the
+            // count as deck authority, so an absent count must stay fail-closed there.
+            return roomMode != 6 && roomMode != 7;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
+
+    bool ApplyAdvertisedAceHealth(Bot& bot, int form, bool initializeFreshCurrent)
+    {
+        if (!bot.unit || bot.startDeckGeneration == 0 || form < 0 || form >= 4 ||
+            (bot.pilotId & (battle_ai::ace::kAiPilotBit | battle_ai::ace::kAcePilotBit)) !=
+                (battle_ai::ace::kAiPilotBit | battle_ai::ace::kAcePilotBit))
+            return false;
+        const StartDeck* deck = FindStartDeck(bot.pilotId);
+        if (!deck || deck->generation != bot.startDeckGeneration)
+            return false;
+        const bool implicitSingle = ImplicitSingleUnitStartDeck(*deck, form);
+        if (!implicitSingle &&
+            (deck->units < 1 || deck->units > 4 || form >= deck->units))
+            return false;
+        const uint32_t advertised = deck->maxHp[form];
+        if (advertised == 0 || advertised > 0x7fffffffu || deck->npc[form] == 0)
+            return false;
+
+        __try {
+            if (*reinterpret_cast<const uint32_t*>(bot.unit + kUnitObjectId) != bot.objectId ||
+                *reinterpret_cast<const uint32_t*>(bot.unit + kUnitServerId) != bot.pilotId ||
+                *reinterpret_cast<const uint32_t*>(bot.unit + kUnitNpcDataId) != deck->npc[form])
+                return false;
+            const uint32_t nativeMaximum =
+                *reinterpret_cast<const uint32_t*>(bot.unit + kUnitMaxHp);
+            const uint32_t nativeCurrent =
+                *reinterpret_cast<const uint32_t*>(bot.unit + kUnitCurrentHp);
+            const bool freshFullSeed = initializeFreshCurrent && nativeMaximum != 0 &&
+                nativeMaximum <= 0x7fffffffu && nativeCurrent == nativeMaximum;
+            *reinterpret_cast<uint32_t*>(bot.unit + kUnitMaxHp) = advertised;
+            // The start packet has no current-HP field.  Preserve all server-authored
+            // current HP except the exact native full-health seed of a newly created
+            // actor, where the advertised maximum is the only truthful full value.
+            if (freshFullSeed)
+                *reinterpret_cast<uint32_t*>(bot.unit + kUnitCurrentHp) = advertised;
+            if (nativeMaximum != advertised)
+                g_api->Log(g_mod, SDGO_LOG_INFO,
+                           "AI player %08lX deck unit %d: native max HP %lu -> advertised %lu%s",
+                           static_cast<unsigned long>(bot.pilotId), form,
+                           static_cast<unsigned long>(nativeMaximum),
+                           static_cast<unsigned long>(advertised),
+                           freshFullSeed ? ", fresh full HP initialized" : "");
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_api->Log(g_mod, SDGO_LOG_WARN,
+                       "AI player %08lX deck unit %d: applying advertised HP failed (%08lX)",
+                       static_cast<unsigned long>(bot.pilotId), form, GetExceptionCode());
+            return false;
+        }
     }
 
     bool GuardedReadStartDecks(const uint8_t* packet)
@@ -935,6 +1018,8 @@ namespace
         g_game.addAiUnit(c.um, unit);
         *reinterpret_cast<uint32_t*>(unit + kUnitServerId) = serverId;
         Bot bot{serverId, objectId, slot, unit};
+        if (const StartDeck* startDeck = FindStartDeck(serverId))
+            bot.startDeckGeneration = startDeck->generation;
         bot.ace = aceOutcome.ace && !acePilotName.empty();
         bot.team = static_cast<uint8_t>(team);
         bot.colour = static_cast<uint8_t>(colour);
@@ -948,6 +1033,7 @@ namespace
             g_creatingAiUnit = false;
         }
         bot.generation = NextUnitGeneration();
+        ApplyAdvertisedAceHealth(bot, 0, true);
         InitializeBattleAiUnit(bot, true);
         // Native CreateNpc/InitNPCAI may already enable the controller. Apply
         // the per-unit steps of AllNpcStopControl (0x00AE5A20), scoped to this
@@ -2774,6 +2860,7 @@ namespace
             if (bot.pendingInitialize) {
                 bot.pendingInitialize = false;
                 bot.generation = NextUnitGeneration();
+                ApplyAdvertisedAceHealth(bot, bot.form, false);
                 ApplyAcePilotName(g_game.unitManager ? *g_game.unitManager : nullptr, bot);
                 InitializeBattleAiUnit(bot);
             }

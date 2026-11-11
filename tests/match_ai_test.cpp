@@ -50,6 +50,7 @@ std::array<uint8_t, 0xCD4> packet{};
 std::array<uint8_t, 0x100> manager{};
 void* um = &manager;
 bool network = true, observer = false, failAppend = false, throwCamera = false, throwUdp = false;
+uint32_t createdCurrentHp = 0, createdMaxHp = 0;
 LONG transitionAccessViolations=0;
 LONG CALLBACK CountTransitionAccessViolation(EXCEPTION_POINTERS* exception) {
     if(exception&&exception->ExceptionRecord&&exception->ExceptionRecord->ExceptionCode==EXCEPTION_ACCESS_VIOLATION)
@@ -90,6 +91,8 @@ uint8_t* __fastcall Create(uint8_t*, void*, uint32_t npc, float x, float, float,
     Put(unit, kUnitDeckEnd, decks[created].data() + kUnitDeckEntry);
     Put(unit, kUnitObjectId, 1001u + created);
     Put(unit, kUnitNpcDataId, npc);
+    Put(unit, kUnitCurrentHp, createdCurrentHp);
+    Put(unit, kUnitMaxHp, createdMaxHp);
     unit[0x326C] = 1; // real CNPC construction can return with AI enabled
     Put<uint32_t>(unit, kUnitPendingControl, 123);
     createdPositions.push_back(x);
@@ -589,13 +592,17 @@ void Reset(int classIndex = 0, int roomMode = 1) {
     g_scoreboardLifeCostOriginal = reinterpret_cast<void*>(&LifeCostContinuation);
     g_teleportNpcGateOriginal = reinterpret_cast<void*>(&TeleportGateContinuation);
     network = true; observer = failAppend = throwCamera = throwUdp = false; starts.clear();
+    createdCurrentHp = createdMaxHp = 0;
 }
-void StartEntry(int slot, uint32_t id, int count, std::initializer_list<uint32_t> ids) {
+void StartEntry(int slot, uint32_t id, int count, std::initializer_list<uint32_t> ids,
+                std::initializer_list<uint32_t> maximums = {}) {
     auto entry = packet.data() + kStartPacketSlots + slot * kStartSlotStride;
     Put(entry, 0, id); entry[kStartSlotUnits] = static_cast<uint8_t>(count); entry[kStartSlotPoints] = 9;
-    int i = 0; for (auto npc : ids) {
+    int i = 0; auto maximum = maximums.begin(); for (auto npc : ids) {
         auto block = entry + kStartSlotUnitBlocks + i * kStartUnitBlock;
-        Put(block, 0, npc); Put<uint16_t>(block, kStartUnitLifeCost, static_cast<uint16_t>(455 + i)); ++i;
+        Put(block, 0, npc);
+        if (maximum != maximums.end()) { Put(block, kStartUnitMaxHp, *maximum); ++maximum; }
+        Put<uint16_t>(block, kStartUnitLifeCost, static_cast<uint16_t>(455 + i)); ++i;
     }
 }
 void Spawn(int classIndex = 0, int roomMode = 1, int humanCount = 1, int aiCount = 2) {
@@ -1235,6 +1242,101 @@ int main() {
     CHECK(deck && deck->units == 3 && deck->npc[2] == 102 && deck->lifeCost[2] == 457);
     CHECK(!FindStartDeck(7)); packet.fill(0); ReadStartDecks(packet.data()); CHECK(!FindStartDeck(kAiPilotBit | 100));
     CHECK(!GuardedReadStartDecks(nullptr)); CHECK(!FindStartDeck(kAiPilotBit | 100));
+
+    SCENARIO("ordinary-mode Ace health accepts the native zero-count active unit and seeds a fresh full actor");
+    Reset(0, 1); Records(1, 1);
+    const uint32_t aceHealthPilot = Get<uint32_t>(ais.data(), kRecordServerId) |
+        battle_ai::ace::kAcePilotBit |
+        (static_cast<uint32_t>(battle_ai::Difficulty::Hard) << 28);
+    Put<uint32_t>(ais.data(), kRecordServerId, aceHealthPilot);
+    createdCurrentHp = createdMaxHp = 13500;
+    StartEntry(0, aceHealthPilot, 0, {100}, {16200});
+    ReadStartDecks(packet.data());
+    const uint32_t advertisedGeneration = FindStartDeck(aceHealthPilot)->generation;
+    SpawnAiPlayers(mode.data(), "ace health");
+    CHECK(g_botTable.size() == 1 &&
+          g_botTable[0].startDeckGeneration == advertisedGeneration);
+    CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitMaxHp) == 16200u);
+    CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitCurrentHp) == 16200u);
+
+    SCENARIO("zero-count health remains fail-closed without a valid first block and in deck modes");
+    Reset(0, 1); Records(1, 1); Put<uint32_t>(ais.data(), kRecordServerId, aceHealthPilot);
+    createdCurrentHp = createdMaxHp = 13500;
+    StartEntry(0, aceHealthPilot, 0, {100}, {0}); ReadStartDecks(packet.data());
+    SpawnAiPlayers(mode.data(), "zero maximum ace health");
+    CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitMaxHp) == 13500u);
+
+    Reset(4, 7); Records(1, 1); Put<uint32_t>(ais.data(), kRecordServerId, aceHealthPilot);
+    createdCurrentHp = createdMaxHp = 13500;
+    StartEntry(0, aceHealthPilot, 0, {100}, {16200}); ReadStartDecks(packet.data());
+    SpawnAiPlayers(mode.data(), "zero deck count ace health");
+    CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitMaxHp) == 13500u);
+
+    SCENARIO("Ace health preserves partial current HP and refuses non-Ace, stale, mismatched and invalid advertisements");
+    Reset(); Records(1, 1);
+    const uint32_t partialAcePilot = Get<uint32_t>(ais.data(), kRecordServerId) |
+        battle_ai::ace::kAcePilotBit |
+        (static_cast<uint32_t>(battle_ai::Difficulty::Hard) << 28);
+    Put<uint32_t>(ais.data(), kRecordServerId, partialAcePilot);
+    createdCurrentHp = 9000; createdMaxHp = 13500;
+    StartEntry(0, partialAcePilot, 1, {100}, {16200}); ReadStartDecks(packet.data());
+    SpawnAiPlayers(mode.data(), "partial ace health");
+    CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitMaxHp) == 16200u);
+    CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitCurrentHp) == 9000u);
+
+    Reset(); Records(1, 1); createdCurrentHp = createdMaxHp = 13500;
+    const uint32_t ordinaryPilot = Get<uint32_t>(ais.data(), kRecordServerId);
+    StartEntry(0, ordinaryPilot, 1, {100}, {16200}); ReadStartDecks(packet.data());
+    SpawnAiPlayers(mode.data(), "ordinary health");
+    CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitMaxHp) == 13500u &&
+          Get<uint32_t>(g_botTable[0].unit, kUnitCurrentHp) == 13500u);
+
+    Reset(); Records(1, 1);
+    const uint32_t rejectedAcePilot = Get<uint32_t>(ais.data(), kRecordServerId) |
+        battle_ai::ace::kAcePilotBit |
+        (static_cast<uint32_t>(battle_ai::Difficulty::Hard) << 28);
+    Put<uint32_t>(ais.data(), kRecordServerId, rejectedAcePilot);
+    createdCurrentHp = createdMaxHp = 13500;
+    StartEntry(0, rejectedAcePilot, 1, {101}, {16200}); ReadStartDecks(packet.data());
+    SpawnAiPlayers(mode.data(), "mismatched ace health");
+    CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitMaxHp) == 13500u);
+    Reset(); Records(1, 1); Put<uint32_t>(ais.data(), kRecordServerId, rejectedAcePilot);
+    createdCurrentHp = createdMaxHp = 13500;
+    StartEntry(0, rejectedAcePilot, 1, {100}, {0x80000000u}); ReadStartDecks(packet.data());
+    SpawnAiPlayers(mode.data(), "invalid ace health");
+    CHECK(Get<uint32_t>(g_botTable[0].unit, kUnitMaxHp) == 13500u);
+
+    SCENARIO("Ace deck respawn applies the exact advertised form maximum without healing or compounding");
+    Reset(4, 7); Records(1, 1);
+    const uint32_t deckAcePilot = Get<uint32_t>(ais.data(), kRecordServerId) |
+        battle_ai::ace::kAcePilotBit |
+        (static_cast<uint32_t>(battle_ai::Difficulty::Hard) << 28);
+    Put<uint32_t>(ais.data(), kRecordServerId, deckAcePilot);
+    createdCurrentHp = createdMaxHp = 13500;
+    StartEntry(0, deckAcePilot, 3, {100, 101, 102}, {16200, 16800, 17400});
+    ReadStartDecks(packet.data()); SpawnAiPlayers(mode.data(), "ace deck health");
+    auto& deckAce = g_botTable[0];
+    Put<uint32_t>(deckAce.unit, kUnitCurrentHp, 5000u);
+    Put<uint32_t>(deckAce.unit, kUnitMaxHp, 13500u);
+    SetSlotColour(um, nullptr, static_cast<int>(deckAce.objectId - 1), 2);
+    CHECK(PlaybackUnit(nullptr, nullptr, nullptr) == 17);
+    CHECK(deckAce.form == 2 && Get<uint32_t>(deckAce.unit, kUnitMaxHp) == 17400u);
+    CHECK(Get<uint32_t>(deckAce.unit, kUnitCurrentHp) == 5000u);
+    Put<uint32_t>(deckAce.unit, kUnitCurrentHp, 4000u);
+    Put<uint32_t>(deckAce.unit, kUnitMaxHp, 13500u);
+    SetSlotColour(um, nullptr, static_cast<int>(deckAce.objectId - 1), 2);
+    CHECK(PlaybackUnit(nullptr, nullptr, nullptr) == 17);
+    CHECK(Get<uint32_t>(deckAce.unit, kUnitMaxHp) == 17400u &&
+          Get<uint32_t>(deckAce.unit, kUnitCurrentHp) == 4000u);
+    const uint32_t priorDeckGeneration = deckAce.startDeckGeneration;
+    packet.fill(0);
+    StartEntry(0, deckAcePilot, 3, {100, 101, 102}, {20000, 21000, 22000});
+    ReadStartDecks(packet.data());
+    CHECK(FindStartDeck(deckAcePilot)->generation != priorDeckGeneration);
+    Put<uint32_t>(deckAce.unit, kUnitMaxHp, 13500u);
+    deckAce.pendingInitialize = true;
+    CHECK(PlaybackUnit(nullptr, nullptr, nullptr) == 17);
+    CHECK(Get<uint32_t>(deckAce.unit, kUnitMaxHp) == 13500u);
 
     SCENARIO("deck respects declared unit count, not unused packet blocks");
     Spawn(4, 7, 1, 1); StartEntry(0, g_botTable[0].pilotId, 2, {100, 101, 102, 103}); ReadStartDecks(packet.data());

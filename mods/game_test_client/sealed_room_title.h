@@ -25,6 +25,27 @@ inline bool ReadPvpRoomTitle(const std::wstring& job, const char* nonce, bool ra
     return sprintf_s(title,random?"%s !ai e%u a%u !rand":"%s !ai e%u a%u",nonce,enemies,allies)>=0;
 }
 
+inline bool ReadMissionRoomTitle(const std::wstring& job, const char* nonce,
+                                 bool infinite, bool plainMission, char (&title)[21]) {
+    if(!nonce || std::strlen(nonce)!=6 || std::strncmp(nonce,"gt",2) ||
+       std::strspn(nonce+2,"0123456789abcdef")!=4)return false;
+    wchar_t difficulty[16]{};
+    GetPrivateProfileStringW(L"run",L"mission_ai_difficulty",L"",difficulty,16,job.c_str());
+    const char* command="!ai3 lv2";
+    if(*difficulty) {
+        if(!plainMission)return false;
+        if(!wcscmp(difficulty,L"Easy"))command="!ai easy";
+        else if(!wcscmp(difficulty,L"Medium"))command="!ai medium";
+        else if(!wcscmp(difficulty,L"Hard"))command="!ai hard";
+        else return false;
+    }
+    const char* suffix=infinite?" inf":"";
+    if(std::strlen(nonce)+1+std::strlen(command)+std::strlen(suffix)>20 ||
+       sprintf_s(title,"%s %s%s",nonce,command,suffix)<0)return false;
+    char declared[21]{};
+    return ReadSealedRoomTitle(job,declared) && declared[0] && !std::strcmp(title,declared);
+}
+
 inline bool ReadSealedAiTeamCounts(const std::wstring& job, unsigned count,
                                   const char* title, unsigned& allies, unsigned& enemies) {
     allies=GetPrivateProfileIntW(L"run",L"ai_allies",count/2,job.c_str());

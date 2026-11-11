@@ -769,10 +769,9 @@ bool LoadPlan() {
             else return false;
         }
         if(missionBehaviorProfile && missionRespawns)return false;
-        if(expectedAi!=3 || level!=2 || sprintf_s(roomTitle,missionRespawns==2?"%s !ai3 lv2 inf":"%s !ai3 lv2",narrowNonce)<0)return false;
-        wchar_t actualTitle[32]{};GetPrivateProfileStringW(L"run",L"room_title",L"",actualTitle,32,job.c_str());
-        const std::wstring expectedTitle(roomTitle,roomTitle+strlen(roomTitle));
-        if(expectedTitle!=actualTitle)return false;
+        if(expectedAi!=3 || level!=2 ||
+           !ReadMissionRoomTitle(job,narrowNonce,missionRespawns==2,
+                                 !missionGameModeId && !missionBehaviorProfile,roomTitle))return false;
     }
     if (!missionMode && !ReadPvpRoomTitle(job,narrowNonce,randomLoadout,expectedEnemies,expectedAllies,roomTitle)) return false;
     if (!missionMode && !ReadSealedAiTeamCounts(job,expectedAi,roomTitle,expectedAllies,expectedEnemies)) return false;
