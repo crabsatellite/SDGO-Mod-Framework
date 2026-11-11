@@ -77,7 +77,7 @@ void RestoreAdvertisedMaximum(uint8_t* unit) {
             *reinterpret_cast<uint32_t*>(unit+0x3C)=request.max_hp;
             if(previous!=request.max_hp && ++g_nativeMaximumCorrections<=16 && g_api && g_api->Log)
                 g_api->Log(g_mod,SDGO_LOG_INFO,
-                    "native Ace form maximum restored: pilot=%08lX form=%ld old=%lu server=%lu",
+                    "native Ace form maximum restored: pilot=%08X form=%d old=%u server=%u",
                     binding.pilot,form,previous,request.max_hp);
             return;
         }
