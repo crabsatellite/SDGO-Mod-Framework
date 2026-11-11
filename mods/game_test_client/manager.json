@@ -264,6 +264,17 @@
       "activation": "restart_required"
     },
     {
+      "id": "unit_presentation_detail_only",
+      "key": "UnitPresentationDetailOnly",
+      "label": "检查原生图鉴列表、详情与关闭",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
       "id": "unit_pages_only",
       "key": "UnitPagesOnly",
       "label": "仅检查导入机体原生页面（需封存测试任务）",
