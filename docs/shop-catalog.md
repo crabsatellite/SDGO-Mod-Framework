@@ -10,6 +10,8 @@ Chinese option names and rental labels come from the separate [shop labels fix](
 
 ## Installed default presets
 
+![Five default presets and their editable sale options](shop-default-presets.webp)
+
 After the server component is installed, first binding an empty shop workspace and WorldServer in Manager
 automatically creates and lists five editable presets: a permanent unit, a rental unit, an operator, a blueprint
 and a consumable. No separate example import is needed. Each inherits an existing visible single-item offer's
