@@ -162,6 +162,8 @@ Colour textures (model base colour textures and terrain layer textures) may be P
 
 ### Named gates and bombardment targets
 
+Manager 1.16.27 and newer applies `enter.blocks` before an entry cinematic starts. Reusing a cinematic keeps each phase's gate state separate. Rebuild older mission packages to adopt this ordering.
+
 Map package v2 can register a model with collision as a named native object. Scripts use `id`; players see `block.name`. Keep internal codes out of display names. Compilation produces paired client definitions, terrain objects and server placement rows. The owner applies the plan and restarts World/Battle; player content installation does not execute SQL.
 
 Mission v3 supports `npcs.<key>.block_attack` with the target `block` and a `weapon` (`first`, `second`, `third`, `special`). It drives the NPC's real native target and weapon controls and cannot coexist with that NPC's `ai`. A later phase's `enter.blocks` accepts `{ "block": "fortress_gate", "visible": false }` to hide the leaf and open its collision passage; `visible: true` reinserts it. Place the opening command after the protection phase so it runs only on successful progress.

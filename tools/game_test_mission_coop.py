@@ -67,7 +67,7 @@ def parse_gate_samples(rows: list[dict], mission_id: int) -> list[dict]:
         except json.JSONDecodeError as error:
             raise game_test.GameTestError("native map-gate observation is malformed") from error
         required = (
-            "elapsed_ms", "game_mode", "block", "query_valid", "found", "ray_hits",
+            "elapsed_ms", "game_mode", "block", "query_valid", "scenes", "found", "ray_hits",
             "hp", "obbs", "spheres", "phase_observer", "hide_count", "last_action", "last_object",
         )
         if any(type(sample.get(key)) is not int for key in required):
@@ -100,6 +100,7 @@ def gate_transition(rows: list[dict], mission_id: int, expected_block: int | Non
             continue
         if (
             sample["query_valid"] == 1
+            and sample["scenes"] > 0
             and sample["found"] == 0
             and sample["ray_hits"] == 0
             and sample["obbs"] == 0
@@ -107,7 +108,6 @@ def gate_transition(rows: list[dict], mission_id: int, expected_block: int | Non
             and sample["phase_observer"] == 1
             and sample["hide_count"] > closed["hide_count"]
             and sample["last_action"] == 1
-            and sample["last_object"] == closed["block"]
         ):
             return {"block": closed["block"], "closed": closed, "open": sample}
     return None

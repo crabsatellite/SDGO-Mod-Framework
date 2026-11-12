@@ -38,6 +38,14 @@ class MissionCoopContracts(unittest.TestCase):
         self.assertEqual(observed["block"], 7001)
         self.assertEqual(observed["closed"]["ray_hits"], 1)
         self.assertEqual(observed["open"]["ray_hits"], 0)
+        # A cinematic hides its players after changing the gate. The fixed
+        # native ray still proves the gate is absent in a live world.
+        human_hide = gate_row(elapsed_ms=2000, found=0, ray_hits=0, hp=0, obbs=0,
+                              hide_count=3, last_action=1, last_object=2)
+        self.assertIsNotNone(coop.gate_transition([rows[0], human_hide], 88072))
+        unloaded = gate_row(elapsed_ms=2000, scenes=0, found=0, ray_hits=0, hp=0,
+                            obbs=0, hide_count=3, last_action=1, last_object=2)
+        self.assertIsNone(coop.gate_transition([rows[0], unloaded], 88072))
 
         invalid = (
             list(reversed(rows)),

@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import re
 import struct
 import tempfile
 import unittest
@@ -193,6 +194,40 @@ class NamedBlockTests(unittest.TestCase):
 
 
 class MissionBlockTests(unittest.TestCase):
+    def test_block_transition_precedes_the_entry_camera(self):
+        spec = mission_spec()
+        spec['schema_version'] = 3
+        spec['cutscenes']['gate'] = copy.deepcopy(spec['cutscenes']['intro'])
+        spec['phases'][1]['enter'] = {'cutscene': 'gate', 'blocks': [{'block': 'odessa_gate', 'visible': False}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = gate_package(Path(tmp), mission=spec)
+            built = M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(), templates=templates())
+            fn = built.report['cutscenes']['gate']
+            body = built.lua.split(f'function {fn}_LuaInit(m)', 1)[1].split('\nend', 1)[0]
+            self.assertLess(body.index("SDGOMI.hide_block('SDGOM1:odessa_gate'"), body.index('return SDGOMI.init'))
+            self.assertNotIn('function SDGOM1_E1(m)', built.lua)
+            self.assertEqual(built.report['block_controls'], 1)
+
+    def test_reused_camera_keeps_each_phase_block_state_separate(self):
+        spec = mission_spec()
+        spec['schema_version'] = 3
+        spec['phases'][1]['enter'] = {'cutscene': 'intro', 'blocks': [{'block': 'odessa_gate', 'visible': False}]}
+        later = copy.deepcopy(spec['phases'][1]);later['key'] = 'reclose'
+        later['enter']['blocks'][0]['visible'] = True
+        spec['phases'].append(later)
+        original = copy.deepcopy(spec)
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = gate_package(Path(tmp), mission=spec)
+            built = M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(), templates=templates())
+            self.assertEqual(spec, original)
+            bodies = [re.search(r'function '+re.escape(fn)+r'_LuaInit\(m\)(.*?)\bend\b', built.lua, re.S).group(1)
+                      for fn in built.report['cutscenes'].values()]
+            self.assertEqual(sum("SDGOMI.hide_block('SDGOM1:odessa_gate'" in body for body in bodies), 1)
+            self.assertEqual(sum("SDGOMI.unhide_block('SDGOM1:odessa_gate'" in body for body in bodies), 1)
+            opening = built.report['cutscenes']['intro']
+            opening_body = re.search(r'function '+re.escape(opening)+r'_LuaInit\(m\)(.*?)\bend\b', built.lua, re.S).group(1)
+            self.assertNotIn('hide_block', opening_body)
+
     def test_schema_v3_generates_native_block_attack_and_transition_open(self):
         spec = mission_spec()
         spec['schema_version'] = 3

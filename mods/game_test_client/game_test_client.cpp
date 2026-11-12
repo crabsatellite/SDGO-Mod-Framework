@@ -6050,7 +6050,13 @@ int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
     }
     const auto result=friendSession.Poll(context);
     if(missionMode) {
-        if(actions.AppState()==22)mapGateProbe.Poll(context,missionGameModeId);
+        static bool gateSessionArmed=false;
+        static uint32_t gateEndBaseline=0;
+        if(!gateSessionArmed&&friendSession.Ready()) {
+            gateEndBaseline=rooms.BattleEndState().sequence;gateSessionArmed=true;
+        }
+        if(actions.AppState()==22&&gateSessionArmed&&rooms.BattleEndState().sequence==gateEndBaseline)
+            mapGateProbe.Poll(context,missionGameModeId);
         return result;
     }
     const auto cohort=pvpSession.State();

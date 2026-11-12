@@ -43,6 +43,7 @@ import hashlib
 import json
 import math
 import re
+from copy import deepcopy
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -522,6 +523,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                     occluders: list | None = None) -> MissionBuild:
     """Compile `spec` (parsed mission JSON). `banner_effect(png, name)` returns overlay resources for a banner
     effect named `name` (a cloned text effect bound to the PNG) or None when banners are unsupported."""
+    spec = deepcopy(spec)
     version = spec.get('schema_version')
     if spec.get('schema') != SCHEMA or type(version) is not int or version not in (1, 2, 3):
         _fail(f'任务文件必须声明 schema={SCHEMA} 且 schema_version=1、2 或 3')
@@ -618,6 +620,41 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
 
     if version < 3 and any(obj.initially_hidden for obj in package.objects):
         _fail('命名物件初始可见性需要 schema_version=3；旧编译器必须拒绝这些新语义')
+
+    # Native phase events run after the entry cinematic. Bind object changes
+    # to that cinematic's LuaInit instead, before its first camera frame.
+    # A reused cinematic gets a private binding so other uses retain their
+    # own visibility state; the authored package is never mutated.
+    scene_block_actions = {}
+    cinematic_block_phases = set()
+    scene_uses = {}
+    for name in (spec.get('opening'), spec.get('ending'),
+                 *((phase.get('enter') or {}).get('cutscene') for phase in phases)):
+        if name:
+            scene_uses[name] = scene_uses.get(name, 0) + 1
+    cloned_scenes = set()
+    for phase_index, phase in enumerate(phases):
+        enter = phase.get('enter') or {}
+        scene = enter.get('cutscene')
+        actions = phase_block_actions[phase_index]
+        if not scene or not actions:
+            continue
+        if scene not in cutscenes:
+            _fail(f'phases[{phase_index}].enter.cutscene 未定义')
+        bound_scene = scene
+        if scene_uses[scene] > 1:
+            bound_scene = f'sdgomi_blocks_{phase_index}'
+            while bound_scene in cutscenes:
+                bound_scene += '_'
+            cutscenes[bound_scene] = deepcopy(cutscenes[scene])
+            enter['cutscene'] = bound_scene
+            cloned_scenes.add(scene)
+        scene_block_actions[bound_scene] = actions
+        cinematic_block_phases.add(phase_index)
+    active_scenes = {spec.get('opening'), spec.get('ending')}
+    active_scenes.update((phase.get('enter') or {}).get('cutscene') for phase in phases)
+    for name in cloned_scenes - active_scenes:
+        del cutscenes[name]
 
     # -- NPC ids: native templates keep their id; derived/unit NPCs get new NpcData + template rows
     npc_ids: dict[str, int] = {}
@@ -1016,6 +1053,10 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             init_commands = ["  SDGOMI.hide_block(%s, %s)" %
                              (_lua_string(f'{ids.lua_prefix}:{name}'), _lua_string(name))
                              for name in initial_hidden_blocks]
+        for name, visible in scene_block_actions.get(key, ()):
+            method = 'unhide_block' if visible else 'hide_block'
+            init_commands.append('  SDGOMI.%s(%s, %s)' %
+                                 (method, _lua_string(f'{ids.lua_prefix}:{name}'), _lua_string(name)))
         if init_commands:
             lua_parts.append('function %s_LuaInit(m)\n%s\n  return SDGOMI.init(m, %s)\nend\n' %
                              (fn, '\n'.join(init_commands), fn))
@@ -1043,7 +1084,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
 
     def event_function(phase_index: int, enter: dict) -> str:
         body = []
-        for name, visible in phase_block_actions[phase_index]:
+        for name, visible in (() if phase_index in cinematic_block_phases else phase_block_actions[phase_index]):
             method = 'unhide_block' if visible else 'hide_block'
             body.append('  SDGOMI.%s(%s, %s)' %
                         (method, _lua_string(f'{ids.lua_prefix}:{name}'), _lua_string(name)))
@@ -1165,7 +1206,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             # would make every authored delay run twice.
             event_fn = event_function(p_index, enter) if d_index == 0 else f'{ids.lua_prefix}_E{p_index}' \
                 if any((enter.get('lines'), enter.get('sector'), enter.get('area') is not None,
-                        phase_block_actions[p_index])) else ''
+                        phase_block_actions[p_index] and p_index not in cinematic_block_phases)) else ''
             reward = phase.get('reward') or {}
             objective_text = _zh(phase.get('objective'), f'phases[{p_index}].objective', 49)
 
