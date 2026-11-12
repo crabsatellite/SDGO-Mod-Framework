@@ -14,6 +14,48 @@ ROOT=Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which('pwsh'),'PowerShell is required for installer checks')
 class InstallerResourceTests(unittest.TestCase):
+    def test_matching_installed_programme_retains_settings_and_refuses_code_or_manifest_changes(self):
+        script=r'''
+param([string]$Installer,[string]$InputPath)
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$ast=[Management.Automation.Language.Parser]::ParseFile($Installer,[ref]$null,[ref]$null)
+$names=@('Get-Sha256','Get-ProgramDefinition','Get-IniSection','Test-CompatibleProgrammeManifest','Enable-ReusedProgramme')
+foreach($statement in $ast.EndBlock.Statements){
+ if($statement -is [Management.Automation.Language.FunctionDefinitionAst] -and $statement.Name -in $names){Invoke-Expression $statement.Extent.Text}
+ if($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.VariablePath.UserPath -in @('RequiredModuleFiles','AllowedModuleFiles')){Invoke-Expression $statement.Extent.Text}
+}
+$Utf8NoBom=[Text.UTF8Encoding]::new($false)
+$spec=Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json
+$actual=Test-CompatibleProgrammeManifest $spec.current $spec.incoming $spec.dll $spec.dll_sha256
+if($actual -ne $spec.expected){throw 'Programme classification differs'}
+if($actual){Enable-ReusedProgramme $spec.current $spec.effective}
+'''
+        original=('[mod]\nid=unit_catalog\nversion=0.6.0\ndll=unit_catalog.dll\nhosts=GOnline-EXAMPLE\n'
+                  'files=symbols.fragment.ini,default-presets.json\nenabled=0\n'
+                  '[settings]\nEnabled=1\nFormChains=0\nAuthorNote=保留此值\n').encode('utf-8')
+        incoming=original.replace(b'files=symbols.fragment.ini,default-presets.json',
+            b'files=symbols.fragment.ini,default-presets.json,catalog.bin,definitions.json,resources.zpk')
+        incoming=incoming.replace(b'FormChains=0',b'FormChains=1')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);runner=root/'programme.ps1';runner.write_text(script,encoding='utf-8')
+            current=root/'current.ini';candidate=root/'incoming.ini';dll=root/'unit_catalog.dll';effective=root/'effective.ini'
+            current.write_bytes(original);dll.write_bytes(b'matching programme')
+            spec=root/'input.json'
+            cases=[(incoming,hashlib.sha256(dll.read_bytes()).hexdigest(),True),
+                   (incoming.replace(b'version=0.6.0',b'version=0.7.0'),hashlib.sha256(dll.read_bytes()).hexdigest(),False),
+                   (incoming.replace(b'catalog.bin',b'foreign.dll'),hashlib.sha256(dll.read_bytes()).hexdigest(),False),
+                   (incoming,'0'*64,False)]
+            for raw,digest,expected in cases:
+                candidate.write_bytes(raw);spec.write_text(json.dumps({'current':str(current),'incoming':str(candidate),
+                    'dll':str(dll),'dll_sha256':digest,'effective':str(effective),'expected':expected}),encoding='utf-8')
+                result=subprocess.run(['pwsh','-NoProfile','-File',str(runner),'-Installer',str(ROOT/'tools/install_unit_catalog.ps1'),
+                    '-InputPath',str(spec)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
+                self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+                if expected:
+                    self.assertEqual(original.replace(b'enabled=0',b'enabled=1'),effective.read_bytes())
+                self.assertEqual(original,current.read_bytes(),'classification must not mutate the installed programme')
+
     def test_symbol_comparison_accepts_native_ini_spacing_but_rejects_changed_definitions(self):
         script=r'''
 param([string]$Installer,[string]$InputPath)

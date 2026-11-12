@@ -8,6 +8,7 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/collection_acquisition.h"
 #include "sdgo/unit_catalog_format.h"
+#include "sdgo/unit_catalog_scopes.h"
 #include "sdgo/acquisition_sources_file.h"
 #include "content_localization_boundary_index.h"
 #include "preview_runtime.h"
@@ -15,6 +16,7 @@
 #include "program_runtime.h"
 #include "skill_atlas_runtime.h"
 #include "form_chain_runtime.h"
+#include "stage_runtime.h"
 #include "../../support/native_resource_overlay/native_resource_overlay.h"
 
 namespace {
@@ -48,6 +50,7 @@ using MapFind = void(__thiscall*)(void*, void**, const uint32_t*);
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
 Catalog g_catalog;
+Catalog g_primaryCatalog,g_presetCatalog;
 GridFind g_find = nullptr;
 GridData g_data = nullptr;
 LoadTable g_loadLastTable = nullptr;
@@ -382,7 +385,7 @@ bool Bind(T& target, const char* name) {
     return target != nullptr;
 }
 
-bool RegisterResourceOverlay() {
+bool RegisterResourceOverlay(const std::wstring& directory,const char* owner) {
     using GetBroker = const SdgoResourceOverlayBrokerApiV1*(__cdecl*)();
     HMODULE capsule = GetModuleHandleW(L"capsule_catalog.dll");
     if (capsule) {
@@ -403,8 +406,8 @@ bool RegisterResourceOverlay() {
                 return false;
             }
             char error[512] = {};
-            if (!broker->RegisterBundle(g_api->ModDirectory(g_mod),
-                                        L"resource-overlay.ini", "unit_catalog",
+            if (!broker->RegisterBundle(directory.c_str(),
+                                        L"resource-overlay.ini", owner,
                                         error, static_cast<uint32_t>(sizeof(error)))) {
                 g_api->Log(g_mod, SDGO_LOG_ERROR,
                            "capsule resource broker rejected unit bundle: %s",
@@ -421,8 +424,8 @@ bool RegisterResourceOverlay() {
 
     std::string error;
     auto& provider = sdgo::resource_overlay::LocalProvider();
-    if (!provider.RegisterBundleFiles(g_api->ModDirectory(g_mod),
-                                      L"resource-overlay.ini", "unit_catalog", error) ||
+    if (!provider.RegisterBundleFiles(directory.c_str(),
+                                      L"resource-overlay.ini", owner, error) ||
         !provider.Start(g_api, g_mod, nullptr, nullptr, error)) {
         g_api->Log(g_mod, SDGO_LOG_ERROR,
                    "standalone unit resource broker rejected: %s", error.c_str());
@@ -521,13 +524,18 @@ SDGO_MOD_ENTRY {
 
     std::string error;
     const std::wstring modDirectory = api->ModDirectory(mod);
-    if (!g_catalog.Load(modDirectory + L"\\catalog.bin", error)) {
+    const std::wstring presetDirectory=modDirectory+L"\\presets";
+    const bool primary=GetFileAttributesW((modDirectory+L"\\catalog.bin").c_str())!=INVALID_FILE_ATTRIBUTES;
+    const bool presets=GetFileAttributesW((presetDirectory+L"\\catalog.bin").c_str())!=INVALID_FILE_ATTRIBUTES;
+    if ((primary&&!g_primaryCatalog.Load(modDirectory+L"\\catalog.bin",error))||
+        (presets&&!g_presetCatalog.Load(presetDirectory+L"\\catalog.bin",error))||
+        !sdgo::unit_catalog::Combine(g_primaryCatalog,g_presetCatalog,g_catalog,error)) {
         api->Log(mod, SDGO_LOG_ERROR, "%s", error.c_str());
         return 0;
     }
     std::string availabilityError;
     g_blueprintAvailability.Load(
-        modDirectory + L"\\blueprint-availability.bin", g_catalog.payloadHash,
+        modDirectory + L"\\blueprint-availability.bin", g_primaryCatalog.payloadHash,
         &availabilityError);
     if (!g_blueprintAvailability.ready())
         api->Log(mod, SDGO_LOG_WARN,
@@ -566,10 +574,16 @@ SDGO_MOD_ENTRY {
     }
     if (!sdgo::unit_preview::Attach(api, mod, g_catalog)) return 0;
     if (!sdgo::unit_skill_presentation::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
-    if (!sdgo::unit_skill_atlas::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
+    std::vector<sdgo::unit_skill_atlas::Scope> scopes;
+    if(primary)scopes.push_back({modDirectory,&g_primaryCatalog});
+    if(presets)scopes.push_back({presetDirectory,&g_presetCatalog});
+    if (!sdgo::unit_skill_atlas::Attach(api, mod, g_catalog, g_data, g_find,scopes)) return 0;
     if (!sdgo::unit_form_chain::Attach(api, mod, g_catalog, g_data, g_find)) return 0;
-    if (!sdgo::unit_programs::Attach(api, mod, g_catalog, &g_recordsReady)) return 0;
-    if (!RegisterResourceOverlay()) return 0;
+    if (primary&&!sdgo::unit_stages::Attach(api, mod, g_primaryCatalog)) return 0;
+    if (presets&&!sdgo::unit_stages::Attach(api, mod, g_presetCatalog,presetDirectory.c_str())) return 0;
+    if (primary&&!sdgo::unit_programs::Attach(api, mod, g_primaryCatalog, &g_recordsReady)) return 0;
+    if (primary&&!RegisterResourceOverlay(modDirectory,"unit_catalog")) return 0;
+    if (presets&&!RegisterResourceOverlay(presetDirectory,"unit_catalog_presets")) return 0;
     const unsigned protectedTextCount = boundary
         ? static_cast<unsigned>(boundary->TextCount()) : 0;
     if (boundary) {

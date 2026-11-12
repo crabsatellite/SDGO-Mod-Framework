@@ -160,6 +160,23 @@ class OwnerChainTests(unittest.TestCase):
         asset.write_bytes(b'tampered generated data')
         with self.assertRaises(ValueError):self.controller.preview(self.owner['id'])
 
+    def test_legacy_unit_receipt_keeps_content_sealed_after_programme_upgrade(self):
+        folder=self.mod(self.owner,'unit_catalog')
+        (folder/'catalog.bin').write_bytes(b'authored unit content')
+        (folder/'install-receipt.json').write_bytes(storage.json_bytes({'files':[
+            {'path':'sdgo/mods/unit_catalog/unit_catalog.dll','owned':True,'installed_sha256':'0'*64},
+            {'path':'sdgo/mods/unit_catalog/mod.ini','owned':True,'installed_sha256':'0'*64},
+            {'path':'sdgo/mods/unit_catalog/catalog.bin','owned':True,
+             'installed_sha256':u.digest(b'authored unit content')},
+        ]}))
+        self.publish();self.bind();self.controller.check(self.player['id'],True)
+        target=Path(self.player['path'])/'sdgo/mods/unit_catalog'
+        self.assertEqual(b'authored unit content',(target/'catalog.bin').read_bytes())
+        self.assertEqual((folder/'unit_catalog.dll').read_bytes(),(target/'unit_catalog.dll').read_bytes())
+        self.assertFalse((target/'install-receipt.json').exists())
+        (folder/'catalog.bin').write_bytes(b'unreviewed content edit')
+        with self.assertRaises(ValueError):self.controller.preview(self.owner['id'])
+
     def test_private_mod_names_and_data_do_not_enter_published_manifest(self):
         private=self.mod(self.owner,'personal_addon','local_only')
         (private/'personal_addon.dll').write_bytes(distribution_marker:=__import__('manager.distribution',fromlist=['']).NONREDISTRIBUTABLE_MARKER)

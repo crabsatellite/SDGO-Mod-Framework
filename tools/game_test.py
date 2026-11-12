@@ -699,6 +699,15 @@ def overlay_observer(
     for identifier in extra_mods:
         if identifier in (TEST_MOD,TARGET_MOD) or (fps_mod_enabled is not None and identifier==FPS_MOD):
             continue
+        if identifier in skip_staged_mods:
+            # The complete, sealed content package installs its own manifest
+            # below. Creating an unowned staged manifest first would make the
+            # trusted installer correctly reject that first installation.
+            settings=read_ini(root/'sdgo/sdgo.ini')
+            if not settings.has_section('mods'):settings.add_section('mods')
+            settings['mods'][identifier]='1'
+            write_ini(root/'sdgo/sdgo.ini',settings)
+            continue
         source=stage_client/'sdgo/mods'/identifier
         destination=root/'sdgo/mods'/identifier
         destination.mkdir(parents=True,exist_ok=True)
@@ -3552,6 +3561,7 @@ def prepare(
     client_packages: tuple[Path, ...] = (),
     battle_map: int = 0,
     unit_package: Path | None = None,
+    unit_presets: Path | None = None,
     capsule_package: Path | None = None,
     unit_scenario: dict | None = None,
     login_recovery_min_retries: int | None = None,
@@ -3565,6 +3575,10 @@ def prepare(
         try:capsule_binding=capsule_packages.validate(capsule_package,stage)
         except (OSError,ValueError) as error:raise GameTestError(str(error)) from error
     unit_payload=None
+    preset_publication=None
+    if unit_presets is not None:
+        from owner.units.batch_server import load_publication
+        preset_publication=load_publication(Path(unit_presets).resolve())
     if unit_package is not None:
         unit_package=Path(unit_package).resolve()
         if not unit_package.is_file() or not 0<unit_package.stat().st_size<=160*1024*1024:
@@ -4146,6 +4160,13 @@ def prepare(
             # before any runtime inputs are sealed. Never mutate a sealed run.
             from owner.units.deployment import install_package
             unit_install=install_package(client,unit_payload)
+        preset_installation=None
+        if preset_publication is not None:
+            from owner.units.preset_install import install as install_presets
+            # Use the ordinary data-only installer after programme staging and
+            # before immutable runtime hashes. Never patch a sealed client.
+            fingerprint=sha256(preset_publication.root/'package/manifest.json')
+            preset_installation=install_presets(client,preset_publication.root,fingerprint)
         observer_manifest=client/'sdgo/mods'/TEST_MOD/'mod.ini'
         observer_config=read_ini(observer_manifest)
         if not observer_config.has_section('settings'):observer_config.add_section('settings')
@@ -4249,6 +4270,10 @@ def prepare(
         if unit_payload is not None:
             metadata['unit_package']={'path':str(unit_package),'sha256':hashlib.sha256(unit_payload).hexdigest(),
                                       'bytes':len(unit_payload),'revision':unit_install['receipt']['revision']}
+        if preset_publication is not None:
+            metadata['unit_presets']={'publication':str(preset_publication.root),
+                'revision':preset_publication.revision,'manifest_sha256':fingerprint,
+                'installation':preset_installation}
         if capsule_install is not None:metadata['capsule_package']=capsule_install
         if server_session is not None:
             metadata['server_session']=server_session
@@ -5774,6 +5799,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     prepare_parser.add_argument('--rebind-existing-account',action='store_true',help='with --reuse-client and --account-profile, switch the stopped client to another already registered account')
     prepare_parser.add_argument('--include-mod',action='append',default=[],help='explicit staged client Mod to install before runtime hashes freeze')
     prepare_parser.add_argument('--client-package',type=Path,action='append',default=[],help='explicit client package imported into the owned copy before sealing')
+    prepare_parser.add_argument('--unit-presets',type=Path,help='paired default-preset publication installed beside primary unit content before sealing')
     prepare_parser.add_argument('--battle-map',type=int,default=0,help='PvP MapNo chosen on the native room page (0 = quick-room random map)')
     prepare_parser.add_argument('--disable-mod',action='append',default=[],help='explicit client Mod switched off in the owned copy before sealing')
     prepare_parser.add_argument('--fps-gameplay-cap',type=int,help='verify native 60 Hz gameplay and the selected render cap during a full PvP battle')
@@ -5899,6 +5925,7 @@ def main(argv: list[str] | None = None) -> int:
                 fps_mod_enabled=not args.fps_mod_disabled,
                 extra_mods=tuple(args.include_mod),
                 client_packages=tuple(args.client_package),
+                unit_presets=args.unit_presets,
                 battle_map=args.battle_map,
                 disabled_mods=tuple(args.disable_mod),
                 fps_gameplay_cap=args.fps_gameplay_cap,

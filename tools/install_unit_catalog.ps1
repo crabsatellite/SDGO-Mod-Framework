@@ -11,6 +11,9 @@
   A foreign file is never overwritten. A byte-identical foreign file is
   reused without taking ownership. Later updates may replace only files that
   this installer created and whose current hash still matches its receipt.
+  An installed matching unit programme is reused when its DLL hash and all
+  fixed manifest fields match; generated data declarations may differ. Its
+  settings are retained, and installation enables the existing module.
   Uninstall removes only those owned files and the exact symbol section this
   installer appended.
 #>
@@ -41,6 +44,7 @@ $RequiredModuleFiles = @(
 )
 $AllowedModuleFiles = $RequiredModuleFiles + @(
     'sdgo\mods\unit_catalog\manager.json',
+    'sdgo\mods\unit_catalog\default-presets.json',
     'sdgo\mods\unit_catalog\symbols.fragment.ini',
     # Optional availability data generated with a unit publication. Older
     # packages without these files remain installable.
@@ -49,6 +53,7 @@ $AllowedModuleFiles = $RequiredModuleFiles + @(
     # Optional sealed sidecars: native Lua program bundle (SDGOPR1) and skill atlases (SDGOAT1).
     'sdgo\mods\unit_catalog\native-programs.bin',
     'sdgo\mods\unit_catalog\skill-atlases.bin'
+    'sdgo\mods\unit_catalog\stage-rules.bin'
 ) + @(1..31 | ForEach-Object { "sdgo\mods\unit_catalog\resources.$_.zpk" })  # split archive parts
 $AllowedResourceRoots = @("anrs", "fxrs", "mdrs", "scp", "sdrs", "sol", "sprs", "trns", "txrs", "uirs")
 $BlockedResourceExtensions = @(".bat", ".cmd", ".com", ".dll", ".exe", ".js", ".lnk", ".msi", ".ps1", ".scr", ".vbs")
@@ -494,6 +499,35 @@ function Test-ReceiptFile($Receipt, $File, [string]$Path, [string]$Relative) {
     return (Get-ProgramDefinition $original) -ceq (Get-ProgramDefinition $current)
 }
 
+function Test-CompatibleProgrammeManifest([string]$Current, [string]$Incoming, [string]$Dll, [string]$DllHash) {
+    # Reuse an already-installed matching programme. A content publication may
+    # declare additional managed data files; it cannot change native code,
+    # version, host, symbols, dependencies or the configuration contract.
+    if (-not (Test-Path -LiteralPath $Dll -PathType Leaf) -or (Get-Sha256 $Dll) -cne $DllHash) { return $false }
+    $definitions = @()
+    foreach ($path in @($Current, $Incoming)) {
+        $definition = Get-ProgramDefinition ([IO.File]::ReadAllText($path))
+        $fileLine = @($definition -split "`n" | Where-Object { $_.StartsWith('mod:files=') })
+        if ($fileLine.Count -ne 1) { return $false }
+        foreach ($leaf in $fileLine[0].Substring(10).Split(',')) {
+            if ($leaf -notmatch '^[a-z0-9][a-z0-9_.-]*$' -or
+                $AllowedModuleFiles -notcontains ('sdgo\mods\unit_catalog\' + $leaf) -or
+                $leaf -in @('mod.ini','unit_catalog.dll')) { return $false }
+        }
+        $definitions += (($definition -split "`n" | Where-Object { -not $_.StartsWith('mod:files=') }) -join "`n")
+    }
+    return $definitions[0] -ceq $definitions[1]
+}
+
+function Enable-ReusedProgramme([string]$Path, [string]$Temporary) {
+    $text = [IO.File]::ReadAllText($Path)
+    $section = Get-IniSection $text 'mod'
+    if ($null -eq $section) { throw 'Matching unit programme has no canonical mod section' }
+    $enabled = [Regex]::Replace($section, '(?im)^(\s*enabled\s*=)[^\r\n]*', '${1}1')
+    if ($enabled -ceq $section -and $section -notmatch '(?im)^\s*enabled\s*=') { $enabled += "`nenabled=1" }
+    [IO.File]::WriteAllText($Temporary, $text.Replace($section, $enabled), $Utf8NoBom)
+}
+
 function New-Transaction([string]$Prefix) {
     $path = Join-Path ([IO.Path]::GetTempPath()) ($Prefix + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $path | Out-Null
@@ -661,6 +695,10 @@ if ($null -ne $oldReceipt) {
 
 $plan = @()
 $newTargets = @{}
+$programmePaths = @('unit_catalog.dll','mod.ini','manager.json','symbols.fragment.ini','default-presets.json' |
+    ForEach-Object { 'sdgo\mods\unit_catalog\' + $_ })
+$programmeDll = @($package.copy | Where-Object { $_.target_relative -ieq 'sdgo\mods\unit_catalog\unit_catalog.dll' })
+if ($programmeDll.Count -ne 1) { throw 'Unit package has no unique programme DLL' }
 foreach ($entry in $package.copy) {
     $newTargets[$entry.target_relative] = $true
     $old = if ($oldByPath.ContainsKey($entry.target_relative)) { $oldByPath[$entry.target_relative] } else { $null }
@@ -668,11 +706,28 @@ foreach ($entry in $package.copy) {
     $currentHash = if ($exists) { Get-Sha256 $entry.target } else { $null }
     $owned = $false
     $copyNeeded = -not $exists -or $currentHash -cne $entry.sha256
+    $reuseProgramme = $false
 
-    if ($null -ne $old) {
-        if ($exists -and -not (Test-ReceiptFile $oldReceipt $old $entry.target $entry.target_relative)) {
+    if ($exists -and
+        $entry.target_relative -ieq 'sdgo\mods\unit_catalog\mod.ini' -and
+        (Test-CompatibleProgrammeManifest $entry.target $entry.source $programmeDll[0].target $programmeDll[0].sha256)) {
+        $reuseProgramme = $true
+        $entry.sha256 = $currentHash
+        $copyNeeded = $false
+    }
+    if ($null -ne $old -and $exists -and -not (Test-ReceiptFile $oldReceipt $old $entry.target $entry.target_relative)) {
+        # Framework-owned files may have advanced through a normal programme
+        # update. Reuse only exact incoming bytes or the strictly matched
+        # manifest above; unit-owned data keeps its original change guard.
+        if (-not $reuseProgramme -and -not ($programmePaths -contains $entry.target_relative -and $currentHash -ceq $entry.sha256) -and
+            ([bool]$old.owned -or $currentHash -cne $entry.sha256)) {
             throw "Previously recorded file changed after installation: $($entry.target_relative)"
         }
+    }
+
+    if ($reuseProgramme) {
+        $owned = $false
+    } elseif ($null -ne $old) {
         if ([bool]$old.owned) {
             $owned = $true
         } elseif ($exists) {
@@ -691,10 +746,16 @@ foreach ($entry in $package.copy) {
     } else {
         $owned = $true
     }
+    if ($exists -and $programmePaths -contains $entry.target_relative -and $currentHash -ceq $entry.sha256) {
+        # Migrate legacy content receipts which claimed programme files. The
+        # exact accepted programme is already present; content must not own it.
+        $owned = $false
+    }
     $plan += [pscustomobject]@{
         entry = $entry
         owned = $owned
         copy_needed = $copyNeeded
+        reuse_programme = $reuseProgramme
     }
 }
 
@@ -768,6 +829,13 @@ $transaction = New-Transaction "sdgo-unit-catalog-install-"
 $removeTransactionBackup = $true
 try {
     foreach ($item in $plan) {
+        if ($item.reuse_programme) {
+            Backup-Target $transaction $item.entry.target
+            $effective = Join-Path $transaction.root 'reused-programme.ini'
+            Enable-ReusedProgramme $item.entry.target $effective
+            Copy-Atomically $effective $item.entry.target
+            $item.entry.sha256 = Get-Sha256 $item.entry.target
+        }
         if (-not $item.copy_needed) {
             Write-Host "reused   $($item.entry.target_relative)"
             continue

@@ -210,6 +210,19 @@
       "title_en": "Native boundary contact: brief grid, ring and synchronized HP",
       "guide_zh": "docs/map-import.zh-CN.md",
       "guide_en": "docs/map-import.md"
+    },
+    {
+      "id": "unit-default-growth",
+      "path": "docs/unit-default-growth-demo.webp",
+      "since": "1.16.34",
+      "mods": [
+        "unit_catalog",
+        "unit_catalog_server"
+      ],
+      "title_zh": "AR成长演示机：三阶段原生实战摘录",
+      "title_en": "AR growth preset: three stages in native combat excerpts",
+      "guide_zh": "docs/unit-import.zh-CN.md",
+      "guide_en": "docs/unit-import.md"
     }
   ]
 }

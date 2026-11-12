@@ -40,7 +40,7 @@ UNIT_NAME_DISPLAY_SYMBOLS = {
 class ShopClientPackageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.client = self.root / 'owner-client'
         self.client.mkdir()
         (self.client / 'GOnline.exe').write_bytes(b'fixture')
@@ -451,7 +451,7 @@ class RepositoryShopSymbolContractTests(unittest.TestCase):
     def test_older_shared_map_requires_exact_retired_alias_and_complete_own_fragment(self):
         import shutil
         with tempfile.TemporaryDirectory() as temporary:
-            client=Path(temporary);folder=client/'sdgo/symbols';folder.mkdir(parents=True)
+            client=Path(temporary).resolve();folder=client/'sdgo/symbols';folder.mkdir(parents=True)
             path=folder/(HOST+'.ini');shared=storage.ini_values((ROOT/'symbols'/(HOST+'.ini')).read_bytes())
             replacement='shop_localization.unit_name_display.assign_call.006EF404'
             old=dict(shared[replacement]);old['expect']=' '.join(old['expect'].split()[:5])
@@ -475,7 +475,7 @@ class RepositoryShopSymbolContractTests(unittest.TestCase):
     def test_shipped_host_and_module_fragments_satisfy_the_actual_export_consumer(self):
         import shutil
         with tempfile.TemporaryDirectory() as temporary:
-            client = Path(temporary)
+            client = Path(temporary).resolve()
             symbols = client/'sdgo/symbols'
             symbols.mkdir(parents=True)
             shutil.copy2(ROOT/'symbols'/(HOST+'.ini'), symbols/(HOST+'.ini'))

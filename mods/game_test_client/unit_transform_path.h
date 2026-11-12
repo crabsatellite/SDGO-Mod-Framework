@@ -18,7 +18,7 @@ struct Path {
 // Read the actual native records. A bounded path may enter a cycle without
 // returning to its entry variant. Nothing supplies an invented reverse edge.
 template<class Lookup>
-bool Build(std::uint32_t root,unsigned steps,bool requireReciprocal,Lookup lookup,Path& output,const char*& error){
+bool Build(std::uint32_t root,unsigned steps,bool requireReciprocal,Lookup lookup,Path& output,const char*& error,bool allowSelf=false){
     output={};error=nullptr;
     if(!root||!steps||steps>MaxSteps||(requireReciprocal&&steps!=2)){
         error="native transform path step count/root is invalid";return false;
@@ -31,7 +31,10 @@ bool Build(std::uint32_t root,unsigned steps,bool requireReciprocal,Lookup looku
         if(actual!=id||record.data[4]){error="native transform path record identity/security differs";return false;}
         if(i==steps)break;
         std::memcpy(&target,record.data+316,4);
-        if(!target||target==id){error="native transform path has no distinct next form";return false;}
+        if(!target||(target==id&&!allowSelf)){error="native transform path has no distinct next form";return false;}
+        if(allowSelf&&(target!=root||id!=root||!requireReciprocal)){
+            error="self-transform inspection requires one complete self-referencing record";return false;
+        }
         candidate.ids[i+1]=target;
     }
     if(requireReciprocal&&candidate.ids[2]!=root){

@@ -7,7 +7,7 @@
 新增编号本身不要求另写一个技能 Mod，也不要求把技能换成原版编号或从机体上删除。
 
 这里的例子完全虚构：作者给“训练测试机”配置一个“训练护甲”技能，使用原生属性处理方式，
-防御字段设为 `5`，其余字段按本例明确填写。编号 `9901001`、所有者 `example-training`
+防御字段设为 `5`，其余字段按本例明确填写。编号 `74001`、所有者 `example-training`
 和资源名称仅作示例，不是已预约编号、可下载机体或默认发行内容。记录、素材和行为设定由作者提供。
 
 ## 选对入口
@@ -25,9 +25,24 @@
 
 ## 1. 准备一个完整的原生技能记录
 
-准备目标宿主兼容的 kind `13`、1132 字节记录，记录编号为 `9901001`。
+先选择**符合用途且未占用**的编号。受支持客户端会把 `1–75000` 分到普通技能槽；新普通技能通常从
+`70001–75000` 中查找空位。本例的 `74001` 仍须在目标客户端和服务端检查冲突，不能覆盖已有定义。
+原生部件另有普通槽编号区间：`3220001–3225000`、`3473001–3478000`、`3558001–3559000`、
+`3613002–3615999`；这些区间只说明编号分类，不能替代部件的记录、依赖和行为检查。
+
+其余编号会进入原生的额外技能槽。例如 `79950` 可以作为 kind 13 记录登记、显示图标，
+但直接写进 `SkillNumber_1/2` 时，普通技能的网络触发通知不会应用到这两个槽。单机体和批量应用
+都会检查这项类别。完整记录仍可作为制作资料保存；需要改为合适的空闲编号并更新引用／哈希，
+或提供对应类别的运行适配后再发布。这是原生消费端的类别规则，**不是技能效果的白名单**。
+
+准备目标宿主兼容的 kind `13`、1132 字节记录，记录编号为 `74001`。
 名称、说明、激活条件、属性、图标帧和原生调度字段属于记录内容；不能只给一个编号或一段文字。
 作者工具负责生成正确的完整记录，导入器保留并校验它，不能用一块补零的字节代替真实技能。
+
+组合原生技能时，数值和显示文字要一起更新。目标客户端的机体信息页读取字节 `5` 的名称
+（50 个 UTF-16LE 单元，含结尾空字符）、字节 `531`／`0x213` 的说明（100 个单元，含结尾空字符），
+以及字节 `426` 的小端 `u16` 图标帧。不能只把45%技能改了名称和触发值，却仍显示原技能的85%说明。
+随 Mod 提供的演示配方会把自定义说明写入原生记录。
 
 本例的客户端共享字段要与下方服务端定义一致：`Activate=0`、`ActivateValue=0`、`Defense=5`，
 其余已声明共享数值为 `0`，`Feature=0`、`UseTarget=0`。选择图标帧 `0`。
@@ -75,7 +90,7 @@ training-skill/
     }]
   }],
   "skills": [{
-    "id": 9901001,
+    "id": 74001,
     "record_sha256": "<complete-1132-byte-record-sha256>",
     "sprite": "sprs/example_training_guard.spr"
   }]
@@ -100,13 +115,13 @@ training-skill/
   "owner": "example-training",
   "revision": "<server-skills-revision-sha256>",
   "skills": [{
-    "id": 9901001,
+    "id": 74001,
     "client_sha256": "<complete-1132-byte-record-sha256>",
     "definition": {
       "kind": "explicit",
       "origin": "authored",
       "values": {
-        "SkillID": 9901001,
+        "SkillID": 74001,
         "SkillName": "Training Guard",
         "Activate": 0,
         "ActivateValue": 0,
@@ -151,7 +166,7 @@ training-skill/
   "revision": "<native-content-revision-sha256>",
   "records": [{
     "kind": 13,
-    "id": 9901001,
+    "id": 74001,
     "profile": "native-type13-1132-v1",
     "member": "records/training-guard.bin",
     "sha256": "<complete-1132-byte-record-sha256>"
@@ -178,7 +193,7 @@ training-skill/
 
 `member` 是附件内的成员名，`path` 是游戏资源虚拟路径，两者职责不同。
 机体项目的 `native_content` 引用这个清单的成员名与完整文件摘要；附件里的全部引用文件必须同时提供。
-机体客户端记录和服务端定义的 `SkillNumber_1` 或 `SkillNumber_2` 都引用 `9901001`。
+机体客户端记录和服务端定义的 `SkillNumber_1` 或 `SkillNumber_2` 都引用 `74001`。
 保存或重新导入制作项目保留这些资料；普通单族确认仍有自己的发布检查，不能把附件上传成功当作运行安装。
 
 ## 5. 编译完整发布目录
@@ -208,7 +223,7 @@ skill_atlases = compile_bundle(
     sha256(final_catalog).hexdigest(),
     sha256(overlay_index).hexdigest(),
     sha256(overlay_archive).hexdigest(),
-    {9901001: skill_record},
+    {74001: skill_record},
     {
         "sprs/example_training_guard.spr": sprite_bytes,
         "txrs/example_training_guard.txr": texture_bytes,

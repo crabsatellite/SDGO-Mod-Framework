@@ -335,9 +335,10 @@ sdgo_add_mod(unit_catalog DESCRIPTION "confirmed unit family content"
                      mods/unit_catalog/program_runtime.cpp
                      mods/unit_catalog/skill_atlas_runtime.cpp
                      mods/unit_catalog/form_chain_runtime.cpp
+                     mods/unit_catalog/stage_runtime.cpp
                      support/native_resource_overlay/native_resource_overlay.cpp
                      support/native_resource_overlay/native_resource_overlay.def
-             FILES symbols.fragment.ini LIBS sdgo_script_registration)
+             FILES symbols.fragment.ini default-presets.json LIBS sdgo_script_registration)
 sdgo_add_mod(map_catalog DESCRIPTION "imported maps and missions"
              SOURCES mods/map_catalog/client.cpp
                      support/native_resource_overlay/native_resource_overlay.cpp
@@ -2156,6 +2157,14 @@ if(BUILD_TESTING)
     add_executable(unit_transform_path_test tests/unit_transform_path_test.cpp)
     sdgo_strict(unit_transform_path_test)
     add_test(NAME unit_transform_path COMMAND unit_transform_path_test)
+    add_executable(unit_stage_rules_test tests/unit_stage_rules_test.cpp)
+    target_link_libraries(unit_stage_rules_test PRIVATE sdgo_script_registration)
+    sdgo_strict(unit_stage_rules_test)
+    add_test(NAME unit_stage_rules COMMAND unit_stage_rules_test)
+    add_executable(unit_catalog_scopes_test tests/unit_catalog_scopes_test.cpp)
+    target_link_libraries(unit_catalog_scopes_test PRIVATE sdgo_api)
+    sdgo_strict(unit_catalog_scopes_test)
+    add_test(NAME unit_catalog_scopes COMMAND unit_catalog_scopes_test)
     add_library(transform_packet_fanout_fixture SHARED tests/transform_packet_fanout_fixture.cpp)
     target_link_libraries(transform_packet_fanout_fixture PRIVATE sdgo_api)
     set_target_properties(transform_packet_fanout_fixture PROPERTIES OUTPUT_NAME match_ai

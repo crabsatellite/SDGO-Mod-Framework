@@ -146,7 +146,8 @@ class RegistryTests(ServerGroup):
         self.apply()
         batch_registry.register(self.workspace, self.folder, self.ini)
         workspace = types.SimpleNamespace(root=self.root / 'manager',
-                                          settings={'modules': {'units': {'workspace': str(self.workspace), 'server_ini': str(self.ini)}}})
+                                          settings={'modules': {'units': {'workspace': str(self.workspace), 'server_ini': str(self.ini)}}},
+                                          services=types.SimpleNamespace(register=lambda *args:None),save_workspace=lambda:None)
         units = Units(workspace)
         engine = types.SimpleNamespace(lock=threading.RLock(), read=lambda: {'drafts': {}})
         units.engine = engine

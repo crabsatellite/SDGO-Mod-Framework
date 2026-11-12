@@ -211,17 +211,25 @@ bool Body(const std::uint8_t* body,std::size_t first,std::size_t last,const char
 }
 }
 
-bool Attach(const SdgoApi* api,SdgoMod* mod,const unit_catalog::Catalog& catalog,GridData data,GridFind find){
-    const std::wstring root=api->ModDirectory(mod),file=root+L"\\skill-atlases.bin";
-    if(GetFileAttributesW(file.c_str())==INVALID_FILE_ATTRIBUTES&&GetLastError()==ERROR_FILE_NOT_FOUND)return true;
+bool Attach(const SdgoApi* api,SdgoMod* mod,const unit_catalog::Catalog& catalog,GridData data,GridFind find,const std::vector<Scope>& scopes){
     g_api=api;g_mod=mod;g_catalog=&catalog;g_data=data;g_find=find;
-    resource_overlay::BundleRegistration resources;std::string error;std::vector<std::uint8_t> bytes;
-    std::set<std::wstring> paths;
-    if(!resource_overlay::InspectUnitBundleFiles(root.c_str(),resources,error)){
-        api->Log(mod,SDGO_LOG_ERROR,"skill atlas resource preflight failed: %s",error.c_str());return false;}
-    for(const auto& entry:resources.entries){paths.insert(entry.first);g_paths.insert(entry.first);}
-    if(!ReadBytes(file,bytes)||!g_bundle.Parse(bytes,CatalogHash(catalog),resources.identity,paths,catalog,error)){
-        api->Log(mod,SDGO_LOG_ERROR,"skill atlas sidecar rejected: %s",error.c_str());return false;}
+    std::vector<std::uint8_t> identities;
+    for(const auto& scope:scopes){
+        const std::wstring file=scope.directory+L"\\skill-atlases.bin";
+        if(GetFileAttributesW(file.c_str())==INVALID_FILE_ATTRIBUTES&&GetLastError()==ERROR_FILE_NOT_FOUND)continue;
+        resource_overlay::BundleRegistration resources;std::string error;std::vector<std::uint8_t> bytes;
+        std::set<std::wstring> paths;
+        if(!scope.catalog||!resource_overlay::InspectUnitBundleFiles(scope.directory.c_str(),resources,error)){
+            api->Log(mod,SDGO_LOG_ERROR,"skill atlas resource preflight failed: %s",error.c_str());return false;}
+        for(const auto& entry:resources.entries){paths.insert(entry.first);g_paths.insert(entry.first);}
+        skill_atlas::Bundle part;
+        if(!ReadBytes(file,bytes)||!part.Parse(bytes,CatalogHash(*scope.catalog),resources.identity,paths,*scope.catalog,error)){
+            api->Log(mod,SDGO_LOG_ERROR,"skill atlas sidecar rejected: %s",error.c_str());return false;}
+        for(auto& entry:part.entries)if(!g_bundle.entries.emplace(entry.first,std::move(entry.second)).second){
+            api->Log(mod,SDGO_LOG_ERROR,"skill atlas ID crosses content scopes");return false;}
+        identities.insert(identities.end(),bytes.begin(),bytes.end());
+    }
+    if(g_bundle.entries.empty())return true;
     auto* body=static_cast<const std::uint8_t*>(api->Symbol(mod,"unit_catalog.ui_skill_body"));
     auto* first=static_cast<const std::uint8_t*>(api->Symbol(mod,"unit_catalog.skill_atlas_first"));
     auto* second=static_cast<const std::uint8_t*>(api->Symbol(mod,"unit_catalog.skill_atlas_second"));
@@ -240,7 +248,7 @@ bool Attach(const SdgoApi* api,SdgoMod* mod,const unit_catalog::Catalog& catalog
         !Body(battle,0,1173,"99b2bd4e05b1be0c1d279e2c620b9eee3a19eb755a196fe314ce5f5b5abc0443")){
         api->Log(mod,SDGO_LOG_ERROR,"native skill atlas consumers differ from the supported profile");return false;}
     g_clear=reinterpret_cast<Clear>(const_cast<std::uint8_t*>(clear));g_load=reinterpret_cast<Load>(const_cast<std::uint8_t*>(load));g_frame=reinterpret_cast<Frame>(const_cast<std::uint8_t*>(frame));
-    g_state.size=sizeof(g_state);g_state.version=1;const auto hash=scripts::Sha256(bytes);std::memcpy(g_state.sidecar_sha256,hash.c_str(),65);
+    g_state.size=sizeof(g_state);g_state.version=1;const auto hash=scripts::Sha256(identities);std::memcpy(g_state.sidecar_sha256,hash.c_str(),65);
     g_battleState.size=sizeof(g_battleState);g_battleState.version=1;g_battleContinue=const_cast<std::uint8_t*>(before+11);
     return api->HookSite(mod,"unit_catalog.skill_atlas_first",reinterpret_cast<void*>(&First),&g_firstOriginal)&&
            api->HookSite(mod,"unit_catalog.skill_atlas_second",reinterpret_cast<void*>(&Second),&g_secondOriginal)&&

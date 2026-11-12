@@ -3,6 +3,7 @@
 #include <cstring>
 #include <map>
 #include "form_chain_runtime.h"
+#include "stage_runtime.h"
 
 namespace sdgo::unit_form_chain {
 namespace {
@@ -142,48 +143,74 @@ void __fastcall OnSwap(std::uint8_t* unit,void* edx){
     }
 }
 
-// The original destructor frees the live (current, alternate) models in its own order
-// (after the attack controller has detached weapon attachments from them) and skips
-// the deck entry whose model is live. While a chain model is live, the deck entry
-// still names the entry form's model instead, so the destructor would free the
-// pair form twice. Point that entry at the live pair form so the original code frees
-// exactly the live pair, chain model included, at its native place. The entry form's
-// detached model is intentionally left alive: nothing references it any more.
+// The native destructor deletes controllers before models. It skips a deck entry
+// whose base model is either live model, deletes the alternate explicitly, then
+// lets the scene-node base destructor delete the current model through unit+8.
+// Preserve a distinct live pair in the selected entry and return its detached
+// third owner for deletion only AFTER that native ordering has completed.
 enum class HandOver { not_needed, handed_over, refused };
-HandOver HandOverPair(std::uint8_t* unit,const Chain* chain){
+HandOver HandOverPair(std::uint8_t* unit,const Chain* chain,void** detached){
     __try{
         auto* current=Read<std::uint8_t*>(unit,kCurrentModel);auto* alternate=Read<std::uint8_t*>(unit,kAlternateModel);
-        if(current!=chain->model&&alternate!=chain->model)return HandOver::not_needed; // Respawn restored the deck pair.
+        *detached=nullptr;
+        if(!current||!alternate||current==alternate)return HandOver::refused;
         const auto* begin=Read<const std::uint8_t*>(unit,kDeckBegin);
+        const auto* end=Read<const std::uint8_t*>(unit,kDeckEnd);
         const auto index=Read<std::int32_t>(unit,kDeckIndex);
-        if(!begin||index<0||index>15)return HandOver::refused;
-        // Validated by content, not by a vector bound: the entry's alternate model is the
-        // live pair form the chain did not replace, and its model is not live.
+        const auto first=reinterpret_cast<std::uintptr_t>(begin),last=reinterpret_cast<std::uintptr_t>(end);
+        if(!begin||last<first||(last-first)%kDeckEntryBytes||index<0||
+           static_cast<std::size_t>(index)>=(last-first)/kDeckEntryBytes)return HandOver::refused;
+        // Also validate native ownership: the entry's alternate model is the
+        // live pair form the chain did not replace, and its base is detached.
         auto* entry=const_cast<std::uint8_t*>(begin)+static_cast<std::size_t>(index)*kDeckEntryBytes;
         auto* deckModel=Read<std::uint8_t*>(entry,4);auto* deckAlternateModel=Read<std::uint8_t*>(entry,12);
+        if(current!=chain->model&&alternate!=chain->model){
+            // Respawn restored a native pair. Its two models retain their
+            // original owners; only our cached third model is detached.
+            if(!deckModel||!deckAlternateModel||deckModel==deckAlternateModel||
+               deckModel==chain->model||deckAlternateModel==chain->model||
+               !((current==deckModel&&alternate==deckAlternateModel)||
+                 (alternate==deckModel&&current==deckAlternateModel)))return HandOver::refused;
+            *detached=chain->model;return HandOver::not_needed;
+        }
         auto* pairModel=current==chain->model?alternate:current;
         if(!deckModel||deckAlternateModel!=pairModel||deckModel==current||deckModel==alternate||deckModel==chain->model)
             return HandOver::refused;
-        Write(entry,4,pairModel);
+        // Writing pairModel here would alias both deck slots. Use the chain
+        // model as base so the entry is skipped and still names two owners.
+        Write(entry,4,chain->model);*detached=deckModel;
         return HandOver::handed_over;
     }__except(EXCEPTION_EXECUTE_HANDLER){return HandOver::refused;}
 }
 
 void __fastcall OnDestroy(std::uint8_t* unit,void* edx){
+    sdgo::unit_stages::Forget(unit);
     Chain chain;bool known=false;
     EnterCriticalSection(&g_lock);
     const auto found=g_chains->find(unit);
     if(found!=g_chains->end()){chain=found->second;g_chains->erase(found);known=true;}
     LeaveCriticalSection(&g_lock);
+    void* detached=nullptr;HandOver result=HandOver::refused;
     if(known&&chain.model){
-        const auto result=HandOverPair(unit,&chain);
+        result=HandOverPair(unit,&chain,&detached);
         if(result==HandOver::handed_over){
-            InterlockedIncrement64(&g_unitsRestored);InterlockedIncrement64(&g_modelsReleased);
+            InterlockedIncrement64(&g_unitsRestored);
             g_api->Log(g_mod,SDGO_LOG_INFO,"unit form chain: live pair with chain model %p handed to the original destructor",chain.model);
         }else if(result==HandOver::refused)
             g_api->Log(g_mod,SDGO_LOG_WARN,"unit form chain: deck entry did not match the live pair; destructor left unchanged");
     }
     g_destroy(unit,edx);
+    if(detached){
+        // Native model deleting destructor(flag=1). Its cleanup reads model
+        // fields and scene parents, not the expired unit back-reference.
+        // Keep exceptions observable rather than hiding an ownership fault.
+        using DeleteModel=void(__thiscall*)(void*,unsigned);
+        const auto table=*static_cast<void***>(detached);
+        reinterpret_cast<DeleteModel>(table[0])(detached,1);
+        InterlockedIncrement64(&g_modelsReleased);
+        g_api->Log(g_mod,SDGO_LOG_INFO,"unit form chain: detached model %p released after native unit cleanup (chain=%p live=%u)",
+                   detached,chain.model,result==HandOver::handed_over?1u:0u);
+    }
 }
 } // namespace
 

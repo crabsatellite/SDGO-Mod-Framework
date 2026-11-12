@@ -7,6 +7,7 @@ import io
 import json
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 import xml.etree.ElementTree as ET
@@ -463,9 +464,60 @@ rva=state
             game_test.sha256(target/'map_catalog.dll'),
             self.metadata(run)['client']['immutable_hashes']['sdgo/mods/map_catalog/map_catalog.dll'])
 
+    def test_scoped_presets_follow_programme_staging_and_are_sealed_without_replacing_primary(self):
+        installed=self.template/'sdgo/mods/unit_catalog';installed.mkdir()
+        manifest=(f'[mod]\nid=unit_catalog\ndll=unit_catalog.dll\nhosts={game_test.HOST_KEY}\n'
+                  'category=gameplay\nfeature=unit-import\nversion=0.6.0\nenabled=1\nconfig_files=catalog.bin\n').encode()
+        (installed/'mod.ini').write_bytes(manifest);(installed/'unit_catalog.dll').write_bytes(b'old programme')
+        (installed/'catalog.bin').write_bytes(b'primary owner content')
+        staged=self.stage/'client/sdgo/mods/unit_catalog';staged.mkdir()
+        (staged/'mod.ini').write_bytes(manifest);(staged/'unit_catalog.dll').write_bytes(b'new programme')
+        publication=self.root/'preset-publication';(publication/'package').mkdir(parents=True)
+        (publication/'package/manifest.json').write_bytes(b'fixture hash-bound publication')
+        loaded=SimpleNamespace(root=publication,revision='preset-r2')
+        def install(client,folder,fingerprint):
+            self.assertEqual(publication,folder)
+            self.assertEqual(game_test.sha256(publication/'package/manifest.json'),fingerprint)
+            module=client/'sdgo/mods/unit_catalog'
+            self.assertEqual(b'new programme',(module/'unit_catalog.dll').read_bytes())
+            self.assertEqual(b'primary owner content',(module/'catalog.bin').read_bytes())
+            scope=module/'presets';scope.mkdir();(scope/'catalog.bin').write_bytes(b'new scoped records')
+            return {'installed':True,'revision':'preset-r2'}
+        with mock.patch('owner.units.batch_server.load_publication',return_value=loaded), \
+             mock.patch('owner.units.preset_install.install',side_effect=install):
+            run=self.prepare(unit_presets=publication,extra_mods=('unit_catalog',))
+        metadata=self.metadata(run);relative='sdgo/mods/unit_catalog/presets/catalog.bin'
+        self.assertEqual('preset-r2',metadata['unit_presets']['revision'])
+        self.assertEqual(game_test.sha256(run/'client'/relative),metadata['client']['immutable_hashes'][relative])
+        self.assertFalse((installed/'presets').exists())
+        game_test.verify_hashes(metadata)
+        (run/'client'/relative).write_bytes(b'changed scoped data after seal')
+        with self.assertRaises(game_test.GameTestError):game_test.verify_hashes(metadata)
+
     def test_missing_unit_candidate_is_rejected_before_client_copy(self):
         with self.assertRaises(game_test.GameTestError):self.prepare(unit_package=self.root/'missing.zip')
         self.assertFalse((self.root/'run').exists())
+
+    def test_sealed_unit_package_is_not_preceded_by_an_unowned_staged_manifest(self):
+        package=self.root/'units.zip';package.write_bytes(b'unit package fixture')
+        staged=self.stage/'client/sdgo/mods/unit_catalog';staged.mkdir()
+        manifest=('[mod]\nid=unit_catalog\ncategory=gameplay\nfeature=unit-import\nversion=1\n'
+                  f'dll=unit_catalog.dll\nhosts={game_test.HOST_KEY}\nenabled=1\n').encode()
+        (staged/'mod.ini').write_bytes(manifest);(staged/'unit_catalog.dll').write_bytes(b'staged programme')
+        def install(client,payload):
+            self.assertEqual(package.read_bytes(),payload)
+            target=client/'sdgo/mods/unit_catalog'
+            self.assertFalse((target/'mod.ini').exists())
+            target.mkdir(parents=True,exist_ok=True)
+            (target/'mod.ini').write_bytes(manifest+b'files=catalog.bin\n')
+            (target/'unit_catalog.dll').write_bytes(b'sealed programme')
+            (target/'catalog.bin').write_bytes(b'authored catalog')
+            return {'receipt':{'revision':'fixture'}}
+        with mock.patch('owner.units.deployment.install_package',side_effect=install):
+            run=self.prepare(unit_package=package,extra_mods=('unit_catalog',))
+        target=run/'client/sdgo/mods/unit_catalog'
+        self.assertEqual(b'sealed programme',(target/'unit_catalog.dll').read_bytes())
+        self.assertEqual('1',game_test.read_ini(run/'client/sdgo/sdgo.ini')['mods']['unit_catalog'])
 
     def test_zero_wingmen_import_requires_the_client_extended_title_provider(self):
         profile = game_test.read_ini(self.account_profile)

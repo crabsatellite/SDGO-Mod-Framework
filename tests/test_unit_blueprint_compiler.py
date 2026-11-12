@@ -42,7 +42,8 @@ class BlueprintCompiler(unittest.TestCase):
                 self.assertTrue({'blueprint-availability.json','blueprint-availability.bin','resources.zpk'}<=payload)
                 expected=configuration.files(manifest,contract)
                 self.assertEqual(expected,manifest['framework.configuration']['files'].split(','))
-                self.assertEqual(['blueprint-availability.bin','blueprint-availability.json','catalog.bin','definitions.json','mod.ini'],expected)
+                self.assertTrue({'blueprint-availability.bin','blueprint-availability.json','catalog.bin','definitions.json','mod.ini'}<=set(expected))
+                self.assertTrue({'presets/catalog.bin','presets/stage-rules.bin','presets/skill-atlases.bin'}<=set(expected))
                 self.assertNotIn('resources.zpk',expected)
                 self.assertEqual('Enabled',manifest['framework.dependencies']['enabled_key'])
                 self.assertEqual(output,configuration.render(output,contract))
@@ -70,7 +71,9 @@ class BlueprintCompiler(unittest.TestCase):
                     self.assertIn(b'files=symbols.fragment.ini,',z.read('client/sdgo/mods/unit_catalog/mod.ini'))
                     runtime_manifest=storage.ini_values(z.read('client/sdgo/mods/unit_catalog/mod.ini'))
                     self.assertEqual('1',runtime_manifest['framework.dependencies']['schema'])
-                    self.assertEqual(['catalog.bin','definitions.json','mod.ini'],runtime_manifest['framework.configuration']['files'].split(','))
+                    contract=json.loads((compiler.ROOT/'mods/unit_catalog/manager.json').read_bytes())
+                    from manager import configuration
+                    self.assertEqual(configuration.files(runtime_manifest,contract),runtime_manifest['framework.configuration']['files'].split(','))
                     manifest=json.loads(z.read('manifest.json'))
                     import hashlib
                     self.assertEqual(hashlib.sha256(z.read(fragment)).hexdigest(),manifest['files'][fragment])

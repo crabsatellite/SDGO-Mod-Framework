@@ -278,10 +278,24 @@ def snapshot(host,source,extras,max_file_bytes=64*1024*1024,include_game_base=Tr
                 if updates.digest(files[relative])!=want:raise ValueError('生成资源与服主清单不一致：'+relative)
         receipt=folder/'install-receipt.json'
         if receipt.is_file() and name=='unit_catalog':
+            programme={'sdgo/mods/unit_catalog/'+leaf for leaf in
+                ('unit_catalog.dll','mod.ini','manager.json','symbols.fragment.ini','default-presets.json')}
             for entry in json.loads(receipt.read_bytes()).get('files',[]):
                 if not entry.get('owned',True):continue
+                # Legacy unit packages also claimed their matching programme.
+                # Programmes above are validated as the selected runtime;
+                # this receipt contributes only unit content, never old code
+                # hashes that would reject a normal Framework upgrade.
+                if entry['path'].replace('\\','/').casefold() in programme:continue
                 relative=entry['path'].replace('\\','/');add(relative)
                 if updates.digest(files[relative])!=entry['installed_sha256']:raise ValueError('机体内容与服主安装收据不一致：'+relative)
+        if name=='unit_catalog':
+            from owner.units.preset_install import verify as verify_presets
+            presets=verify_presets(root)
+            if presets:
+                for leaf,expected in presets['files'].items():
+                    relative='sdgo/mods/unit_catalog/presets/'+updates.safe_name(leaf);add(relative)
+                    if updates.digest(files[relative])!=expected:raise ValueError('默认机体预设与安装回执不一致：'+relative)
     # Only explicitly selected authored extras are added, never an entire client.
     for name in extras:
         path=updates.child(root,name)
