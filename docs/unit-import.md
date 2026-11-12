@@ -12,8 +12,10 @@ Import a unit archive (RAR/ZIP) in SDGO Mod Manager, fill in missing definitions
 encyclopedia images, then write the unit definitions to the server and build a client package for players.
 
 Single-form, two-form (reciprocal or one-way)
-and self-transforming units are supported, as are entry forms into an already published reciprocal pair; skills must
-reuse skills the server already has. Before going live, try an imported unit in
+and self-transforming units are supported, as are entry forms into an already published reciprocal pair.
+Direct confirmation in the single-family editor requires skills available in the server catalog. A complete protocol
+publication can instead carry new skill records, icon resources and server definitions through the batch apply route,
+even for one family. See the fictional [custom skill import example](unit-skill-import.md). Before going live, try an imported unit in
 real battles on a test server to check its weapons, skills and transformation.
 
 | part | runs on | does |
@@ -160,6 +162,11 @@ Its publication folder holds `server-plan.json`, `form-graph-requests.json` and 
 4. Click **停服后应用…** (apply after stopping), review the change dialog and confirm. The panel shows each stage:
    stopped-server check, ordered family check, shared rows, families (done / total), form graphs and readback.
 5. Restart the group and check readiness in Manager's change list. Players need the matching unit client package.
+
+This route supports new skill definitions; they need not exist in the destination server beforehand.
+Include kind `13` client records, independent atlases/resources and `server-plan.json.skills` in the complete
+publication. A missing-skill message in the single-family editor is not a reason to remove skills by default.
+See [assembling and importing both sides](unit-skill-import.md).
 
 What the batch apply writes:
 
@@ -360,9 +367,11 @@ only the name as content-owned to localization consumers.
 identities, categories, names, forms and the matching `shop_sprite` / `capsule_sprite`. Capsule machine cards are
 separate resources, not the unit's three UI sprite fields.
 
-The source-only Type-13 skill profile validates paired record layouts and dependency evidence, but new skill
-registration is not enabled. Record formats, image fields, resource archives, transactions and extension points are
-described in the [native unit archive interface](unit-import-protocol.zh-CN.md) (Chinese).
+The Type-13 skill profile validates paired record layouts and dependency evidence. Complete publications can
+carry new skill records, independent atlases and paired server definitions; the single-family editor's direct
+confirmation restrictions are separate. See [custom skill import](unit-skill-import.md) for a fictional example.
+Record formats, image fields, resource archives, transactions and extension points are described in the
+[native unit archive interface](unit-import-protocol.zh-CN.md) (Chinese).
 
 ### Blueprint records and presentation templates
 
@@ -535,7 +544,8 @@ including models whose embedded resource paths were prepared. Source records and
 Developer components can prepare an independent skill atlas with
 [`sdgo.unit-skill-atlases/1`](unit-skill-atlases.schema.json). Its sidecar binds complete skill records,
 the catalog and resource archive. Native detail controls and actor skill initialization resolve the declared
-atlas through their original resource consumers. This does not enable ordinary Manager publication of new skills.
+atlas through their original resource consumers. Complete publications install the atlas with the skill records and
+server definitions; saving an atlas alone does not change the single-family editor's confirmation checks.
 
 Owned funnel definitions use [`sdgo.unit-server-funnels/1`](unit-server-funnels.schema.json), with the same
 transaction and ownership checks as skill data. All six server columns and their paired client fields are checked;
@@ -545,7 +555,8 @@ The disabled-by-default `unit_catalog_server` companion consumes controller-gene
 skill bindings and a separate server installation authority. It preserves allocated
 skill IDs while selecting a supported original server branch. See
 [native skill identity selectors](skill-identity.md); the companion contains no
-server owner's content and does not enable ordinary Manager publication of new dependencies.
+server owner's content. The selector adapts extra fixed-ID branches; it is not a global skill whitelist or a
+required step for every new skill.
 
 Developer tools can prepare owned server skill data with
 `owner.units.server_dependencies` and
@@ -555,9 +566,10 @@ server template or a complete explicitly authored server row. The writer uses
 the caller's catalog transaction, compares live schemas and ownership, verifies
 readback, and refuses baseline adoption or outside edits. It supplies no missing
 values and does not derive server `BattleMode` from the client's effect dispatch.
-Data-only rows remain `pending_skill_ids`; ordinary unit publication still rejects
-them. Native ID-specific behavior, resource bindings and actors are separate
-from successfully storing a server definition.
+The compatibility field `pending_skill_ids` lists owned dependency-ledger skills. Direct single-family confirmation
+still restricts them, but this field is not a complete-publication skill blacklist.
+Complete publications use batch apply to write shared skill definitions before their family rows; paired records,
+resources and target native consumers must be present.
 
 The developer helper `owner.units.effect_resources` prepares owner-scoped ZFX texture names from typed
 emitter fields. It retains selected JPEG/PNG/DDS/TGA texture variants and original bytes, refuses destination
@@ -567,7 +579,8 @@ Manager's automatic import and does not replace skill registration, server depen
 Initialization-script declarations and the project format are described in the
 [native unit archive interface](unit-import-protocol.zh-CN.md) (Chinese); see the
 [script transport contract](script-registration.md#unit-catalog-transport) for the runtime transport and
-the optional catalog-bound native program consumer. These helpers do not publish script-dependent units.
+the optional catalog-bound native program consumer. Single-family confirmation still rejects projects with new
+scripts; complete protocol publications can carry validated, compiled native program sidecars.
 
 Developer dependency profiles retain complete skill and funnel source records.
 The skill profile verifies the 882-to-1132-byte projection, explicit ID changes
@@ -579,9 +592,9 @@ A weapon's special feature (offset 132) names a kind-12 record from the client's
 layout; the native catalog refuses to load when an imported weapon names a special feature
 that is neither native nor carried, instead of letting the client crash when the feature
 triggers in battle. These rows are client data: servers keep only the weapon's number.
-Manager cannot publish these new dependency definitions yet: even with server data
-and scoped resources prepared, ID-specific behavior, scripts and the full actor
-lifecycle are not supported.
+Complete batch publications can carry new dependencies; single-family confirmation restrictions apply separately.
+A layout profile does not independently authorize runtime installation. Effects requiring a missing target consumer
+still need an adapter; a data declaration cannot substitute for that implementation.
 The [native ownership test](game-test.md#native-record-ownership-and-shutdown)
 checks complete record bytes and original grid cleanup; it does not cover battle
 activation, transformation, death or respawn.
