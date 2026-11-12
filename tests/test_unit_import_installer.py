@@ -14,6 +14,36 @@ ROOT=Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which('pwsh'),'PowerShell is required for installer checks')
 class InstallerResourceTests(unittest.TestCase):
+    def test_symbol_comparison_accepts_native_ini_spacing_but_rejects_changed_definitions(self):
+        script=r'''
+param([string]$Installer,[string]$InputPath)
+$ErrorActionPreference='Stop'
+$ast=[Management.Automation.Language.Parser]::ParseFile($Installer,[ref]$null,[ref]$null)
+foreach($f in $ast.FindAll({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst]},$true)){
+ if($f.Name -in @('Get-IniSection','Get-NormalizedSection')){Invoke-Expression $f.Extent.Text}
+}
+$spec=Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json
+$left=Get-IniSection $spec.left 'unit_catalog.load_last_table'
+$right=Get-IniSection $spec.right 'unit_catalog.load_last_table'
+$equal=(Get-NormalizedSection $left) -ceq (Get-NormalizedSection $right)
+if($equal -ne $spec.expected){throw 'Symbol equivalence differs'}
+'''
+        native=(ROOT/'symbols/GOnline-54BE1568-00C97000.ini').read_text(encoding='utf-8-sig')
+        fragment=(ROOT/'mods/unit_catalog/symbols.fragment.ini').read_text(encoding='utf-8-sig')
+        left='[unit_catalog.load_last_table]\nkind = code\nrva = 0x00017EF0\nexpect = 55 8B EC\n'
+        right='[unit_catalog.load_last_table]\n; neutral comment\nexpect=55 8B EC\nrva=0x00017EF0\nkind=code\n'
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);runner=root/'symbols.ps1';runner.write_text(script,encoding='utf-8');spec=root/'input.json'
+            def run(a,b,expected):
+                spec.write_text(json.dumps({'left':a,'right':b,'expected':expected}),encoding='utf-8')
+                return subprocess.run(['pwsh','-NoProfile','-File',str(runner),'-Installer',str(ROOT/'tools/install_unit_catalog.ps1'),
+                    '-InputPath',str(spec)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
+            for a,b,equal in ((native,fragment,True),(left,right,True),(left,right.replace('0x00017EF0','0x00017EF1'),False),
+                              (left,right.replace('55 8B EC','55 8B ED'),False)):
+                result=run(a,b,equal);self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+            duplicate=run(left,right+'kind=code\n',False)
+            self.assertNotEqual(0,duplicate.returncode);self.assertIn('Duplicate or empty symbol key',duplicate.stderr)
+
     def test_full_package_reader_accepts_availability_and_keeps_hash_and_path_guards(self):
         from owner.units import compiler,acquisition_sources
         script=r'''
