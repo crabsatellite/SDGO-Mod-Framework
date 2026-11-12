@@ -189,7 +189,7 @@
     {
       "id": "map-native-gate",
       "path": "docs/map-native-gate-demo.webp",
-      "since": "1.16.27",
+      "since": "1.16.28",
       "mods": [
         "map_catalog"
       ],
