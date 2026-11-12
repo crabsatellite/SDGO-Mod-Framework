@@ -266,6 +266,10 @@ INI 指向同一个库即可，凭据不参与比对。离线发布、未确认�
 玩家关闭游戏后，在 Manager「游戏功能」中选择客户端，点击「导入配置包」。Manager 使用内置的安装器，
 不会运行 ZIP 里自带的脚本。也可以离线安装：
 
+生成的包包含与目录配对的 `blueprint-availability.json`／`.bin`，以及最终的框架依赖和配置声明。
+这些文件随正常安装校验，不需要手改 Manager 临时目录或扩展安装白名单。
+遇到旧版安装器拒绝合法可用性文件时，更新 Manager 后重新生成并安装；不要删掉文件来绕过检查。
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Install-UnitCatalog.ps1 -ClientRoot D:/Game
 ```

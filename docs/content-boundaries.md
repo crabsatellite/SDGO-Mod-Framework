@@ -33,11 +33,11 @@ runtime packages are different artifacts:
 | `.opack` | `operator-pack.json`, `sdgo.operator-pack`; [operator pack preview](operator-pack-protocol.md#assemble-a-neutral-sharing-package) | Draft first; server, client, ability activation and optional shop steps remain separate. |
 | Map authoring folder | `map.json`, `sdgo.map-package`; [Map Import](map-import.md#a-minimal-example-without-existing-map-artwork) | Register, compile, install client, check/apply server. |
 | Capsule semantic JSON | `units`, `fixed_machines`, `custom_machines`; [capsule editor](capsule-catalog.md#example-a-fictional-training-pool-and-configuration-exchange) | Retain source identity/policy, compile and apply both sides. |
-| Shop JSON | `catalog_id`, `products`; [Shop](shop-catalog.md#example-sell-an-already-registered-training-unit) | Same-workspace draft import, explicit listing/apply; no model import. |
+| Shop JSON / author example ZIP | `catalog_id`, `products`; unzip a [typed example](../examples/shop/README.md), import `shop.json` in Shop | Same-workspace draft import, explicit listing/apply. Examples are disabled; no model import. |
 | AI grouping rules | `exclude`, `levels`, `templates`; [AI Catalog](ai-catalog.md) developer fields | Check current catalogs, generate/install one version on both sides; rules are not AI code. |
 | Mission `profile.bin` | Matching profile in [Mission Behavior](mission-behavior.md) | Validate the full client/Battle group, paired apply and required restart. |
 | `server-profile.json` / `profile-source.json` | [Owner profile/content update](owner-updates.md#example-deliver-fictional-training-content-offline) | Player resolves locks/downloads/hashes before installation; no server SQL execution. |
-| Generated player runtime ZIP | Select client under Game Features, **导入配置包** | Manifest/dependency/ownership checks. Renaming an author `.opack`, map folder or shop JSON does not make it a runtime package. |
+| Generated player runtime ZIP | Select client under Game Features, **导入配置包** | Manifest/dependency/ownership checks. Renaming an author `.opack`, map folder, shop JSON or `.shop-authoring.zip` does not make it a runtime package. |
 
 FRP uses its [generic endpoint example](frp-distribution.md). Posters, portraits and audio use their respective
 authoring tools' asset inputs. A single image, rule or native record does not create its referenced unit, offer,

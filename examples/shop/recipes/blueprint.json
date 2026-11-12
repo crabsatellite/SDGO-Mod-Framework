@@ -1,0 +1,11 @@
+{
+  "schema": "sdgo.shop-example-recipes/1",
+  "recipes": [
+    {
+      "key": "blueprint",
+      "name": "模板·设计图",
+      "category_kind": 15,
+      "time_limit": null
+    }
+  ]
+}

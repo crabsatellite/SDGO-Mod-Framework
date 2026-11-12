@@ -32,11 +32,11 @@ Manager 组合的是内容契约，不依赖某个服务器的完整客户端仓
 | `.opack` | 根 `operator-pack.json`，`sdgo.operator-pack`；[副官分享包预览](operator-pack-protocol.zh-CN.md#从零组合一个非敏感分享包) | 创建草稿后另做服务端、客户端、能力运行及可选商城操作 |
 | 地图制作文件夹 | 根 `map.json`，`sdgo.map-package`；[地图与任务导入](map-import.zh-CN.md#不依赖现成地图素材的最小案例) | 登记后编译，安装客户端并检查／应用服务端 |
 | 扭蛋语义 JSON | 含 `units`、`fixed_machines`、`custom_machines`；[扭蛋机编辑器](capsule-catalog.zh-CN.md#新增训练机池并交换配置) | 保留来源身份与候选规则，编译并应用两端 |
-| 商城配置 JSON | 含 `catalog_id`、`products`；[商城商品](shop-catalog.zh-CN.md#销售一台已登记的训练机) | 同工作区导入草稿，再明确上架并应用；不导入模型 |
+| 商城配置 JSON／作者样例 ZIP | 含 `catalog_id`、`products`；[逐类模板](../examples/shop/README.zh-CN.md)解压后在“商城商品”导入 `shop.json` | 同工作区导入草稿，再明确上架并应用；样例默认未启用，不导入模型 |
 | AI 分级规则 JSON | `exclude`、`levels`、`templates`；[AI 机体清单](ai-catalog.zh-CN.md)的开发信息 | 对当前目录检查、生成并把同版目录安装到两端；规则不是 AI 程序 |
 | 任务行为 `profile.bin` | [任务行为](mission-behavior.zh-CN.md)页面导入匹配 profile | 预检完整客户端／Battle 组，配对应用并按提示重启 |
 | `server-profile.json` / `profile-source.json` | [服主配置与内容更新](owner-updates.zh-CN.md#用离线目录交付训练内容) | 玩家解析版本锁、下载和校验，再安装；不执行服务端 SQL |
-| 工具生成的玩家运行 ZIP | “游戏功能”中选择目标客户端，点击“导入配置包” | 检查清单、依赖及文件归属；原始 `.opack`、地图文件夹和商城 JSON 不能改名后放进此入口 |
+| 工具生成的玩家运行 ZIP | “游戏功能”中选择目标客户端，点击“导入配置包” | 检查清单、依赖及文件归属；原始 `.opack`、地图文件夹、商城 JSON 或 `.shop-authoring.zip` 不能改名后放进此入口 |
 
 FRP 端点使用[连接配置示例](frp-distribution.zh-CN.md)，海报、头像和音频则使用各自作者工具的素材入口。
 单张图、单份规则或单个原生记录不会隐式创建它引用的机体、商品、任务或数据库定义。

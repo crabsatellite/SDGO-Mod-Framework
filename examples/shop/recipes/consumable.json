@@ -1,0 +1,11 @@
+{
+  "schema": "sdgo.shop-example-recipes/1",
+  "recipes": [
+    {
+      "key": "consumable",
+      "name": "模板·消耗品",
+      "category_kind": 22,
+      "time_limit": null
+    }
+  ]
+}

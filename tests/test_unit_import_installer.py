@@ -14,6 +14,99 @@ ROOT=Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which('pwsh'),'PowerShell is required for installer checks')
 class InstallerResourceTests(unittest.TestCase):
+    def test_symbol_comparison_accepts_native_ini_spacing_but_rejects_changed_definitions(self):
+        script=r'''
+param([string]$Installer,[string]$InputPath)
+$ErrorActionPreference='Stop'
+$ast=[Management.Automation.Language.Parser]::ParseFile($Installer,[ref]$null,[ref]$null)
+foreach($f in $ast.FindAll({param($a) $a -is [Management.Automation.Language.FunctionDefinitionAst]},$true)){
+ if($f.Name -in @('Get-IniSection','Get-NormalizedSection')){Invoke-Expression $f.Extent.Text}
+}
+$spec=Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json
+$left=Get-IniSection $spec.left 'unit_catalog.load_last_table'
+$right=Get-IniSection $spec.right 'unit_catalog.load_last_table'
+$equal=(Get-NormalizedSection $left) -ceq (Get-NormalizedSection $right)
+if($equal -ne $spec.expected){throw 'Symbol equivalence differs'}
+'''
+        native=(ROOT/'symbols/GOnline-54BE1568-00C97000.ini').read_text(encoding='utf-8-sig')
+        fragment=(ROOT/'mods/unit_catalog/symbols.fragment.ini').read_text(encoding='utf-8-sig')
+        left='[unit_catalog.load_last_table]\nkind = code\nrva = 0x00017EF0\nexpect = 55 8B EC\n'
+        right='[unit_catalog.load_last_table]\n; neutral comment\nexpect=55 8B EC\nrva=0x00017EF0\nkind=code\n'
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);runner=root/'symbols.ps1';runner.write_text(script,encoding='utf-8');spec=root/'input.json'
+            def run(a,b,expected):
+                spec.write_text(json.dumps({'left':a,'right':b,'expected':expected}),encoding='utf-8')
+                return subprocess.run(['pwsh','-NoProfile','-File',str(runner),'-Installer',str(ROOT/'tools/install_unit_catalog.ps1'),
+                    '-InputPath',str(spec)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
+            for a,b,equal in ((native,fragment,True),(left,right,True),(left,right.replace('0x00017EF0','0x00017EF1'),False),
+                              (left,right.replace('55 8B EC','55 8B ED'),False)):
+                result=run(a,b,equal);self.assertEqual(0,result.returncode,result.stdout+result.stderr)
+            duplicate=run(left,right+'kind=code\n',False)
+            self.assertNotEqual(0,duplicate.returncode);self.assertIn('Duplicate or empty symbol key',duplicate.stderr)
+
+    def test_full_package_reader_accepts_availability_and_keeps_hash_and_path_guards(self):
+        from owner.units import compiler,acquisition_sources
+        script=r'''
+param([string]$Installer,[string]$Package,[string]$Client)
+$ErrorActionPreference='Stop'
+Set-StrictMode -Version Latest
+$ast=[Management.Automation.Language.Parser]::ParseFile($Installer,[ref]$null,[ref]$null)
+foreach($statement in $ast.EndBlock.Statements){
+ if($statement -is [Management.Automation.Language.FunctionDefinitionAst]){Invoke-Expression $statement.Extent.Text}
+ if($statement -is [Management.Automation.Language.AssignmentStatementAst] -and
+    $statement.Left.VariablePath.UserPath -in @('RequiredModuleFiles','AllowedModuleFiles','AllowedResourceRoots','BlockedResourceExtensions')){
+  Invoke-Expression $statement.Extent.Text
+ }
+}
+$Module='unit_catalog'
+$ExpectedHost='GOnline-54BE1568-00C97000'
+$ExpectedHostSha256='e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92'
+$script:ResolvedClientRoot=$Client
+$result=Read-Package $Package
+@($result.copy | ForEach-Object {$_.target_relative}) | ConvertTo-Json
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);package=root/'package';module=package/'client/sdgo/mods/unit_catalog'
+            module.mkdir(parents=True);client=root/'client';client.mkdir()
+            runner=root/'read-package.ps1';runner.write_text(script,encoding='utf-8')
+            record=bytearray(1132);struct.pack_into('<I',record,0,9901001)
+            catalog=compiler.native_catalog([(13,9901001,bytes(record))])
+            zdx,zpk,_=build_archive({'mdrs/fixture.mod':b'author fixture'},lambda _:True)
+            sha=lambda raw:hashlib.sha256(raw).hexdigest()
+            fragment=b'[host]\ntimestamp=0x54BE1568\nsize_of_image=0x00C97000\n[unit_catalog.load_last_table]\nrva=1\n'
+            availability={'schema_version':1,'provider':'unit_catalog','revision':'fixture','blueprints':{}}
+            files={'unit_catalog.dll':b'fixture program','mod.ini':compiler._runtime_manifest((ROOT/'mods/unit_catalog/mod.ini').read_bytes()),
+                'catalog.bin':catalog,'definitions.json':b'{}','resources.zdx':zdx,'resources.zpk':zpk,
+                'symbols.fragment.ini':fragment,
+                'resource-overlay.ini':('[runtime]\nschema=1\nindex=resources.zdx\nindex_sha256='+sha(zdx)+
+                    '\narchive=resources.zpk\narchive_sha256='+sha(zpk)+'\n').encode(),
+                'blueprint-availability.json':json.dumps(availability).encode(),
+                'blueprint-availability.bin':acquisition_sources.encode_availability(availability,struct.unpack_from('<I',catalog,24)[0])}
+            for name,data in files.items():(module/name).write_bytes(data)
+            (package/'symbols.fragment.ini').write_bytes(fragment)
+            def manifest():
+                values={'client/sdgo/mods/unit_catalog/'+name:sha(path.read_bytes()) for path in module.iterdir() if path.is_file() for name in [path.name]}
+                values['symbols.fragment.ini']=sha(fragment)
+                result={'module':'unit_catalog','schema_version':1,'revision':'fixture','host':compiler.HOST,'host_sha256':compiler.HOST_SHA256,
+                    'owned_paths':[],'resource_overlay':{'schema':1,'paths':['mdrs/fixture.mod']},'files':values}
+                (package/'manifest.json').write_text(json.dumps(result),encoding='utf-8')
+            def run():
+                return subprocess.run(['pwsh','-NoProfile','-File',str(runner),'-Installer',str(ROOT/'tools/install_unit_catalog.ps1'),
+                    '-Package',str(package),'-Client',str(client)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
+            manifest();accepted=run()
+            self.assertEqual(0,accepted.returncode,accepted.stdout+accepted.stderr)
+            self.assertIn('blueprint-availability.bin',accepted.stdout)
+            self.assertIn('blueprint-availability.json',accepted.stdout)
+            (module/'blueprint-availability.bin').write_bytes(b'tampered')
+            rejected=run();self.assertNotEqual(0,rejected.returncode);self.assertIn('Package hash mismatch',rejected.stderr)
+            (module/'blueprint-availability.bin').write_bytes(files['blueprint-availability.bin'])
+            unexpected=module/'blueprint-availability-extra.bin';unexpected.write_bytes(b'not a supported sidecar')
+            manifest();rejected=run();self.assertNotEqual(0,rejected.returncode);self.assertIn('Unexpected file in unit_catalog runtime directory',rejected.stderr)
+            unexpected.unlink()
+            for name in ('blueprint-availability.json','blueprint-availability.bin'):(module/name).unlink()
+            manifest();legacy=run();self.assertEqual(0,legacy.returncode,legacy.stdout+legacy.stderr)
+            self.assertEqual([],list(client.iterdir()),'Package reading must not install files')
+
     def test_receipt_allows_only_pinned_user_setting_changes(self):
         import base64
         script=r'''

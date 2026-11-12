@@ -18,6 +18,11 @@ After a successful apply, the selected client receives acquisition data for actu
 
 ## Example: sell an already registered Training Unit
 
+For target-resolved examples, use [four item classes and five authoring templates](../examples/shop/README.md):
+permanent/rental units, operators, blueprints and consumables. Recipes carry no server data. Generation inherits
+visible target terms, preserves existing offers and leaves every example disabled. Draft import, explicit listing
+and player display installation are separate operations.
+
 Assume the fictional unit and its permanent item category are already applied to the same database, with matching
 client models/icons. Refresh the item catalog, select that category, create “训练机使用权” with label “永久”,
 price `1000 GB`, `validity=1`, and save it unlisted. Manager allocates the product ID, SKU and native template.
@@ -35,6 +40,12 @@ an unlisted shop draft can be created. Registered imported units/operators/bluep
 templates; shop configuration does not create new game resources or multi-item bundles.
 
 ## Application and limits
+
+A listing claim needs product/subitem readback and the matching native client's real list and purchase preview.
+Configuration validation, SQL or image-preview success alone does not prove that chain. GameTest's
+`pages.shop.catalog` stock scope opens/cancels buy/gift previews and compares wallets/inventory; it does not
+purchase or deliver. See [the native testing guide](game-test.md) and do not describe a read-only preview as a
+completed purchase test.
 
 The WorldServer module (`548A86E3-0010C000`) starts disabled until configured and is installed once with
 the standalone `Install.ps1`. It updates only its own single-item offers in a transaction and keeps native
