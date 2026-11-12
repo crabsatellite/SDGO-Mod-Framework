@@ -1,0 +1,11 @@
+{
+  "schema": "sdgo.shop-example-recipes/1",
+  "recipes": [
+    {
+      "key": "unit-permanent",
+      "name": "模板·永久机体",
+      "category_kind": 11,
+      "time_limit": 0
+    }
+  ]
+}

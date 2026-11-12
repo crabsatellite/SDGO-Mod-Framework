@@ -1,0 +1,10 @@
+{
+  "schema": "sdgo.shop-example-recipes/1",
+  "recipes": [
+    {"key": "unit-permanent", "name": "模板·永久机体", "category_kind": 11, "time_limit": 0},
+    {"key": "unit-rental", "name": "模板·租赁机体", "category_kind": 11, "time_limit": 1},
+    {"key": "operator", "name": "模板·副官", "category_kind": 12, "time_limit": null},
+    {"key": "blueprint", "name": "模板·设计图", "category_kind": 15, "time_limit": null},
+    {"key": "consumable", "name": "模板·消耗品", "category_kind": 22, "time_limit": null}
+  ]
+}

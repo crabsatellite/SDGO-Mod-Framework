@@ -1,0 +1,11 @@
+{
+  "schema": "sdgo.shop-example-recipes/1",
+  "recipes": [
+    {
+      "key": "operator",
+      "name": "模板·副官",
+      "category_kind": 12,
+      "time_limit": null
+    }
+  ]
+}
