@@ -162,6 +162,10 @@ Colour textures (model base colour textures and terrain layer textures) may be P
 
 ### Named gates and bombardment targets
 
+![Native gate states](map-native-gate-demo.webp)
+
+The clip uses native mission cameras to show the gate closed during protection and open before the entry cinematic.
+
 Manager 1.16.27 and newer applies `enter.blocks` before an entry cinematic starts. Reusing a cinematic keeps each phase's gate state separate. Rebuild older mission packages to adopt this ordering.
 
 Map package v2 can register a model with collision as a named native object. Scripts use `id`; players see `block.name`. Keep internal codes out of display names. Compilation produces paired client definitions, terrain objects and server placement rows. The owner applies the plan and restarts World/Battle; player content installation does not execute SQL.

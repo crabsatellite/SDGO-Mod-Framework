@@ -92,7 +92,6 @@ def gate_transition(rows: list[dict], mission_id: int, expected_block: int | Non
                 and sample["ray_hits"] > 0
                 and sample["obbs"] + sample["spheres"] > 0
                 and sample["hp"] > 0
-                and sample["phase_observer"] == 1
             ):
                 closed = sample
             continue
@@ -105,9 +104,6 @@ def gate_transition(rows: list[dict], mission_id: int, expected_block: int | Non
             and sample["ray_hits"] == 0
             and sample["obbs"] == 0
             and sample["spheres"] == 0
-            and sample["phase_observer"] == 1
-            and sample["hide_count"] > closed["hide_count"]
-            and sample["last_action"] == 1
         ):
             return {"block": closed["block"], "closed": closed, "open": sample}
     return None

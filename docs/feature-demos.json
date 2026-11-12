@@ -178,9 +178,23 @@
       "id": "map-native-cutin",
       "path": "docs/map-native-cutin-demo.webp",
       "since": "1.16.23",
-      "mods": ["map_catalog"],
+      "mods": [
+        "map_catalog"
+      ],
       "title_zh": "导入任务：原生机体图片横幅",
       "title_en": "Imported missions: native unit illustration strip",
+      "guide_zh": "docs/map-import.zh-CN.md",
+      "guide_en": "docs/map-import.md"
+    },
+    {
+      "id": "map-native-gate",
+      "path": "docs/map-native-gate-demo.webp",
+      "since": "1.16.27",
+      "mods": [
+        "map_catalog"
+      ],
+      "title_zh": "导入任务：保护期间关门、过场前开放通道",
+      "title_en": "Imported mission: closed protection gate and open entry passage",
       "guide_zh": "docs/map-import.zh-CN.md",
       "guide_en": "docs/map-import.md"
     }

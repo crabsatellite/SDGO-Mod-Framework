@@ -46,6 +46,12 @@ class MissionCoopContracts(unittest.TestCase):
         unloaded = gate_row(elapsed_ms=2000, scenes=0, found=0, ray_hits=0, hp=0,
                             obbs=0, hide_count=3, last_action=1, last_object=2)
         self.assertIsNone(coop.gate_transition([rows[0], unloaded], 88072))
+        # The peer may have no Lua-authority diagnostics. The original native
+        # world query is still the direct passage/collision observation.
+        peer_closed = gate_row(phase_observer=0)
+        peer_open = gate_row(elapsed_ms=2000, found=0, ray_hits=0, hp=0, obbs=0,
+                             phase_observer=0, hide_count=0, last_action=0, last_object=0)
+        self.assertIsNotNone(coop.gate_transition([peer_closed, peer_open], 88072))
 
         invalid = (
             list(reversed(rows)),
@@ -53,7 +59,7 @@ class MissionCoopContracts(unittest.TestCase):
                                hp=0, obbs=0, hide_count=1, last_action=1, last_object=7001)],
             [gate_row(query_valid=0), rows[1]],
             [rows[0], gate_row(elapsed_ms=2000, found=0, ray_hits=0, hp=0, obbs=0,
-                               hide_count=1, last_action=0, last_object=7001)],
+                               hide_count=1, last_action=0, last_object=7001, query_valid=0)],
         )
         for candidate in invalid:
             with self.subTest(candidate=candidate):
