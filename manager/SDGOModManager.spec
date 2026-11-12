@@ -1,6 +1,7 @@
 # Build from the repository; all inputs are generic code/contracts, never owner state.
 from pathlib import Path
 import os
+import json
 import subprocess
 import sys
 from importlib import metadata
@@ -10,6 +11,14 @@ subprocess.run(
      '--source-path', str(root)],
     check=True,
 )
+sys.path.insert(0,str(root))
+from manager.configuration import render
+unit_template=Path(workpath)/'unit-catalog-template'/'mod.ini'
+unit_template.parent.mkdir(parents=True,exist_ok=True)
+unit_template.write_bytes(render(
+    (root/'mods/unit_catalog/mod.ini').read_bytes(),
+    json.loads((root/'mods/unit_catalog/manager.json').read_bytes()),
+))
 library = Path(os.environ['SDGO_MANAGER_SERVICES'])
 data = [(str(root/'manager/static'),'manager/static'),
         (os.environ.get('SDGO_MANAGER_METADATA',str(root/'manager/repository.json')),'manager'),
@@ -27,7 +36,7 @@ data = [(str(root/'manager/static'),'manager/static'),
         (str(root/'backend/install_ai_catalog_client.ps1'),'backend')]
 data += [(str(root/'tools/install_unit_catalog.ps1'),'tools'),
          (str(root/'mods/capsule_catalog/symbol-proposal.ini'),'mods/capsule_catalog'),
-         (str(root/'mods/unit_catalog/mod.ini'),'mods/unit_catalog'),
+         (str(unit_template),'mods/unit_catalog'),
          (str(root/'mods/unit_catalog/symbols.fragment.ini'),'mods/unit_catalog'),
          (str(root/'mods/unit_catalog/preview.symbols.fragment.ini'),'mods/unit_catalog'),
          (str(Path(os.environ['SDGO_UNIT_CATALOG_BINARY'])),'unit-import'),

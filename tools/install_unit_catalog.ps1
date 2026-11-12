@@ -42,6 +42,10 @@ $RequiredModuleFiles = @(
 $AllowedModuleFiles = $RequiredModuleFiles + @(
     'sdgo\mods\unit_catalog\manager.json',
     'sdgo\mods\unit_catalog\symbols.fragment.ini',
+    # Optional availability data generated with a unit publication. Older
+    # packages without these files remain installable.
+    'sdgo\mods\unit_catalog\blueprint-availability.json',
+    'sdgo\mods\unit_catalog\blueprint-availability.bin',
     # Optional sealed sidecars: native Lua program bundle (SDGOPR1) and skill atlases (SDGOAT1).
     'sdgo\mods\unit_catalog\native-programs.bin',
     'sdgo\mods\unit_catalog\skill-atlases.bin'
@@ -256,7 +260,22 @@ function Get-IniSection([string]$Text, [string]$Name) {
 
 function Get-NormalizedSection([string]$Text) {
     if ($null -eq $Text) { return $null }
-    return ($Text -replace "`r`n", "`n").Trim()
+    $name = $null; $values = @{}
+    foreach ($raw in ($Text -split "`r?`n")) {
+        $line = $raw.Trim()
+        if (-not $line -or $line.StartsWith(';') -or $line.StartsWith('#')) { continue }
+        if ($line -match '^\[([^\]]+)\]\s*(?:[;#].*)?$') {
+            if ($null -ne $name) { throw 'Symbol comparison expected one section' }
+            $name = $Matches[1].Trim().ToLowerInvariant()
+            continue
+        }
+        if ($null -eq $name -or $line -notmatch '^([^=]+)=(.*)$') { throw 'Invalid symbol section' }
+        $key = $Matches[1].Trim().ToLowerInvariant()
+        if (-not $key -or $values.ContainsKey($key)) { throw 'Duplicate or empty symbol key' }
+        $values[$key] = $Matches[2].Trim()
+    }
+    if ($null -eq $name) { throw 'Missing symbol section header' }
+    return ('[' + $name + "]`n" + (($values.Keys | Sort-Object | ForEach-Object { $_ + '=' + $values[$_] }) -join "`n"))
 }
 
 function Remove-IniSection([string]$Text, [string]$Name) {

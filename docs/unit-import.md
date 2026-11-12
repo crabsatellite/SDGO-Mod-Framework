@@ -313,6 +313,11 @@ upgrade, recompile cached capsule cards.
 
 ## Distribution
 
+Generated packages include catalog-bound `blueprint-availability.json`/`.bin` and final framework dependency/
+configuration declarations. Normal installation validates them; no temporary Manager file edits or local allowlist
+patches are needed. If an older installer rejects these supported sidecars, update Manager and regenerate/install
+the package instead of deleting the data to bypass validation.
+
 After confirmation, download the **玩家客户端包** (player client package) and the separate server plan. The client package
 contains the matching DLL, native records, resource archive, public definitions and installer, and no server
 passwords, player data, logs or full game files. It is for deployment only and cannot be imported as a source archive.

@@ -98,7 +98,7 @@
 |---|---|
 | [商城商品管理](docs/shop-catalog.zh-CN.md) <!-- catalog: `shop_catalog` --> | 在 Manager 中上架、改价、下架服主自己的商城商品（WorldServer） |
 | [扭蛋机编辑器](docs/capsule-catalog.zh-CN.md) <!-- catalog: `capsule_catalog` --> | 管理机台、奖池、价格和权重；图鉴自动显示有效获取途径和游戏机台号 |
-| [机体族导入](docs/unit-import.zh-CN.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入协议机体包或整套阵容，组合[自定义技能与图标](docs/unit-skill-import.zh-CN.md)，生成两端数据、图鉴和商城／扭蛋资源 |
+| [机体族导入](docs/unit-import.zh-CN.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 在 Mod Manager 导入协议机体包或整套阵容，组合[自定义技能与图标](docs/unit-skill-import.zh-CN.md)，生成并校验安装配套的两端数据、图鉴和商城／扭蛋资源 |
 | [地图与任务导入](docs/map-import.zh-CN.md) <!-- catalog: `map_catalog`, `map_catalog_server` --> | 在 Mod Manager 登记地图包和分阶段 PvE 任务；支持原生机体横幅、命名门板的碰撞开合、NPC 实际炮击目标、对话、过场、加载海报、边界线与掉落；保留任务原名，生成配对的客户端内容与服务端定义；附示例地图与 8 阶段任务 |
 | [副官与能力管理](docs/operator-assistant.zh-CN.md) <!-- catalog: `operator_catalog`、`operator_catalog_server` --> | 在 Manager 编辑副官外观、能力、补给掉落和商城草稿，导入分享包并发布配套内容 |
 | [AI 机体目录（可选）](docs/ai-catalog.zh-CN.md) <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 |

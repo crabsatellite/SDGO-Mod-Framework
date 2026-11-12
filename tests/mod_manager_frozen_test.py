@@ -1,5 +1,6 @@
 """Launch the real self-contained EXE outside the checkout, without real game data."""
 import argparse
+import configparser
 import json
 import os
 from pathlib import Path
@@ -12,10 +13,31 @@ import urllib.request
 from frozen_process import stop_manager
 
 
+def check_unit_import_resources(executable):
+    """Inspect the shipped inputs, not a caller-patched extraction directory."""
+    from PyInstaller.archive.readers import CArchiveReader
+    archive=CArchiveReader(str(executable.resolve()))
+    def resource(name):
+        member=next((value for value in archive.toc if value.replace('\\','/')==name),None)
+        assert member is not None, 'Frozen Manager lacks '+name
+        return archive.extract(member)
+    script=resource('tools/install_unit_catalog.ps1').decode('utf-8-sig')
+    allowed=script.split('$AllowedModuleFiles =',1)[1].split('$AllowedResourceRoots',1)[0]
+    for leaf in ('blueprint-availability.json','blueprint-availability.bin'):
+        assert 'sdgo\\mods\\unit_catalog\\'+leaf in allowed, 'Frozen installer rejects '+leaf
+    template=configparser.ConfigParser(interpolation=None)
+    template.read_string(resource('mods/unit_catalog/mod.ini').decode('utf-8-sig'))
+    assert template['framework.dependencies']['schema']=='1'
+    names=set(template['framework.configuration']['files'].split(','))
+    assert {'mod.ini','catalog.bin','definitions.json','blueprint-availability.json','blueprint-availability.bin'}<=names
+    assert 'resources.zpk' not in names and 'unit_catalog.dll' not in names
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,required=True)
     parser.add_argument('--version',help='Expected embedded version for a versioned release')
     args=parser.parse_args()
+    check_unit_import_resources(args.exe)
     repo=Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix='sdgo-manager-exe-') as temporary:
         root=Path(temporary);state=root/'state';state.mkdir();client=root/'client';client.mkdir();(client/'GOnline.exe').write_bytes(b'fixture')
