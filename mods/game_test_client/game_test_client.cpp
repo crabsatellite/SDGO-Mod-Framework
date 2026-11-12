@@ -288,6 +288,7 @@ bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOn
 bool hangarPagesOnly = false;
 bool previewGuardOnly=false;
 bool storageGiftOnly=false;
+bool capsulePagesOnly=false;
 uint64_t giftOriginUid=0,giftPlainUid=0;
 HangarPreviewGuardFaultProbe previewGuardFaults;
 HangarPreviewGuardActions previewGuardActions;
@@ -565,11 +566,12 @@ bool LoadPlan() {
     wchar_t pageGroup[16]{};
     const auto pageGroupChars=GetPrivateProfileStringW(L"run",L"page_group",L"",pageGroup,16,job.c_str());
     if(pageGroupChars) {
-        if(pageGroupChars>=15 || (wcscmp(pageGroup,L"hangar")&&wcscmp(pageGroup,L"preview_guard")&&wcscmp(pageGroup,L"storage_gift")) ||
+        if(pageGroupChars>=15 || (wcscmp(pageGroup,L"hangar")&&wcscmp(pageGroup,L"preview_guard")&&wcscmp(pageGroup,L"storage_gift")&&wcscmp(pageGroup,L"capsule")) ||
            !pagesOnly || testShopCatalog || collectionDraw ||
            collectionPreviewOnly || testUnitPresentations || captureUnitPortraits || unitAcquisitionConfig.machine_kind)return false;
         storageGiftOnly=wcscmp(pageGroup,L"storage_gift")==0;
-        hangarPagesOnly=!storageGiftOnly;
+        capsulePagesOnly=wcscmp(pageGroup,L"capsule")==0;
+        hangarPagesOnly=!storageGiftOnly&&!capsulePagesOnly;
         previewGuardOnly=wcscmp(pageGroup,L"preview_guard")==0;
     }
     const auto hangarConfirmFlag=GetPrivateProfileIntW(L"run",L"hangar_confirm_gb",0,job.c_str());
@@ -6111,6 +6113,11 @@ void RegisterPlannedCases() {
     }
     if (pagesOnly) {
         plannedCases.assign(realCases,realCases+3);
+        if(capsulePagesOnly) {
+            plannedCases.push_back({"catalog.capsule",60000,&ReadCapsuleCatalog});
+            plannedCases.push_back({"pages.capsule.currency",60000,&ReadCapsuleCurrency});
+            provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+        }
         if(previewGuardOnly)plannedCases.insert(plannedCases.begin()+1,
             {"framework.special_target_guard",30000,&SpecialTargetGuardFlow});
         if(earlyNavigationTarget!=LoadingNavigationActions::kOff &&

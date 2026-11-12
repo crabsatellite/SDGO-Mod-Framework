@@ -31,6 +31,11 @@ def check_unit_import_resources(executable):
     names=set(template['framework.configuration']['files'].split(','))
     assert {'mod.ini','catalog.bin','definitions.json','blueprint-availability.json','blueprint-availability.bin'}<=names
     assert 'resources.zpk' not in names and 'unit_catalog.dll' not in names
+    capsule=json.loads(resource('manager/engines/capsules/resources/default-fixed.json'))
+    assert capsule['id']=='acquisition-defaults' and capsule['version']==1
+    assert len(capsule['fixed_machines'])==35
+    assert all(len(m['slots'])==6 and sum(s['weight'] for s in m['slots'])==1000
+               for m in capsule['fixed_machines'])
 
 
 def main():

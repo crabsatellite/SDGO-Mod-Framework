@@ -203,13 +203,16 @@ class Assets:
         self.reader = ClientData(client)
         self.catalog = catalog
         self.portrait_overrides = catalog.get("portrait_overrides", {})
-        source = dict(lookup) if isinstance(lookup,dict) else read_json(lookup)
+        from .capsule_presets import artwork_references
+        defaults = artwork_references(catalog)
+        source = (dict(lookup) if isinstance(lookup,dict)
+                  else read_json(lookup) if lookup is not None else {})
         if "units" in source:
             if source.get("zdx_sha256") != self.reader.index_hash:
                 raise ValueError("Unit sprite lookup does not match client index")
             source = source["units"]
-        self.lookup = source
-        if capsule_lookup is None and not isinstance(lookup,dict):
+        self.lookup = {**defaults, **source}
+        if capsule_lookup is None and lookup is not None and not isinstance(lookup,dict):
             candidate = Path(lookup).with_name("capsule_spr_lookup.json")
             capsule_lookup = candidate if candidate.is_file() else None
         capsule_source = read_json(capsule_lookup) if capsule_lookup else {}

@@ -154,12 +154,16 @@ async function loadBootstrap(selectAfter = null) {
   compileButton.disabled = !data.capabilities.compile;
   compileButton.title = data.capabilities.compile
     ? "生成独立版本化客户端 Overlay；不会自动安装"
-    : "启动 UI 时同时提供 --client 与 --lookup 后开放";
+    : "选择配套客户端目录后开放；默认模板自带资源引用";
   const applyButton = $("#apply-button");
   applyButton.disabled = !data.capabilities.apply;
   applyButton.title = data.capabilities.apply
     ? "将当前 revision 导入启动 UI 时预配置的客户端和服务端"
     : "启动 UI 时预配置安装客户端与框架目录后开放";
+  const presetNote = $("#default-preset-note");
+  if (presetNote) presetNote.textContent = data.default_preset?.status === "initialized"
+    ? "已载入默认补齐模板：原有 78 台＋新增 35 台。可直接修改并配套导入两端。"
+    : "内置 35 台补齐模板；已有配置保留，更新程序不会重置服主的奖池。";
   renderMachineList();
   if (selectAfter) {
     await selectMachine(selectAfter.kind, selectAfter.id, true);
@@ -1295,6 +1299,30 @@ function bindEvents() {
   $("#compile-button").addEventListener("click", compileOverlay);
   $("#apply-button").addEventListener("click", applyToGame);
   $("#initialize-button").addEventListener("click", initializeRoutes);
+  const defaults = document.createElement("button");
+  defaults.type = "button";
+  defaults.textContent = "恢复默认补齐模板（35 台）";
+  defaults.addEventListener("click", async () => {
+    if (!confirmDiscard() || !confirm("恢复这 35 台默认机的机体、价格和概率？原生机台、自定义机和其他作者内容保留。恢复后可继续编辑，再导入游戏。")) return;
+    try {
+      const result = await apiPost("/api/providers/capsules/api/presets/default", {expected_revision: state.revision});
+      state.revision = result.catalog_revision;
+      setDirty(false);
+      await loadBootstrap();
+      showToast("默认补齐模板已恢复，可继续编辑并导入游戏");
+    } catch (error) { showResult("默认模板未恢复", error.message); }
+  });
+  $("#initialize-button").after(defaults);
+  const presetNote = document.createElement("p");
+  presetNote.id = "default-preset-note";
+  $(".footer-status").append(presetNote);
+  const presetLayout = document.createElement("style");
+  presetLayout.textContent = `.footerbar {height:auto;min-height:90px;flex-wrap:wrap;gap:10px;padding:10px 18px}
+    .footerbar > div:first-child {flex:1 0 100%;width:100%}
+    .footer-status > div {flex-wrap:wrap}
+    .footer-actions {display:flex;flex-wrap:wrap;gap:8px;flex-shrink:1}
+    #default-preset-note {margin:3px 0;font-size:12px;color:var(--muted)}`;
+  shadow.append(presetLayout);
   $$("[data-close-dialog]").forEach((button) => {
     button.addEventListener("click", () => $(`#${button.dataset.closeDialog}`).close());
   });

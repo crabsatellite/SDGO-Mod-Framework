@@ -1,0 +1,2879 @@
+{
+  "schema_version": 1,
+  "id": "acquisition-defaults",
+  "version": 1,
+  "native_machine_count": 78,
+  "description": "35 editable fixed capsule pools supplement the existing 78 native pools. Data references only; no artwork or server-specific configuration.",
+  "units": [
+    {
+      "id": 10001,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\6247.spr",
+        "sprs\\6248.spr"
+      ]
+    },
+    {
+      "id": 10002,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\6249.spr",
+        "sprs\\6250.spr"
+      ]
+    },
+    {
+      "id": 10004,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\6251.spr",
+        "sprs\\6252.spr"
+      ]
+    },
+    {
+      "id": 10005,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6243.spr",
+        "sprs\\6244.spr"
+      ]
+    },
+    {
+      "id": 10007,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6275.spr",
+        "sprs\\6276.spr"
+      ]
+    },
+    {
+      "id": 10008,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6263.spr",
+        "sprs\\6264.spr"
+      ]
+    },
+    {
+      "id": 10009,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6287.spr",
+        "sprs\\6288.spr"
+      ]
+    },
+    {
+      "id": 10010,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6364.spr",
+        "sprs\\6365.spr"
+      ]
+    },
+    {
+      "id": 10014,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\6289.spr",
+        "sprs\\6290.spr"
+      ]
+    },
+    {
+      "id": 10015,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\6408.spr",
+        "sprs\\6409.spr"
+      ]
+    },
+    {
+      "id": 10016,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6311.spr",
+        "sprs\\6312.spr"
+      ]
+    },
+    {
+      "id": 10017,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6340.spr",
+        "sprs\\6341.spr"
+      ]
+    },
+    {
+      "id": 10018,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\6265.spr",
+        "sprs\\6266.spr"
+      ]
+    },
+    {
+      "id": 10019,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6328.spr",
+        "sprs\\6329.spr"
+      ]
+    },
+    {
+      "id": 10022,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6253.spr",
+        "sprs\\6254.spr"
+      ]
+    },
+    {
+      "id": 10030,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6394.spr",
+        "sprs\\6395.spr"
+      ]
+    },
+    {
+      "id": 10031,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6424.spr",
+        "sprs\\6425.spr"
+      ]
+    },
+    {
+      "id": 10032,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6745.spr",
+        "sprs\\6746.spr"
+      ]
+    },
+    {
+      "id": 10033,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6412.spr",
+        "sprs\\6413.spr"
+      ]
+    },
+    {
+      "id": 10034,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6904.spr",
+        "sprs\\6905.spr"
+      ]
+    },
+    {
+      "id": 10037,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\6749.spr",
+        "sprs\\6750.spr"
+      ]
+    },
+    {
+      "id": 10038,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\7250.spr",
+        "sprs\\7251.spr"
+      ]
+    },
+    {
+      "id": 10041,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\7400.spr",
+        "sprs\\7401.spr"
+      ]
+    },
+    {
+      "id": 10044,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\9028.spr",
+        "sprs\\9029.spr"
+      ]
+    },
+    {
+      "id": 10053,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\8591.spr",
+        "sprs\\8592.spr"
+      ]
+    },
+    {
+      "id": 10059,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\9694.spr",
+        "sprs\\9695.spr"
+      ]
+    },
+    {
+      "id": 10065,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\9528.spr",
+        "sprs\\9529.spr"
+      ]
+    },
+    {
+      "id": 10066,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\9696.spr",
+        "sprs\\9697.spr"
+      ]
+    },
+    {
+      "id": 10067,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\9698.spr",
+        "sprs\\9699.spr"
+      ]
+    },
+    {
+      "id": 10070,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\9700.spr",
+        "sprs\\9701.spr"
+      ]
+    },
+    {
+      "id": 10071,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\9879.spr",
+        "sprs\\9880.spr"
+      ]
+    },
+    {
+      "id": 10076,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\10315.spr",
+        "sprs\\10316.spr"
+      ]
+    },
+    {
+      "id": 10078,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\10593.spr",
+        "sprs\\10594.spr"
+      ]
+    },
+    {
+      "id": 10084,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\11741.spr",
+        "sprs\\11742.spr"
+      ]
+    },
+    {
+      "id": 10085,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\12075.spr",
+        "sprs\\12076.spr"
+      ]
+    },
+    {
+      "id": 10086,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\12500.spr",
+        "sprs\\12501.spr"
+      ]
+    },
+    {
+      "id": 10090,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\12575.spr",
+        "sprs\\12576.spr"
+      ]
+    },
+    {
+      "id": 10091,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\12678.spr",
+        "sprs\\12679.spr"
+      ]
+    },
+    {
+      "id": 10092,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\12729.spr",
+        "sprs\\12730.spr"
+      ]
+    },
+    {
+      "id": 10095,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\13256.spr",
+        "sprs\\13257.spr"
+      ]
+    },
+    {
+      "id": 10099,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\13789.spr",
+        "sprs\\13790.spr"
+      ]
+    },
+    {
+      "id": 10101,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\14132.spr",
+        "sprs\\14133.spr"
+      ]
+    },
+    {
+      "id": 10113,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\18866.spr",
+        "sprs\\18867.spr"
+      ]
+    },
+    {
+      "id": 10119,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\18864.spr",
+        "sprs\\18865.spr"
+      ]
+    },
+    {
+      "id": 10121,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\19013.spr",
+        "sprs\\19014.spr"
+      ]
+    },
+    {
+      "id": 10125,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\19456.spr",
+        "sprs\\19457.spr"
+      ]
+    },
+    {
+      "id": 10130,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20065.spr",
+        "sprs\\20066.spr"
+      ]
+    },
+    {
+      "id": 10132,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\20067.spr",
+        "sprs\\20068.spr"
+      ]
+    },
+    {
+      "id": 10200,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\20289.spr",
+        "sprs\\20290.spr"
+      ]
+    },
+    {
+      "id": 10202,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20291.spr",
+        "sprs\\20292.spr"
+      ]
+    },
+    {
+      "id": 10203,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\20293.spr",
+        "sprs\\20294.spr"
+      ]
+    },
+    {
+      "id": 10208,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\20615.spr",
+        "sprs\\20616.spr"
+      ]
+    },
+    {
+      "id": 10210,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\20617.spr",
+        "sprs\\20618.spr"
+      ]
+    },
+    {
+      "id": 10218,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\20863.spr",
+        "sprs\\20864.spr"
+      ]
+    },
+    {
+      "id": 10219,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20865.spr",
+        "sprs\\20866.spr"
+      ]
+    },
+    {
+      "id": 10231,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\21175.spr",
+        "sprs\\21176.spr"
+      ]
+    },
+    {
+      "id": 10244,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\21508.spr",
+        "sprs\\21509.spr"
+      ]
+    },
+    {
+      "id": 11003,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6299.spr",
+        "sprs\\6300.spr"
+      ]
+    },
+    {
+      "id": 11004,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6342.spr",
+        "sprs\\6343.spr"
+      ]
+    },
+    {
+      "id": 11007,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6239.spr",
+        "sprs\\6240.spr"
+      ]
+    },
+    {
+      "id": 11008,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6257.spr",
+        "sprs\\6258.spr"
+      ]
+    },
+    {
+      "id": 11010,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6293.spr",
+        "sprs\\6294.spr"
+      ]
+    },
+    {
+      "id": 11012,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6317.spr",
+        "sprs\\6318.spr"
+      ]
+    },
+    {
+      "id": 11013,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\6448.spr",
+        "sprs\\6449.spr"
+      ]
+    },
+    {
+      "id": 11014,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6301.spr",
+        "sprs\\6302.spr"
+      ]
+    },
+    {
+      "id": 11016,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\6450.spr",
+        "sprs\\6451.spr"
+      ]
+    },
+    {
+      "id": 11022,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6319.spr",
+        "sprs\\6320.spr"
+      ]
+    },
+    {
+      "id": 11025,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6354.spr",
+        "sprs\\6355.spr"
+      ]
+    },
+    {
+      "id": 11031,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6370.spr",
+        "sprs\\6371.spr"
+      ]
+    },
+    {
+      "id": 11034,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6414.spr",
+        "sprs\\6415.spr"
+      ]
+    },
+    {
+      "id": 11036,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\6426.spr",
+        "sprs\\6427.spr"
+      ]
+    },
+    {
+      "id": 11038,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\6906.spr",
+        "sprs\\6907.spr"
+      ]
+    },
+    {
+      "id": 11044,
+      "grade": "CU",
+      "unit_sprites": [
+        "sprs\\7535.spr",
+        "sprs\\7536.spr"
+      ]
+    },
+    {
+      "id": 11046,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\8717.spr",
+        "sprs\\8718.spr"
+      ]
+    },
+    {
+      "id": 11048,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\9286.spr",
+        "sprs\\9287.spr"
+      ]
+    },
+    {
+      "id": 11049,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\8924.spr",
+        "sprs\\8925.spr"
+      ]
+    },
+    {
+      "id": 11062,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\11723.spr",
+        "sprs\\11724.spr"
+      ]
+    },
+    {
+      "id": 11077,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\13972.spr",
+        "sprs\\13973.spr"
+      ]
+    },
+    {
+      "id": 11081,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\15419.spr",
+        "sprs\\15420.spr"
+      ]
+    },
+    {
+      "id": 11082,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\15684.spr",
+        "sprs\\15685.spr"
+      ]
+    },
+    {
+      "id": 11090,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\16166.spr",
+        "sprs\\16167.spr"
+      ]
+    },
+    {
+      "id": 11099,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\19164.spr",
+        "sprs\\19165.spr"
+      ]
+    },
+    {
+      "id": 11100,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\19102.spr",
+        "sprs\\19103.spr"
+      ]
+    },
+    {
+      "id": 12003,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6267.spr",
+        "sprs\\6268.spr"
+      ]
+    },
+    {
+      "id": 12005,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6334.spr",
+        "sprs\\6335.spr"
+      ]
+    },
+    {
+      "id": 12007,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\6452.spr",
+        "sprs\\6453.spr"
+      ]
+    },
+    {
+      "id": 12019,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\7537.spr",
+        "sprs\\7538.spr"
+      ]
+    },
+    {
+      "id": 12021,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\7246.spr",
+        "sprs\\7247.spr"
+      ]
+    },
+    {
+      "id": 13003,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6241.spr",
+        "sprs\\6242.spr"
+      ]
+    },
+    {
+      "id": 13004,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6271.spr",
+        "sprs\\6272.spr"
+      ]
+    },
+    {
+      "id": 13005,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\6454.spr",
+        "sprs\\6455.spr"
+      ]
+    },
+    {
+      "id": 13007,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6358.spr",
+        "sprs\\6359.spr"
+      ]
+    },
+    {
+      "id": 13008,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6348.spr",
+        "sprs\\6349.spr"
+      ]
+    },
+    {
+      "id": 13009,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\6456.spr",
+        "sprs\\6457.spr"
+      ]
+    },
+    {
+      "id": 13018,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6398.spr",
+        "sprs\\6399.spr"
+      ]
+    },
+    {
+      "id": 13033,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\11492.spr",
+        "sprs\\11493.spr"
+      ]
+    },
+    {
+      "id": 13036,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\14126.spr",
+        "sprs\\14127.spr"
+      ]
+    },
+    {
+      "id": 13046,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\19104.spr",
+        "sprs\\19105.spr"
+      ]
+    },
+    {
+      "id": 14001,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6259.spr",
+        "sprs\\6260.spr"
+      ]
+    },
+    {
+      "id": 14005,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6360.spr",
+        "sprs\\6361.spr"
+      ]
+    },
+    {
+      "id": 14016,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\12362.spr",
+        "sprs\\12363.spr"
+      ]
+    },
+    {
+      "id": 14026,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\14128.spr",
+        "sprs\\14129.spr"
+      ]
+    },
+    {
+      "id": 15004,
+      "grade": "C",
+      "unit_sprites": [
+        "sprs\\6229.spr",
+        "sprs\\6230.spr"
+      ]
+    },
+    {
+      "id": 15050,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\10397.spr",
+        "sprs\\10398.spr"
+      ]
+    },
+    {
+      "id": 15054,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\11560.spr",
+        "sprs\\11561.spr"
+      ]
+    },
+    {
+      "id": 15055,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\11743.spr",
+        "sprs\\11744.spr"
+      ]
+    },
+    {
+      "id": 15066,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\13520.spr",
+        "sprs\\13521.spr"
+      ]
+    },
+    {
+      "id": 15085,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\18340.spr",
+        "sprs\\18341.spr"
+      ]
+    },
+    {
+      "id": 15086,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\18742.spr",
+        "sprs\\18743.spr"
+      ]
+    },
+    {
+      "id": 15089,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\19166.spr",
+        "sprs\\19167.spr"
+      ]
+    },
+    {
+      "id": 15094,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\19468.spr",
+        "sprs\\19469.spr"
+      ]
+    },
+    {
+      "id": 15102,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\20295.spr",
+        "sprs\\20296.spr"
+      ]
+    },
+    {
+      "id": 15103,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20447.spr",
+        "sprs\\20448.spr"
+      ]
+    },
+    {
+      "id": 15109,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20619.spr",
+        "sprs\\20620.spr"
+      ]
+    },
+    {
+      "id": 15114,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\21050.spr",
+        "sprs\\21051.spr"
+      ]
+    },
+    {
+      "id": 15115,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\21296.spr",
+        "sprs\\21297.spr"
+      ]
+    },
+    {
+      "id": 15121,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\21718.spr",
+        "sprs\\21719.spr"
+      ]
+    },
+    {
+      "id": 17081,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\17017.spr",
+        "sprs\\17018.spr"
+      ]
+    },
+    {
+      "id": 17083,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\18342.spr",
+        "sprs\\18343.spr"
+      ]
+    },
+    {
+      "id": 17086,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\21784.spr",
+        "sprs\\21785.spr"
+      ]
+    },
+    {
+      "id": 18001,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\7942.spr",
+        "sprs\\7943.spr"
+      ]
+    },
+    {
+      "id": 18002,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\7944.spr",
+        "sprs\\7945.spr"
+      ]
+    },
+    {
+      "id": 18003,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\7946.spr",
+        "sprs\\7947.spr"
+      ]
+    },
+    {
+      "id": 18004,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\12208.spr",
+        "sprs\\12209.spr"
+      ]
+    },
+    {
+      "id": 18005,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\8826.spr",
+        "sprs\\8827.spr"
+      ]
+    },
+    {
+      "id": 18006,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\8347.spr",
+        "sprs\\8348.spr"
+      ]
+    },
+    {
+      "id": 18007,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\8349.spr",
+        "sprs\\8350.spr"
+      ]
+    },
+    {
+      "id": 18018,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\13797.spr",
+        "sprs\\13798.spr"
+      ]
+    },
+    {
+      "id": 18020,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\14284.spr",
+        "sprs\\14285.spr"
+      ]
+    },
+    {
+      "id": 18024,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\16032.spr",
+        "sprs\\16033.spr"
+      ]
+    },
+    {
+      "id": 18025,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\17620.spr",
+        "sprs\\17621.spr"
+      ]
+    },
+    {
+      "id": 18027,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\18662.spr",
+        "sprs\\18663.spr"
+      ]
+    },
+    {
+      "id": 18028,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20150.spr",
+        "sprs\\20151.spr"
+      ]
+    },
+    {
+      "id": 20032,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\19311.spr",
+        "sprs\\19312.spr"
+      ]
+    },
+    {
+      "id": 20033,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\19574.spr",
+        "sprs\\19575.spr"
+      ]
+    },
+    {
+      "id": 20036,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20741.spr",
+        "sprs\\20742.spr"
+      ]
+    },
+    {
+      "id": 21029,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\16733.spr",
+        "sprs\\16734.spr"
+      ]
+    },
+    {
+      "id": 21031,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\18652.spr",
+        "sprs\\18653.spr"
+      ]
+    },
+    {
+      "id": 22029,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\10399.spr",
+        "sprs\\10400.spr"
+      ]
+    },
+    {
+      "id": 22050,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\11296.spr",
+        "sprs\\11297.spr"
+      ]
+    },
+    {
+      "id": 22053,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\11380.spr",
+        "sprs\\11381.spr"
+      ]
+    },
+    {
+      "id": 22072,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\12502.spr",
+        "sprs\\12503.spr"
+      ]
+    },
+    {
+      "id": 22121,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\18656.spr",
+        "sprs\\18657.spr"
+      ]
+    },
+    {
+      "id": 22126,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\19570.spr",
+        "sprs\\19571.spr"
+      ]
+    },
+    {
+      "id": 22127,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\19895.spr",
+        "sprs\\19896.spr"
+      ]
+    },
+    {
+      "id": 22131,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20061.spr",
+        "sprs\\20062.spr"
+      ]
+    },
+    {
+      "id": 22132,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\20063.spr",
+        "sprs\\20064.spr"
+      ]
+    },
+    {
+      "id": 22137,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20445.spr",
+        "sprs\\20446.spr"
+      ]
+    },
+    {
+      "id": 23024,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\19576.spr",
+        "sprs\\19577.spr"
+      ]
+    },
+    {
+      "id": 24033,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\21716.spr",
+        "sprs\\21717.spr"
+      ]
+    },
+    {
+      "id": 24210,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\21647.spr",
+        "sprs\\21648.spr"
+      ]
+    },
+    {
+      "id": 24405,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\15700.spr",
+        "sprs\\15701.spr"
+      ]
+    },
+    {
+      "id": 24413,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\19462.spr",
+        "sprs\\19463.spr"
+      ]
+    },
+    {
+      "id": 24416,
+      "grade": "B",
+      "unit_sprites": [
+        "sprs\\19572.spr",
+        "sprs\\19573.spr"
+      ]
+    },
+    {
+      "id": 24421,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\20449.spr",
+        "sprs\\20450.spr"
+      ]
+    },
+    {
+      "id": 24422,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20451.spr",
+        "sprs\\20452.spr"
+      ]
+    },
+    {
+      "id": 24425,
+      "grade": "CR",
+      "unit_sprites": [
+        "sprs\\21510.spr",
+        "sprs\\21511.spr"
+      ]
+    },
+    {
+      "id": 24601,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\16737.spr",
+        "sprs\\16738.spr"
+      ]
+    },
+    {
+      "id": 24605,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\21177.spr",
+        "sprs\\21178.spr"
+      ]
+    },
+    {
+      "id": 24702,
+      "grade": "BR",
+      "unit_sprites": [
+        "sprs\\20297.spr",
+        "sprs\\20298.spr"
+      ]
+    },
+    {
+      "id": 24712,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20745.spr",
+        "sprs\\20746.spr"
+      ]
+    },
+    {
+      "id": 24713,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\20867.spr",
+        "sprs\\20868.spr"
+      ]
+    },
+    {
+      "id": 24716,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\21052.spr",
+        "sprs\\21053.spr"
+      ]
+    },
+    {
+      "id": 24720,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\21179.spr",
+        "sprs\\21180.spr"
+      ]
+    },
+    {
+      "id": 24722,
+      "grade": "A",
+      "unit_sprites": [
+        "sprs\\21298.spr",
+        "sprs\\21299.spr"
+      ]
+    },
+    {
+      "id": 24725,
+      "grade": "AR",
+      "unit_sprites": [
+        "sprs\\21506.spr",
+        "sprs\\21507.spr"
+      ]
+    }
+  ],
+  "fixed_machines": [
+    {
+      "id": 7901,
+      "name": "补齐扭蛋 01",
+      "price": 7500,
+      "template_id": 5401,
+      "slots": [
+        {
+          "unit_id": 10059,
+          "weight": 60,
+          "native_draw_group": 3,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 10067,
+          "weight": 80,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10070,
+          "weight": 160,
+          "native_draw_group": 3,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 10001,
+          "weight": 233,
+          "native_draw_group": 3,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10091,
+          "weight": 233,
+          "native_draw_group": 3,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 18020,
+          "weight": 234,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8001,
+      "name": "补齐扭蛋 02",
+      "price": 7500,
+      "template_id": 7101,
+      "slots": [
+        {
+          "unit_id": 10101,
+          "weight": 60,
+          "native_draw_group": 3,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 10132,
+          "weight": 80,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10200,
+          "weight": 160,
+          "native_draw_group": 3,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 10004,
+          "weight": 233,
+          "native_draw_group": 3,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 18024,
+          "weight": 233,
+          "native_draw_group": 3,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 18025,
+          "weight": 234,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8101,
+      "name": "补齐扭蛋 03",
+      "price": 1400,
+      "template_id": 1701,
+      "slots": [
+        {
+          "unit_id": 10066,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 18027,
+          "weight": 80,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10005,
+          "weight": 255,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 10203,
+          "weight": 255,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 250,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10113,
+          "weight": 140,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8201,
+      "name": "补齐扭蛋 04",
+      "price": 1400,
+      "template_id": 1801,
+      "slots": [
+        {
+          "unit_id": 10119,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 24416,
+          "weight": 80,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10007,
+          "weight": 255,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11022,
+          "weight": 255,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10203,
+          "weight": 250,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10125,
+          "weight": 140,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8301,
+      "name": "补齐扭蛋 05",
+      "price": 1200,
+      "template_id": 1601,
+      "slots": [
+        {
+          "unit_id": 10121,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 11013,
+          "weight": 50,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10008,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 10095,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 305,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10208,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8401,
+      "name": "补齐扭蛋 06",
+      "price": 1200,
+      "template_id": 301,
+      "slots": [
+        {
+          "unit_id": 15066,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 11016,
+          "weight": 70,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10009,
+          "weight": 290,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 10086,
+          "weight": 290,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 11003,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10210,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8501,
+      "name": "补齐扭蛋 07",
+      "price": 1200,
+      "template_id": 901,
+      "slots": [
+        {
+          "unit_id": 17086,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 11046,
+          "weight": 70,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10010,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11004,
+          "weight": 290,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10086,
+          "weight": 290,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10231,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8601,
+      "name": "补齐扭蛋 08",
+      "price": 1200,
+      "template_id": 1001,
+      "slots": [
+        {
+          "unit_id": 18018,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 12007,
+          "weight": 70,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10016,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11007,
+          "weight": 290,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 290,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10244,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8701,
+      "name": "补齐扭蛋 09",
+      "price": 1200,
+      "template_id": 4301,
+      "slots": [
+        {
+          "unit_id": 11049,
+          "weight": 20,
+          "native_draw_group": 3,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 13005,
+          "weight": 80,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10037,
+          "weight": 250,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11008,
+          "weight": 250,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10203,
+          "weight": 260,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 11099,
+          "weight": 140,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8801,
+      "name": "补齐扭蛋 10",
+      "price": 1200,
+      "template_id": 1101,
+      "slots": [
+        {
+          "unit_id": 22053,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 13009,
+          "weight": 70,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10017,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11010,
+          "weight": 290,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10086,
+          "weight": 290,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 11100,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 8901,
+      "name": "补齐扭蛋 11",
+      "price": 1200,
+      "template_id": 1401,
+      "slots": [
+        {
+          "unit_id": 24413,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 13036,
+          "weight": 50,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10019,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11012,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 14016,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9001,
+      "name": "补齐扭蛋 12",
+      "price": 1200,
+      "template_id": 1601,
+      "slots": [
+        {
+          "unit_id": 10130,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 14026,
+          "weight": 50,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10022,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11014,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10203,
+          "weight": 305,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 15050,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9101,
+      "name": "补齐扭蛋 13",
+      "price": 14800,
+      "template_id": 3601,
+      "slots": [
+        {
+          "unit_id": 10202,
+          "weight": 50,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 10219,
+          "weight": 50,
+          "native_draw_group": 1,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10002,
+          "weight": 292,
+          "native_draw_group": 1,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 24722,
+          "weight": 292,
+          "native_draw_group": 1,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 11048,
+          "weight": 127,
+          "native_draw_group": 1,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 18004,
+          "weight": 189,
+          "native_draw_group": 1,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9201,
+      "name": "补齐扭蛋 14",
+      "price": 14800,
+      "template_id": 6801,
+      "slots": [
+        {
+          "unit_id": 13046,
+          "weight": 50,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 15103,
+          "weight": 50,
+          "native_draw_group": 1,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10014,
+          "weight": 127,
+          "native_draw_group": 1,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 22072,
+          "weight": 270,
+          "native_draw_group": 1,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 24405,
+          "weight": 270,
+          "native_draw_group": 1,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10066,
+          "weight": 233,
+          "native_draw_group": 1,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9301,
+      "name": "补齐扭蛋 15",
+      "price": 14800,
+      "template_id": 4901,
+      "slots": [
+        {
+          "unit_id": 10015,
+          "weight": 130,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 10119,
+          "weight": 130,
+          "native_draw_group": 1,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 11048,
+          "weight": 204,
+          "native_draw_group": 1,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 15066,
+          "weight": 248,
+          "native_draw_group": 1,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 17086,
+          "weight": 248,
+          "native_draw_group": 1,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 15109,
+          "weight": 40,
+          "native_draw_group": 1,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9401,
+      "name": "补齐扭蛋 16",
+      "price": 14800,
+      "template_id": 5301,
+      "slots": [
+        {
+          "unit_id": 18028,
+          "weight": 60,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 10018,
+          "weight": 120,
+          "native_draw_group": 1,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 18004,
+          "weight": 120,
+          "native_draw_group": 1,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 18018,
+          "weight": 240,
+          "native_draw_group": 1,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 22053,
+          "weight": 230,
+          "native_draw_group": 1,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 22072,
+          "weight": 230,
+          "native_draw_group": 1,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9501,
+      "name": "补齐扭蛋 17",
+      "price": 14800,
+      "template_id": 6301,
+      "slots": [
+        {
+          "unit_id": 20032,
+          "weight": 60,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 10044,
+          "weight": 120,
+          "native_draw_group": 1,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 24405,
+          "weight": 120,
+          "native_draw_group": 1,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 24413,
+          "weight": 240,
+          "native_draw_group": 1,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 24722,
+          "weight": 230,
+          "native_draw_group": 1,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10066,
+          "weight": 230,
+          "native_draw_group": 1,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9601,
+      "name": "补齐扭蛋 18",
+      "price": 1600,
+      "template_id": 6401,
+      "slots": [
+        {
+          "unit_id": 20036,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 15055,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10030,
+          "weight": 280,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11025,
+          "weight": 280,
+          "native_draw_group": 3,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10086,
+          "weight": 263,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 15086,
+          "weight": 140,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9701,
+      "name": "补齐扭蛋 19",
+      "price": 1600,
+      "template_id": 6901,
+      "slots": [
+        {
+          "unit_id": 21029,
+          "weight": 8,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 15089,
+          "weight": 30,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10031,
+          "weight": 210,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11031,
+          "weight": 310,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 292,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 21031,
+          "weight": 150,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9801,
+      "name": "补齐扭蛋 20",
+      "price": 1600,
+      "template_id": 7001,
+      "slots": [
+        {
+          "unit_id": 22050,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 15094,
+          "weight": 80,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10032,
+          "weight": 263,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11034,
+          "weight": 270,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10203,
+          "weight": 240,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 24425,
+          "weight": 140,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 9901,
+      "name": "补齐扭蛋 21",
+      "price": 1600,
+      "template_id": 3301,
+      "slots": [
+        {
+          "unit_id": 22121,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 15054,
+          "weight": 74,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 11062,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 10038,
+          "weight": 280,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10086,
+          "weight": 305,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 15102,
+          "weight": 30,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10001,
+      "name": "补齐扭蛋 22",
+      "price": 1600,
+      "template_id": 3701,
+      "slots": [
+        {
+          "unit_id": 22127,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 15085,
+          "weight": 74,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 11077,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 10041,
+          "weight": 280,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 305,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 15114,
+          "weight": 30,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10101,
+      "name": "补齐扭蛋 23",
+      "price": 1600,
+      "template_id": 6501,
+      "slots": [
+        {
+          "unit_id": 22131,
+          "weight": 10,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 10119,
+          "weight": 30,
+          "native_draw_group": 1,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10033,
+          "weight": 200,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 12003,
+          "weight": 350,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10203,
+          "weight": 340,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 15115,
+          "weight": 70,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10201,
+      "name": "补齐扭蛋 24",
+      "price": 1600,
+      "template_id": 2901,
+      "slots": [
+        {
+          "unit_id": 11048,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 18001,
+          "weight": 60,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10053,
+          "weight": 270,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 12005,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10086,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 15121,
+          "weight": 50,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10301,
+      "name": "补齐扭蛋 25",
+      "price": 1600,
+      "template_id": 3101,
+      "slots": [
+        {
+          "unit_id": 15066,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 18002,
+          "weight": 60,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 12019,
+          "weight": 270,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 10071,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 300,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 17081,
+          "weight": 50,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10401,
+      "name": "补齐扭蛋 26",
+      "price": 1600,
+      "template_id": 5601,
+      "slots": [
+        {
+          "unit_id": 17086,
+          "weight": 20,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 17083,
+          "weight": 80,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10078,
+          "weight": 260,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 12021,
+          "weight": 260,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10203,
+          "weight": 260,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10065,
+          "weight": 120,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10501,
+      "name": "补齐扭蛋 27",
+      "price": 1600,
+      "template_id": 3301,
+      "slots": [
+        {
+          "unit_id": 22137,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 18003,
+          "weight": 74,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 13003,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 10084,
+          "weight": 280,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10086,
+          "weight": 305,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 20033,
+          "weight": 30,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10601,
+      "name": "补齐扭蛋 28",
+      "price": 1600,
+      "template_id": 3701,
+      "slots": [
+        {
+          "unit_id": 23024,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 18005,
+          "weight": 74,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 13004,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11036,
+          "weight": 280,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 305,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 22029,
+          "weight": 30,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10701,
+      "name": "补齐扭蛋 29",
+      "price": 1600,
+      "template_id": 6401,
+      "slots": [
+        {
+          "unit_id": 24422,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 22126,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10034,
+          "weight": 280,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 13007,
+          "weight": 280,
+          "native_draw_group": 3,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10203,
+          "weight": 263,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 10099,
+          "weight": 140,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10801,
+      "name": "补齐扭蛋 30",
+      "price": 1600,
+      "template_id": 6501,
+      "slots": [
+        {
+          "unit_id": 24605,
+          "weight": 10,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 18004,
+          "weight": 30,
+          "native_draw_group": 1,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10076,
+          "weight": 200,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 13008,
+          "weight": 350,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10086,
+          "weight": 340,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 22132,
+          "weight": 70,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 10901,
+      "name": "补齐扭蛋 31",
+      "price": 1600,
+      "template_id": 6901,
+      "slots": [
+        {
+          "unit_id": 24712,
+          "weight": 8,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 24033,
+          "weight": 30,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10085,
+          "weight": 210,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 13018,
+          "weight": 310,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 292,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 11081,
+          "weight": 150,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 11001,
+      "name": "补齐扭蛋 32",
+      "price": 1600,
+      "template_id": 7001,
+      "slots": [
+        {
+          "unit_id": 24713,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 24210,
+          "weight": 80,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10090,
+          "weight": 263,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 13033,
+          "weight": 270,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10203,
+          "weight": 240,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 11082,
+          "weight": 140,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 11101,
+      "name": "补齐扭蛋 33",
+      "price": 1600,
+      "template_id": 3301,
+      "slots": [
+        {
+          "unit_id": 24716,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 18006,
+          "weight": 74,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 14001,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11038,
+          "weight": 280,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10086,
+          "weight": 305,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 24421,
+          "weight": 30,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 11201,
+      "name": "补齐扭蛋 34",
+      "price": 1600,
+      "template_id": 3701,
+      "slots": [
+        {
+          "unit_id": 24720,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 18007,
+          "weight": 74,
+          "native_draw_group": 3,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 14005,
+          "weight": 304,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 11044,
+          "weight": 280,
+          "native_draw_group": 5,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10218,
+          "weight": 305,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 24601,
+          "weight": 30,
+          "native_draw_group": 3,
+          "template_slot": 6
+        }
+      ]
+    },
+    {
+      "id": 11301,
+      "name": "补齐扭蛋 35",
+      "price": 1600,
+      "template_id": 6401,
+      "slots": [
+        {
+          "unit_id": 24725,
+          "weight": 7,
+          "native_draw_group": 1,
+          "template_slot": 1
+        },
+        {
+          "unit_id": 24702,
+          "weight": 30,
+          "native_draw_group": 5,
+          "template_slot": 2
+        },
+        {
+          "unit_id": 10092,
+          "weight": 280,
+          "native_draw_group": 5,
+          "template_slot": 3
+        },
+        {
+          "unit_id": 15004,
+          "weight": 280,
+          "native_draw_group": 3,
+          "template_slot": 4
+        },
+        {
+          "unit_id": 10203,
+          "weight": 263,
+          "native_draw_group": 5,
+          "template_slot": 5
+        },
+        {
+          "unit_id": 11090,
+          "weight": 140,
+          "native_draw_group": 5,
+          "template_slot": 6
+        }
+      ]
+    }
+  ]
+}

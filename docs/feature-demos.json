@@ -88,12 +88,12 @@
     {
       "id": "capsule-editor",
       "path": "docs/capsule-editor-demo.webp",
-      "since": "1.16.1",
+      "since": "1.16.29",
       "mods": [
         "capsule_catalog"
       ],
-      "title_zh": "扭蛋机编辑：修改名称、价格与权重并保存配置",
-      "title_en": "Capsule editor: save machine names, prices and weights",
+      "title_zh": "默认扭蛋模板：编辑、保存并恢复 35 台补齐奖池",
+      "title_en": "Default capsule templates: edit, save and restore 35 supplementary pools",
       "guide_zh": "docs/capsule-catalog.zh-CN.md",
       "guide_en": "docs/capsule-catalog.md"
     },

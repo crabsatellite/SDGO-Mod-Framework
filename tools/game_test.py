@@ -146,7 +146,7 @@ MISSION_CLAIM_FIELDS = (
     "mission_result_claim",
     "mission_active_exit_claim",
 )
-PAGE_GROUPS = ('hangar', 'preview_guard', 'storage_gift')
+PAGE_GROUPS = ('hangar', 'preview_guard', 'storage_gift', 'capsule')
 IGNORED_DIRECTORIES = {
     ".git",
     ".sdgo-updater",
@@ -2006,6 +2006,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES + imported + (('mission.respawn',) if mission_respawns else ())
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
+        if page_group == 'capsule':
+            return FLOW_CASES[:3] + ('catalog.capsule', 'pages.capsule.currency')
         if page_group == 'preview_guard':
             return FLOW_CASES[:1] + ('framework.special_target_guard',) + FLOW_CASES[1:3] + selection + ('pages.hangar.preview_guard',)
         if page_group == 'storage_gift':

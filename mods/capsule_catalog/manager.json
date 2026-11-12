@@ -10,7 +10,7 @@
   "settings": [],
   "presentation": "configurable",
   "provider": "capsules",
-  "description": "显示服主配置的扭蛋机和奖池，需要服主生成的配套资源。",
+  "description": "自带 35 台普通扭蛋补齐模板，首次配置自动生成并安装配套两端；服主可继续编辑奖池。",
   "configuration_files": [
     "runtime.ini"
   ],

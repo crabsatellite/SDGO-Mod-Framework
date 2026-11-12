@@ -4,13 +4,37 @@
 
 Change a machine’s name, price and pool weights, then save the configuration.
 
-![Capsule editor: save machine names, prices and weights](capsule-editor-demo.webp)
+![Default capsule templates: edit, save and restore 35 supplementary pools](capsule-editor-demo.webp)
 
 Owners manage fixed and custom capsule machines through the capsule panel in SDGO Mod Manager.
 Create, inspect, edit, retire, restore and reorder machines; choose native six-slot
 templates; set prices and weights; add or remove custom candidates; preview unit
 portraits; export and compile configuration; apply matching client and server data.
 Players keep the game's native capsule screens and normal launcher.
+
+## Built-in fixed-pool defaults
+
+The Mod includes 35 editable acquisition pools. For a first owner installation,
+select the matching client directory and server INI in Manager, leave the existing
+catalog JSON field blank, then save. Manager verifies the target definitions,
+retains the original 78 fixed pools, adds pools 79–113 and automatically compiles
+and applies the paired client display and server prices, prizes and weights.
+Players never run SQL. Imported custom units and activity machines are excluded.
+
+The default prices are 1200×8, 1400×2, 1600×18, 7500×2 and 14800×5. Each pool has
+six positive weights totaling 1000. Owners can edit the units, prices and weights,
+or export their configuration as an authoring template. Restore defaults resets
+only these 35 pools; native pools, custom capsules and unrelated author content
+remain. Apply the paired configuration after restoring. Programme upgrades never
+reset authored pools or re-enable retired ones.
+
+The bundled template contains numeric references and configuration, with no game
+artwork or original archives. First installation requires the matching 78-pool
+native baseline and registered, usable units with matching grades. Incompatible
+targets fail as a whole. A server with an existing Mod catalog must use its existing
+authoring JSON instead of first installation. Close the target game and server first.
+Installing player programmes alone cannot configure an owner's server; players
+continue to receive the server owner's client package or update.
 
 Publishing a catalog also derives the encyclopedia's activity and custom-capsule
 acquisition sources from active pools. Every positive unit reward in an activity

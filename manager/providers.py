@@ -196,10 +196,32 @@ class Operators(Provider):
 
 class Capsules(Provider):
     id, title = 'capsules', '扭蛋机'
-    fields = {'catalog': '现有扭蛋目录 JSON', 'patterns': '概率模板 JSON（可选）', 'assets': '预览图片目录（可选）',
+    fields = {'catalog': '现有扭蛋目录 JSON（首次安装留空）', 'patterns': '概率模板 JSON（可选）', 'assets': '预览图片目录（可选）',
               'bundle_output': '生成目录（可选）', 'snapshot': '初始化来源快照目录（可选）', 'client': '配套客户端目录（编译用）',
-              'lookup': '机体图片映射 JSON（编译用）', 'install_client': '客户端安装目标（可选）',
-              'server_ini': '原生服务器 INI（可选）', 'framework_stage': '已构建框架目录（安装用）', 'symbol_fragment': '符号片段（可选）'}
+              'lookup': '其他机体图片映射 JSON（可选）', 'install_client': '客户端安装目标（可选）',
+              'server_ini': '原生服务器 INI（首次安装必填）', 'framework_stage': '已构建框架目录（安装用）', 'symbol_fragment': '符号片段（可选）'}
+
+    def describe(self):
+        return {**super().describe(), 'setup_notice':
+                '首次安装选择配套客户端和服务端 INI，目录 JSON 留空后保存：自动加入 35 台补齐机并配套安装两端。请先关闭目标游戏和服务；已有奖池请选择原目录，升级不会覆盖它。'}
+
+    def configure(self, values):
+        # Saving explicit installation targets is the first-install action.
+        # Ordinary GET/bootstrap requests never connect to or write SQL.
+        candidate = {**self.config, **values} if isinstance(values, dict) else {}
+        fresh = not candidate.get('catalog') and candidate.get('client') and candidate.get('server_ini')
+        result = super().configure(values)
+        if fresh:
+            from .engines.capsules.capsule_setup import prepare
+            from .engines.capsules.capsule_catalog import digest
+            with self.lock:
+                prepared = prepare(self.workspace.root, self.config['client'], self.config['server_ini'])
+                self.workspace.settings['modules'][self.id].update(prepared)
+                self.workspace.save_workspace()
+                engine = self.get_engine()
+                installation = engine.store.apply(digest(engine.store.read()[0]))
+            return {**self.describe(), 'installation': installation}
+        return result
 
     def get_engine(self):
         if self.engine is None:

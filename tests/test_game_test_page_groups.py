@@ -49,6 +49,16 @@ class PageGroupTests(unittest.TestCase):
         with self.assertRaises(gt.GameTestError):
             self.fixture.prepare('storage-gift-gb',pages_only=True,page_group='storage_gift',hangar_confirm_gb=True)
 
+    def test_capsule_group_checks_native_registry_and_page_without_purchases(self):
+        prepared=self.fixture.prepare('capsule-group',pages_only=True,page_group='capsule')
+        plan=json.loads((prepared/'run.json').read_text())
+        expected=gt.FLOW_CASES[:3]+('catalog.capsule','pages.capsule.currency')
+        self.assertEqual(gt.required_cases_for_plan(plan['plan']),expected)
+        public=gt.read_public_plan(self.fixture.root/'capsule-group'/'client')
+        self.assertEqual(gt.required_cases_for_plan(public),expected)
+        self.assertNotIn('pages.storage.claim',expected)
+        self.assertNotIn('pages.collection.draw',expected)
+
     def test_existing_full_page_group_is_unchanged(self):
         prepared=self.fixture.prepare('all-pages',pages_only=True)
         plan=json.loads((prepared/'run.json').read_text())

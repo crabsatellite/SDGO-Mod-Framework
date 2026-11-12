@@ -225,9 +225,7 @@ class CatalogStore:
             raise ValueError("--snapshot requires --client")
         if self.lookup_path is not None and self.client_path is None:
             raise ValueError("--lookup requires --client")
-        if self.apply_callback is not None and (
-            self.client_path is None or self.lookup_path is None
-        ):
+        if self.apply_callback is not None and self.client_path is None:
             raise ValueError("Apply requires client compilation configuration")
         for label, path, expected in (
             ("--patterns", self.patterns_path, "file"),
@@ -242,7 +240,11 @@ class CatalogStore:
             if not valid:
                 raise ValueError(f"{label} must name an existing {expected}: {path}")
         self.lock = threading.RLock()
-        self.read()
+        catalog, raw = self.read()
+        from .capsule_presets import apply as apply_defaults
+        defaults, self.default_preset = apply_defaults(catalog)
+        if defaults != catalog:
+            self._save(defaults, raw)
 
     @property
     def can_initialize(self):
@@ -250,7 +252,7 @@ class CatalogStore:
 
     @property
     def can_compile(self):
-        return self.client_path is not None and self.lookup_path is not None
+        return self.client_path is not None
 
     @property
     def can_apply(self):
@@ -552,6 +554,16 @@ class CatalogStore:
             result = self._result(incoming, backup=backup)
             result["position_changes"] = changes
             return result
+
+    def restore_defaults(self, expected_revision):
+        from .capsule_presets import apply as apply_defaults
+        with self.lock:
+            catalog, raw = self.read()
+            self._expect(catalog, expected_revision)
+            result, receipt = apply_defaults(catalog, restore=True)
+            backup = self._save(result, raw)
+            self.default_preset = receipt
+            return {**self._result(result, backup=backup), 'default_preset': receipt}
 
     def export(self, expected_revision, selected=None):
         with self.lock:
@@ -869,6 +881,7 @@ class CapsuleApplication:
         return {
             "catalog_revision": digest(catalog),
             "catalog_path": str(self.store.catalog_path),
+            "default_preset": self.store.default_preset,
             "bundle_path": str(self.store.bundle_path),
             "counts": {
                 "units": len(units),
@@ -993,6 +1006,10 @@ class CapsuleApplication:
             )
         if path == "/api/catalog/import":
             return self.store.replace(payload.get("catalog"), expected)
+        if path == "/api/presets/default":
+            if set(payload) - {"expected_revision"}:
+                raise RequestError('默认模板操作包含未知字段')
+            return self.store.restore_defaults(expected)
         if path == "/api/export":
             return self.store.export(expected, payload.get("selected"))
         if path == "/api/compile":

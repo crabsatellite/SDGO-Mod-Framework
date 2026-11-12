@@ -985,26 +985,48 @@ def _build_package(
         raise
 
 
-def _read_server_settings(path):
+def _read_database_settings(path, section_name='DB Game'):
     path = _assert_existing_components_no_reparse(path)
     if not path.is_file():
         raise ValueError("Configured server INI does not exist")
     parser = configparser.RawConfigParser(interpolation=None, strict=True)
+    parser.optionxform = str
     try:
-        with path.open("r", encoding="utf-8-sig") as handle:
-            parser.read_file(handle)
+        raw = path.read_bytes()
+        text = raw.decode('utf-16' if raw.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig')
+        # Native INIs can repeat irrelevant keys in other DB sections. Parse
+        # only the requested connection, retaining strict duplicate rejection
+        # for every key/section that will actually be used.
+        selected, current = [], None
+        for line in text.splitlines():
+            match = re.match(r'^\s*\[([^]]+)\]', line)
+            if match:
+                current = match.group(1)
+            if current == section_name:
+                selected.append(line)
+        parser.read_string('\n'.join(selected))
     except (OSError, UnicodeDecodeError, configparser.Error) as error:
         raise ValueError("Configured server INI could not be read safely") from error
-    if not parser.has_section("DB Game"):
-        raise ValueError("Configured server INI has no [DB Game] section")
-    section = parser["DB Game"]
+    if not parser.has_section(section_name):
+        raise ValueError('Configured server INI has no [' + section_name + '] section')
+    section = parser[section_name]
+    canonical = {}
+    for key, value in section.items():
+        folded = key.casefold()
+        if folded in canonical and canonical[folded] != value.strip():
+            raise ValueError('Configured server INI has conflicting connection keys')
+        canonical[folded] = value.strip()
     values = {}
     for key in ("DBServerName", "DBName", "ID", "PWD"):
-        value = section.get(key, "").strip()
+        value = canonical.get(key.casefold(), '')
         if not value:
             raise ValueError(f"Configured server INI is missing [DB Game] {key}")
         values[key] = value
     return values
+
+
+def _read_server_settings(path):
+    return _read_database_settings(path)
 
 
 def _odbc_escape(value):
