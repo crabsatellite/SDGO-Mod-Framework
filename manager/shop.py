@@ -327,6 +327,7 @@ def _symbol_fragment(client: Path, manifests: dict[str, object], host: str) -> b
         raise ValueError('所选客户端的符号表与 Mod 宿主版本不一致')
     selected = []
     seen = set()
+    effective = {}
     for identity in ('shop_localization', 'shop_labels'):
         sections, declared = _fragment_sections(client, identity, manifests[identity])
         if identity == 'shop_localization':
@@ -335,10 +336,21 @@ def _symbol_fragment(client: Path, manifests: dict[str, object], host: str) -> b
                 if section.startswith('shop_localization.')
             }
             declared_namespace = set(sections)
-            if declared_namespace != current_namespace:
-                missing = sorted(current_namespace - declared_namespace)
-                stale = sorted(declared_namespace - current_namespace)
-                detail = (missing or stale)[:3]
+            extras = current_namespace - declared_namespace
+            # An older official shared map retained this superseded call-site
+            # name. Accept only its exact same-site, signature-prefix alias;
+            # never ignore arbitrary owner symbols or conflicting definitions.
+            retired = 'shop_localization.call.006EF404'
+            replacement = 'shop_localization.unit_name_display.assign_call.006EF404'
+            if retired in extras and declared is not None and declared.has_section(replacement):
+                old, new = current[retired], declared[replacement]
+                if (set(old) <= {'kind', 'rva', 'expect'} and old.get('kind') == new.get('kind')
+                        and int(old.get('rva', '-1'), 0) == int(new.get('rva', '-2'), 0)
+                        and len(bytes.fromhex(old.get('expect', ''))) >= 5
+                        and bytes.fromhex(new.get('expect', '')).startswith(bytes.fromhex(old.get('expect', '')))):
+                    extras.remove(retired)
+            if extras:
+                detail = sorted(extras)[:3]
                 raise ValueError(
                     '商城汉化符号清单与当前客户端不完整或版本不一致，请重新安装：' +
                     '、'.join(detail))
@@ -347,16 +359,23 @@ def _symbol_fragment(client: Path, manifests: dict[str, object], host: str) -> b
                 if int(declared.get('host', key), 0) != int(current.get('host', key), 0):
                     raise ValueError('Mod 符号清单与所选客户端版本不一致：' + identity)
         for section in sections:
+            shared = dict(current[section]) if current.has_section(section) else None
+            own = dict(declared[section]) if declared is not None and declared.has_section(section) else None
+            if shared is not None and own is not None and shared != own:
+                raise ValueError('商城符号声明与共享表冲突，请使用匹配版本：' + section)
+            # Match the core's shared-plus-own-fragment resolution. A complete
+            # module fragment does not need duplication in an older shared map.
+            definition = own if own is not None else shared
+            if definition is None:
+                raise ValueError('商城符号不完整或版本不一致，缺少：' + section)
+            effective[section] = definition
             if section not in seen:
                 selected.append(section)
                 seen.add(section)
-    missing = [section for section in selected if not current.has_section(section)]
-    if missing:
-        raise ValueError('所选客户端的符号表缺少：' + '、'.join(missing[:5]))
     output = configparser.ConfigParser(interpolation=None)
     output['host'] = dict(current['host'])
     for section in selected:
-        output[section] = dict(current[section])
+        output[section] = effective[section]
     text = io.StringIO()
     output.write(text, space_around_delimiters=False)
     try:

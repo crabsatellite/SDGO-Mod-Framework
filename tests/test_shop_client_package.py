@@ -448,6 +448,30 @@ class ShopClientPackageTests(unittest.TestCase):
 
 
 class RepositoryShopSymbolContractTests(unittest.TestCase):
+    def test_older_shared_map_requires_exact_retired_alias_and_complete_own_fragment(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as temporary:
+            client=Path(temporary);folder=client/'sdgo/symbols';folder.mkdir(parents=True)
+            path=folder/(HOST+'.ini');shared=storage.ini_values((ROOT/'symbols'/(HOST+'.ini')).read_bytes())
+            replacement='shop_localization.unit_name_display.assign_call.006EF404'
+            old=dict(shared[replacement]);old['expect']=' '.join(old['expect'].split()[:5])
+            for name in list(shared.sections()):
+                if name.startswith('shop_localization.unit_name_display.'):shared.remove_section(name)
+            shared['shop_localization.call.006EF404']=old
+            manifests={}
+            for identity in ('shop_labels','shop_localization'):
+                source=ROOT/'mods'/identity;destination=client/'sdgo/mods'/identity;destination.mkdir(parents=True)
+                manifests[identity]=storage.ini_values((source/'mod.ini').read_bytes())
+                if(source/'symbols.fragment.ini').is_file():shutil.copy2(source/'symbols.fragment.ini',destination/'symbols.fragment.ini')
+            def save():
+                import io
+                text=io.StringIO();shared.write(text);path.write_text(text.getvalue(),encoding='utf-8')
+            save();result=storage.ini_values(_symbol_fragment(client,manifests,HOST))
+            self.assertIn(replacement,result)
+            self.assertNotIn('shop_localization.call.006EF404',result)
+            shared['shop_localization.call.006EF404']['rva']='0x123456';save()
+            with self.assertRaises(ValueError):_symbol_fragment(client,manifests,HOST)
+
     def test_shipped_host_and_module_fragments_satisfy_the_actual_export_consumer(self):
         import shutil
         with tempfile.TemporaryDirectory() as temporary:
