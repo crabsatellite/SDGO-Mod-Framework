@@ -468,6 +468,19 @@ into the isolated client with fixed paths, SHA-256 and revision binding. The
 case checks native names and permanent/rental options, opens and cancels buy
 and gift previews, and compares the complete inventory and wallet. It does
 not install products, purchase or send gifts.
+For an explicitly authorized one-shot purchase, use the same two input paths with
+`[shop] Schema=1` and `Scope=OwnerPurchaseAssertions` in the assertions file. Provide exactly one enabled
+product, its exact current native option ID/price/currency/validity in the display file, and matching revisions.
+Owner SKU identities are allowed in this separate scope. Native GameTest client 0.1.37 or newer, an existing
+registered account, a direct IPv4 loopback endpoint and one login attempt are required. The sealed case becomes
+`pages.shop.purchase`; ordinary stock scopes remain read-only. It invokes the original option Buy button and
+confirmation OK once, observes real `0931/074D/0758/0574` transport and original reply consumers, then checks
+the exact native wallet debit. It never automatically retries a purchase. Full acceptance additionally needs
+independent inventory and currency SQL before/after receipts plus a new native login proving persistence.
+The case's transport/wallet success alone is not an inventory or purchase-delivery acceptance result.
+For an ETC extension dialog, it also validates the exact original preflight product/option, the known native
+service and its enabled Yes/No controls, captures the real frame, then invokes Yes once. The original dialog
+constructs the commit packet; the adapter never manufactures it or confirms an unrelated modal.
 The adapter opens the native search view, clicks its original `FilterBtn`, and
 waits for native query completion. Selecting `AllSerchRadio` alone opens an
 empty view and does not count as a successful stock query.

@@ -52,15 +52,21 @@ namespace Sdgo.Shop
                     subDisplay=Convert.ToInt32(cmd.ExecuteScalar())!=0;
                 string visible="LTRIM(RTRIM(CONVERT(varchar(16),p.f_display)))='1'";
                 if(subDisplay) visible+=" AND LTRIM(RTRIM(CONVERT(varchar(16),s.f_display)))='1'";
-                string active=@"SELECT p.f_productid,s.f_itemtblidx,s.f_categoryNumber,s.f_validity
+                string active=@"SELECT p.f_productid,s.f_itemtblidx,s.f_categoryNumber,s.f_validity,s.f_price,s.f_payment,p.f_package,p.f_depth1
                     FROM dbo.tbls_StoreItems p JOIN dbo.tbls_SubItems s ON s.f_itemid=p.f_itemid
                     WHERE "+visible+@" AND p.f_quantity>0
                       AND s.f_categoryNumber IS NOT NULL AND s.f_categoryNumber>0 AND s.f_validity>0
                     ORDER BY p.f_productid,s.f_itemtblidx";
                 using(var cmd=Query(billing,active))
-                using(var r=cmd.ExecuteReader()) while(r.Read()) result.ActiveProducts.Add(new ActiveProduct {
-                    ProductId=Convert.ToInt32(r[0]),OptionId=Convert.ToInt32(r[1]),
-                    Category=Convert.ToInt32(r[2]),Validity=Convert.ToInt32(r[3])});
+                using(var r=cmd.ExecuteReader()) while(r.Read())
+                {
+                    decimal price=r.IsDBNull(4)?0:Convert.ToDecimal(r[4]);string payment=Convert.ToString(r[5]).Trim();
+                    result.ActiveProducts.Add(new ActiveProduct {
+                        ProductId=Convert.ToInt32(r[0]),OptionId=Convert.ToInt32(r[1]),Category=Convert.ToInt32(r[2]),Validity=Convert.ToInt32(r[3]),
+                        Price=price>0&&price<=Int32.MaxValue&&Decimal.Truncate(price)==price?(int)price:0,
+                        Currency=payment=="1"?"GB":payment=="2"?"MB":"",
+                        SingleItem=(r.IsDBNull(6)||Convert.ToString(r[6]).Trim()=="0")&&Convert.ToInt32(r[7])!=20});
+                }
             }
             result.Items=result.Items.Where(i=>result.Templates.Any(t=>t.Kind==i.Kind)).OrderBy(i=>i.Kind).ThenBy(i=>i.Name).ThenBy(i=>i.Id).ToList();return result;
         }

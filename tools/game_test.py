@@ -1345,9 +1345,10 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
         "shop assertions",
     )
     visual_only = shop["Scope"] == "StockVisualAssertions"
+    purchase = shop["Scope"] == "OwnerPurchaseAssertions"
     if 'Query' in shop and (not shop['Query'] or len(shop['Query'].encode('utf-16le'))>72 or any(c in shop['Query'] for c in '\r\n\0')):
         raise GameTestError('shop visual query must be bounded native input text')
-    if shop["Schema"] != "1" or shop["Scope"] not in ("StockAssertions", "StockVisualAssertions"):
+    if shop["Schema"] != "1" or shop["Scope"] not in ("StockAssertions", "StockVisualAssertions", "OwnerPurchaseAssertions"):
         raise GameTestError("shop assertions require [shop] Schema=1 and Scope=StockAssertions")
     _shop_key("shop CatalogId", shop["CatalogId"])
     revision = _shop_key("shop Revision", shop["Revision"])
@@ -1397,7 +1398,7 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
             raise GameTestError('product visual query must be bounded native input text')
         product_id = _shop_integer(f"{section}.ProductId", product["ProductId"], 1, 2**31 - 1)
         template_id = _shop_integer(f"{section}.TemplateId", product["TemplateId"], 1, 2**31 - 1)
-        if product_id != template_id:
+        if product_id != template_id and not purchase:
             raise GameTestError("StockAssertions products must reference native stock IDs, not owner SKUs")
         item = product["ItemId"]
         if not re.fullmatch(r"[0-9]{6}", item):
@@ -1422,6 +1423,8 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
             products += 1
     if products == 0:
         raise GameTestError("shop assertions require at least one enabled stock product")
+    if purchase and (products != 1 or len(product_ids) != 1):
+        raise GameTestError("one-shot shop purchase requires exactly one enabled product")
 
     display_shop = _exact_ini_keys(
         display, "shop", {"Revision"}, "shop runtime display"
@@ -1463,6 +1466,8 @@ def load_shop_test_inputs(assertions_path: Path, display_path: Path) -> dict:
     }
     if visual_only:
         result['shop_visual_only'] = True
+    if purchase:
+        result['shop_purchase'] = True
     return result
 
 
@@ -1521,6 +1526,8 @@ def validate_shop_test_install(root: Path, plan: dict) -> dict:
     )
     if type(plan.get('shop_visual_only', False)) is not bool or plan.get('shop_visual_only', False) != installed.get('shop_visual_only', False):
         raise GameTestError('shop visual scope disagrees with sealed assertion inputs')
+    if type(plan.get('shop_purchase', False)) is not bool or plan.get('shop_purchase', False) != installed.get('shop_purchase', False):
+        raise GameTestError('shop purchase permission disagrees with sealed assertion inputs')
     for field in SHOP_PLAN_FIELDS:
         if type(plan[field]) is not type(installed[field]) or plan[field] != installed[field]:
             raise GameTestError(f"shop GameTest input disagrees with the sealed plan for {field}")
@@ -1903,7 +1910,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          mission_mode: int | None = None,
                          shop_catalog: bool = False, friends_only: bool = False, room_titles_only: bool = False,
                          room_style_preview: str | None = None,
-                         same_room_rematch: bool = False, shop_visual_only: bool = False,
+                         same_room_rematch: bool = False, shop_visual_only: bool = False, shop_purchase: bool = False,
                          page_group: str | None = None, hangar_confirm_gb: bool = False,
                          hangar_sort: bool = False,
                          mission_respawns: str | None = None,
@@ -1964,6 +1971,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         raise GameTestError('collection draw requires the explicit pages-only scenario')
     if shop_catalog and not pages_only:
         raise GameTestError('shop catalog assertions require the explicit pages-only scenario')
+    if shop_purchase and (not (shop_catalog and pages_only) or shop_visual_only):
+        raise GameTestError('shop purchase requires its separate sealed one-shot pages scope')
     if shop_visual_only and not (shop_catalog and pages_only):
         raise GameTestError('shop visual scope requires sealed stock assertions and pages-only')
     if room_style_preview is not None:
@@ -2023,6 +2032,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
             )
             return FLOW_CASES[:3] + selection + hangar_cases + (
                 ('oc.panel',) if oc_panel else ()) + (('g1.page',) if g1_room and oc_panel else ())
+        if shop_purchase:
+            return FLOW_CASES[:3] + selection + ('pages.shop.purchase',)
         if shop_visual_only:
             return FLOW_CASES[:2] + ('flow.shop_ready',) + selection + ('pages.shop.catalog',)
         shop_cases = ('pages.shop.catalog',) if shop_catalog else ()
@@ -2085,6 +2096,13 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
     if shop_fields and shop_fields != set(SHOP_PLAN_FIELDS):
         raise GameTestError("shop GameTest plan is missing sealed input fields")
     shop_catalog = bool(shop_fields)
+    if plan.get('shop_purchase'):
+        if (type(plan['shop_purchase']) is not bool or not shop_catalog or
+                plan.get('retry_count') != 1 or plan.get('expect_first_fail') is not False or
+                plan.get('network_policy') != 'direct' or
+                not ipaddress.IPv4Address(plan.get('target_host','')).is_loopback or
+                operator_fields or 'unit_scenario' in plan):
+            raise GameTestError('one-shot shop purchase requires sealed inputs, an existing account, direct loopback and one attempt')
     if "mission_mode" in plan:
         behavior_profile, mission_game_mode_id = validate_mission_behavior(
             plan.get("mission_behavior_profile"),
@@ -2154,6 +2172,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         room_titles_only=plan.get("room_titles_only",False),
         room_style_preview=plan.get("room_style_preview"),
         shop_visual_only=plan.get('shop_visual_only', False),
+        shop_purchase=plan.get('shop_purchase', False),
         page_group=plan.get('page_group'),
         hangar_confirm_gb=plan.get('hangar_confirm_gb', False),
         hangar_sort=plan.get('hangar_sort', False),
@@ -2610,6 +2629,8 @@ def write_job(
             run['run'][field] = str(plan[field])
         if plan.get('shop_visual_only'):
             run['run']['shop_visual_only'] = '1'
+        if plan.get('shop_purchase'):
+            run['run']['shop_purchase'] = '1'
     for flag in ('bootstrap_only','battleship_only','gift_requests_only','deck_only','pages_only','friends_only','room_titles_only','collection_draw','random_loadout','same_room_rematch'):
         if plan.get(flag):run['run'][flag] = '1'
     if 'room_style_preview' in plan:
@@ -2736,7 +2757,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
 
         unknown_shop_fields = {
             field for field in run if field.startswith("shop_")
-        } - set(SHOP_PLAN_FIELDS) - {'shop_visual_only'}
+        } - set(SHOP_PLAN_FIELDS) - {'shop_visual_only', 'shop_purchase'}
         if unknown_shop_fields:
             raise ValueError('unknown shop GameTest fields are forbidden')
         shop_fields_present = {field for field in SHOP_PLAN_FIELDS if field in run}
@@ -2758,11 +2779,12 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', run['shop_revision']):
                 raise ValueError('invalid shop revision')
             shop_plan = {field: run[field] for field in SHOP_PLAN_FIELDS}
-            if 'shop_visual_only' in run:
-                if run['shop_visual_only'] != '1':
-                    raise ValueError('invalid shop visual scope')
-                shop_plan['shop_visual_only'] = True
-        elif 'shop_visual_only' in run:
+            for flag in ('shop_visual_only', 'shop_purchase'):
+                if flag in run:
+                    if run[flag] != '1':
+                        raise ValueError('invalid sealed shop scope')
+                    shop_plan[flag] = True
+        elif 'shop_visual_only' in run or 'shop_purchase' in run:
             raise ValueError('shop visual scope requires sealed stock inputs')
 
         mission_mode = None
@@ -3001,6 +3023,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 play_unit_uid, shop_catalog=shop_plan is not None,friends_only=friends_only, room_titles_only=room_titles_only,
                 room_style_preview=room_style_preview,
                 shop_visual_only=bool(shop_plan and shop_plan.get('shop_visual_only')),
+                shop_purchase=bool(shop_plan and shop_plan.get('shop_purchase')),
                 same_room_rematch=same_room_rematch,
                 page_group=page_group,
                 hangar_confirm_gb=hangar_confirm_gb,
@@ -3300,7 +3323,7 @@ def validate_private_account(root: Path, plan: dict) -> Path:
             "mission smoke requires a registered or explicitly imported existing account profile"
         )
     if (
-        "operator_flow" in plan
+        ("operator_flow" in plan or plan.get('shop_purchase'))
         and registration_state not in MISSION_EXISTING_ACCOUNT_STATES
     ):
         raise GameTestError(
@@ -3754,6 +3777,13 @@ def prepare(
             shop_assertions = shop_assertions.expanduser().resolve()
             shop_display = shop_display.expanduser().resolve()
             shop_binding = load_shop_test_inputs(shop_assertions, shop_display)
+            if shop_binding.get('shop_purchase'):
+                if create_test_account:
+                    raise GameTestError('one-shot shop purchase requires an existing registered account')
+                sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
+                parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
+                if not parsed or tuple(map(int,parsed.groups())) < (0,1,37):
+                    raise GameTestError('one-shot shop purchase requires native GameTest client 0.1.37 or newer')
         required_flow_cases(
             mode_sequence, bootstrap_only, battleship_only, gift_requests_only,
             deck_only, pages_only, collection_draw, play_unit_uid, mission_mode,
@@ -4532,7 +4562,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
             raise GameTestError('run.json cannot change the configured AI layout')
         unknown_plan_shop_fields = {
             field for field in plan if field.startswith("shop_")
-        } - set(SHOP_PLAN_FIELDS) - {'shop_visual_only'}
+        } - set(SHOP_PLAN_FIELDS) - {'shop_visual_only', 'shop_purchase'}
         if unknown_plan_shop_fields:
             raise GameTestError('run.json contains unknown shop GameTest fields')
         plan_shop_fields = {field for field in SHOP_PLAN_FIELDS if field in plan}

@@ -96,6 +96,10 @@ public:
 
     struct Config
     {
+        // Explicit diagnostic scope. This proves original transport and native
+        // wallet debit only; an independent inventory/persistence receipt is
+        // still required. The default retains the stronger operator readback.
+        bool transport_wallet_only = false;
         uint32_t operator_id = 0;
         uint32_t product_id = 0;
         uint32_t option_id = 0;
@@ -211,7 +215,7 @@ public:
     bool Configure(const Config& config)
     {
         if (started_ || MutationAttempted() ||
-            !config.operator_id || !config.product_id ||
+            (!config.transport_wallet_only && !config.operator_id) || !config.product_id ||
             !config.option_id || !config.category_id ||
             config.price <= 0 ||
             (config.payment != 1 && config.payment != 2) ||
@@ -242,8 +246,8 @@ public:
             !bindings_.transport_context ||
             !bindings_.transport_state ||
             !bindings_.find_transport_since ||
-            !bindings_.inventory_context ||
-            !bindings_.read_inventory)
+            (!config_.transport_wallet_only &&
+             (!bindings_.inventory_context || !bindings_.read_inventory)))
             return false;
 
         __try {
@@ -313,6 +317,37 @@ public:
                 inventory.records.size());
         Publish(bound_ ? kWaitingForOptions : kUnbound);
         return true;
+    }
+
+    bool PrimeWalletBaseline(const WalletImage& wallet)
+    {
+        if (!config_.transport_wallet_only || started_ || MutationAttempted() ||
+            !configured_ || !bound_ ||
+            (config_.payment == 1 && wallet.gp < static_cast<uint32_t>(config_.price)) ||
+            (config_.payment == 2 && wallet.cash < static_cast<uint32_t>(config_.price)))
+            return false;
+        baselineWallet_ = wallet;
+        baselineReady_ = true;
+        observation_.baseline_ready = 1;
+        observation_.baseline_gp = wallet.gp;
+        observation_.baseline_cash = wallet.cash;
+        Publish(kWaitingForOptions);
+        return true;
+    }
+
+    bool AuthorizedExtensionPopup(void* expectedVtable, void** output)
+    {
+        if(!config_.transport_wallet_only || config_.category_id/100000!=22 ||
+           stage_!=kStageWait0758 || !observation_.reply_074d_sequence ||
+           RejectedReply() || bindings_.find_transport_since(
+               bindings_.transport_context,commitBaseline_,kRequest0758).send_sequence)
+            return false;
+        return FindManagedPopup(expectedVtable,output)==kPopupMatched;
+    }
+
+    static bool NativeActionControl(const void* control,const void* parent,const wchar_t* name)
+    {
+        return ControlIdentity(control,parent,name);
     }
 
     // This pointer must be the still-live popup already validated by
@@ -1507,10 +1542,10 @@ private:
         WalletImage wallet;
         InventoryImage inventory;
         if (!ReadWallet(&wallet) ||
-            !bindings_.read_inventory(
+            (!config_.transport_wallet_only && (!bindings_.read_inventory(
                 bindings_.inventory_context,
                 &inventory) ||
-            !InventoryValid(inventory)) {
+            !InventoryValid(inventory)))) {
             if (Expired(
                     config_.readback_timeout_ms))
                 return Fail(kTimedOut);
@@ -1544,6 +1579,11 @@ private:
                 kWaitingForNativeReadback);
         }
         observation_.wallet_verified = 1;
+
+        if (config_.transport_wallet_only) {
+            stage_ = kStageDone;
+            return Publish(kComplete);
+        }
 
         std::vector<uint64_t> additions;
         for (const OperatorRecord& record :

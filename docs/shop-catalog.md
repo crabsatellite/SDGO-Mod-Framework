@@ -8,6 +8,23 @@ Owners manage their own native shop offers in the **商城商品** (shop) panel 
 add, search, edit, list/unlist, retire and restore. Players keep buying in the native in-game shop.
 Chinese option names and rental labels come from the separate [shop labels fix](shop-labels.md).
 
+## Installed default presets
+
+After the server component is installed, first binding an empty shop workspace and WorldServer in Manager
+automatically creates and lists five editable presets: a permanent unit, a rental unit, an operator, a blueprint
+and a consumable. No separate example import is needed. Each inherits an existing visible single-item offer's
+exact price, GB/MB and validity/quantity, retaining that offer's own native eligibility/gifting template with independently allocated identities. Source offers remain intact;
+no private owner assets or IDs ship in the defaults. A missing valid source rejects the complete initialization
+before product SQL is applied.
+
+Edit, unlist or retire these offers in the ordinary shop panel, then save and apply. The catalog retains its
+initialization version, so updates and later bindings preserve those changes. Existing nonempty catalogs are
+preserved to avoid implicitly publishing author drafts. A failed initial application retains assigned identities
+and reviewable drafts; use the ordinary Apply action after inspection. A configured client also receives matching
+display and acquisition data through the normal owner update workflow.
+Players use the original shop UI. ETC items such as coins can require the original additional quantity/extension
+confirmation before the purchase is committed.
+
 Set the existing shop workspace, the `WorldServer` folder and optionally a local client folder (for
 display labels). Pick a native item and click **新增商品** (add); edit name, option label, price, GB/MB
 currency, quantity or rental days and listing, then **保存商品** (save). Changes are drafts until
@@ -46,6 +63,9 @@ Configuration validation, SQL or image-preview success alone does not prove that
 `pages.shop.catalog` stock scope opens/cancels buy/gift previews and compares wallets/inventory; it does not
 purchase or deliver. See [the native testing guide](game-test.md) and do not describe a read-only preview as a
 completed purchase test.
+The separate `OwnerPurchaseAssertions` scope selects `pages.shop.purchase`: one original confirmation,
+real transport, post-original replies and exact native wallet debit. Independently compare actual inventory
+before/after in isolated SQL and verify persistence with another login; an ACK or debit alone is insufficient.
 
 The WorldServer module (`548A86E3-0010C000`) starts disabled until configured and is installed once with
 the standalone `Install.ps1`. It updates only its own single-item offers in a transaction and keeps native

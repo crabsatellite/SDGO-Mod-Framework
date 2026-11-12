@@ -66,6 +66,28 @@ class ShopPlanTests(unittest.TestCase):
             shop_display=self.stock_display,
         )
 
+    def test_purchase_permission_is_sealed_and_selects_only_one_purchase_case(self):
+        profile = self.fixture.account_profile
+        profile.write_text(profile.read_text(encoding="utf-8").replace("state=auth_accepted", "state=registered"), encoding="utf-8")
+        observer = self.fixture.stage/'client/sdgo/mods/game_test_client/mod.ini'
+        observer.write_text(observer.read_text(encoding='utf-8').replace('version=0.1.0', 'version=0.1.37'), encoding='utf-8')
+        self.stock_assertions.write_text(SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions', 'Scope=OwnerPurchaseAssertions'), encoding='utf-8')
+        run_dir = self.shop_prepare('one-native-purchase')
+        plan = game_test.validate_metadata(run_dir)['plan']
+        self.assertTrue(plan['shop_purchase'])
+        self.assertEqual(game_test.required_cases_for_plan(plan), game_test.FLOW_CASES[:3] + ('pages.shop.purchase',))
+        job = game_test.read_ini(run_dir/'client/sdgo/gametest/run.ini')
+        del job['run']['shop_purchase']
+        game_test.write_ini(run_dir/'client/sdgo/gametest/run.ini', job)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run_dir)
+
+    def test_purchase_requires_one_product_and_cannot_enable_an_ordinary_preview(self):
+        text = SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions', 'Scope=OwnerPurchaseAssertions')
+        self.stock_assertions.write_text(text + text[text.index('[product:'):].replace('fixture-1001','fixture-1002').replace('1001','1002').replace('123456','123457'), encoding='utf-8')
+        with self.assertRaises(game_test.GameTestError):
+            game_test.load_shop_test_inputs(self.stock_assertions, self.stock_display)
+
     def test_visual_stock_scope_binds_expected_rendered_names_and_excludes_other_pages(self):
         self.stock_assertions.write_text(
             SHOP_ASSERTIONS_FIXTURE.replace('Scope=StockAssertions', 'Scope=StockVisualAssertions')

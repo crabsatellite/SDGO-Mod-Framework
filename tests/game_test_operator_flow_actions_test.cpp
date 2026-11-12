@@ -897,15 +897,21 @@ struct Driver
     SdgoGameTestContextV1 context =
         Context();
 
-    bool Setup()
+    bool Setup(bool walletOnly=false)
     {
         const auto baseline =
             BaselineInventory();
-        return actions.Configure(Config()) &&
-               actions.Bind(Bindings()) &&
-               actions.PrimeBaseline(
+        auto config=Config();auto bindings=Bindings();
+        config.transport_wallet_only=walletOnly;
+        if(walletOnly) {
+            config.operator_id=0;config.category_id=2250001;g_option.category=config.category_id;
+            bindings.inventory_context=nullptr;bindings.read_inventory=nullptr;
+        }
+        return actions.Configure(config) &&
+               actions.Bind(bindings) &&
+               (walletOnly ? actions.PrimeWalletBaseline({1000,500}) : actions.PrimeBaseline(
                    {1000, 500},
-                   baseline) &&
+                   baseline)) &&
                actions.AdoptOptionsPopup(
                    g_options);
     }
@@ -1453,6 +1459,27 @@ void TestAutomaticCommitTimeout()
     Check(driver.Poll(101) ==
               OperatorFlowActions::kTimedOut,
           "missing original 0758 is terminal");
+}
+
+void TestEtcExtensionRequiresExactPendingScope()
+{
+    ResetFixture();Driver ordinary;Check(ordinary.Setup(),"ordinary purchase binds");
+    ordinary.ReachWait074D();ordinary.Accept074D();ordinary.Poll();
+    void* popup=nullptr;
+    Check(!ordinary.actions.AuthorizedExtensionPopup(g_confirmationVtable,&popup),
+          "the operator scope never acquires a separate ETC confirmation");
+
+    ResetFixture();Driver etc;Check(etc.Setup(true),"explicit ETC wallet-only scope binds without invented inventory");
+    Check(!etc.actions.AuthorizedExtensionPopup(g_confirmationVtable,&popup),
+          "an extra modal cannot be acted on before matching original preflight");
+    etc.ReachWait074D();etc.Accept074D();etc.Poll();
+    SetManagedList(0x54,0x58,g_sentinel,g_node,g_confirmation);
+    Check(etc.actions.AuthorizedExtensionPopup(g_confirmationVtable,&popup)&&popup==g_confirmation,
+          "one matching pending modal is discoverable only inside the explicit ETC scope");
+    PushTransport(0x0758,0x39,1);
+    Check(!etc.actions.AuthorizedExtensionPopup(g_confirmationVtable,&popup),
+          "an already-sent commit prevents another click even before the next flow poll");
+    Check(g_confirmationCalls==1,"auxiliary discovery never invokes a confirmation callback");
 }
 
 void ReachReadback(Driver& driver)
@@ -2124,6 +2151,7 @@ int RunSuite()
     TestMutationIsNeverRetried();
     TestTransportAndReplyFailures();
     TestAutomaticCommitTimeout();
+    TestEtcExtensionRequiresExactPendingScope();
     TestReadbackMustBeExact();
     TestContextIdentity();
     TestInventoryServiceReadback();

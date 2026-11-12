@@ -608,7 +608,27 @@ def _decorate_shop_state(value, operator_registrations, unit_imports):
 
 class Shop(Provider):
     id, title = 'shop', '商城商品'
-    fields = {'workspace':'现有商城配置目录','world':'WorldServer 目录','client':'客户端目录（显示标签更新）','demo':'演示模式（仅测试时填 1）'}
+    fields = {'workspace':'商城配置目录（首次空目录自动上架默认商品）','world':'WorldServer 目录','client':'客户端目录（显示标签更新）','demo':'演示模式（仅测试时填 1）'}
+
+    def configure(self, values):
+        with self.lock:
+            result = super().configure(values)
+            config = self.config
+            if not config.get('workspace') or not config.get('world') or config.get('demo') == '1':
+                return result
+            helper = Path(config['world']) / 'sdgo/mods/shop_catalog/shop_catalog_apply.exe'
+            if not helper.is_file():
+                result['default_presets'] = 'waiting_for_server_module'
+                return result
+            bridge = self.workspace.services.resource('shop.bridge', Bridge)
+            state = bridge.call({**config, 'action': 'read', 'body': {}, 'revision': ''})
+            if state['catalog'].get('default_presets_version', 0) or state['catalog']['products']:
+                return result
+            applied = bridge.call({**config, 'action': 'initialize-presets', 'body': {}, 'revision': state['revision']})
+            if config.get('client'):
+                self._install_applied_acquisition_sources(applied)
+            result['default_presets'] = 'installed'
+            return result
 
     def _effective_applied(self):
         bridge = self.workspace.services.resource('shop.bridge', Bridge)

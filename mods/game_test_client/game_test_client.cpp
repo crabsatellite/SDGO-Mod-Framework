@@ -28,6 +28,7 @@
 #include "unit_select_actions.h"
 #include "active_selection_observer.h"
 #include "shop_catalog_actions.h"
+#include "shop_purchase_actions.h"
 #include "operator_session_actions.h"
 #include "sdgo/net_route_observer.h"
 #include "sdgo/ai_dialogue_observer.h"
@@ -153,6 +154,8 @@ bool randomLoadout=false;
 ShopCatalogActions shopCatalog;
 bool testShopCatalog=false;
 bool shopVisualOnly=false;
+bool shopPurchase=false;
+ShopPurchaseActions shopPurchaseActions;
 ShopCatalogActions operatorShopCatalog;
 OperatorFlowActions operatorFlow;
 OperatorInventoryActions operatorInventory;
@@ -559,7 +562,9 @@ bool LoadPlan() {
     GetPrivateProfileStringW(L"run",L"shop_display_path",L"",shopDisplay,128,job.c_str());
     testShopCatalog=shopAssertions[0] || shopDisplay[0];
     shopVisualOnly=GetPrivateProfileIntW(L"run",L"shop_visual_only",0,job.c_str())!=0;
-    if(shopVisualOnly && !testShopCatalog)return false;
+    shopPurchase=GetPrivateProfileIntW(L"run",L"shop_purchase",0,job.c_str())==1;
+    if((shopVisualOnly || shopPurchase) && !testShopCatalog)return false;
+    if(shopPurchase && (shopVisualOnly || testOperatorFlow))return false;
     if(testShopCatalog && (!pagesOnly || wcscmp(shopAssertions,L"inputs/shop-assertions.ini") ||
         wcscmp(shopDisplay,L"inputs/shop-runtime-display.ini")))return false;
     collectionDraw=GetPrivateProfileIntW(L"run",L"collection_draw",0,job.c_str())!=0;
@@ -2893,10 +2898,36 @@ int ReadShopReady(const SdgoGameTestContextV1* context) {
        (state.native_app_state!=5 && state.native_app_state!=6))return SDGO_GAME_TEST_WAIT;
     if(!authenticatedPilot)authenticatedPilot=state.profile_pilot_id;
     context->Assert(authenticatedPilot==state.profile_pilot_id,"the existing shop test identity is the genuine server-loaded profile after accepted login");
-    context->Observe("read-only shop scope uses the native lobby or hangar; it does not claim battle-channel admission or create starter assets");
+    context->Observe("shop entry uses the genuine lobby or hangar; it does not claim battle-channel admission or create starter assets");
     return authenticatedPilot==state.profile_pilot_id?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
 }
 const SdgoGameTestCaseV1 shopReadyCase{"flow.shop_ready",120000,&ReadShopReady};
+int PurchaseShopItem(const SdgoGameTestContextV1* context) {
+    static bool failedCapture=false;
+    static bool extensionCapture=false,extensionCaptured=false;
+    if(failedCapture) {
+        if(quietGraphics.CaptureFrameResult()==E_PENDING)return SDGO_GAME_TEST_WAIT;
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if(shopPurchaseActions.ExtensionAwaitingCapture()&&!extensionCaptured) {
+        if(!extensionCapture) {
+            extensionCapture=quietGraphics.CaptureNextFrame((sdgo_test::directory+L"\\shop-native-extension.bmp").c_str());
+            if(!extensionCapture)return SDGO_GAME_TEST_FAIL;
+            return SDGO_GAME_TEST_WAIT;
+        }
+        const auto result=quietGraphics.CaptureFrameResult();
+        if(result==E_PENDING)return SDGO_GAME_TEST_WAIT;
+        if(FAILED(result))return SDGO_GAME_TEST_FAIL;
+        extensionCaptured=true;
+    }
+    const int result=shopPurchaseActions.Poll(context);
+    if(result==SDGO_GAME_TEST_FAIL) {
+        failedCapture=quietGraphics.CaptureNextFrame((sdgo_test::directory+L"\\shop-purchase-failure.bmp").c_str());
+        return failedCapture?SDGO_GAME_TEST_WAIT:SDGO_GAME_TEST_FAIL;
+    }
+    return result;
+}
+const SdgoGameTestCaseV1 shopPurchaseCase{"pages.shop.purchase",300000,&PurchaseShopItem};
 int ReadShopCatalog(const SdgoGameTestContextV1* context) {
     static bool diagnosticRequested=false,diagnosticComplete=false;
     if(diagnosticRequested && !diagnosticComplete) {
@@ -6143,11 +6174,11 @@ void RegisterPlannedCases() {
             if(ocPanel && g1Room)plannedCases.push_back(g1PageCase);
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
-        if(testShopCatalog && shopVisualOnly) {
-            plannedCases.assign(realCases,realCases+2);
-            plannedCases.push_back(shopReadyCase);
+        if(testShopCatalog && (shopVisualOnly || shopPurchase)) {
+            plannedCases.assign(realCases,realCases+(shopPurchase?3:2));
+            if(!shopPurchase)plannedCases.push_back(shopReadyCase);
             if(playUnitUid)plannedCases.push_back(playUnitCase);
-            plannedCases.push_back(shopCatalogCase);
+            plannedCases.push_back(shopPurchase ? shopPurchaseCase : shopCatalogCase);
             provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
         }
         if(blueprintConfig.recipe) {
@@ -6591,8 +6622,11 @@ SDGO_MOD_ENTRY {
         ((collectionDraw || collectionPreviewOnly) && !collection.Bind(api,mod,&actions)) ||
         (playUnitUid && !unitSelection.Bind(api,mod,&actions)) ||
         ((randomLoadout || playUnitUid) && !activeSelection.Bind(api,mod)) ||
-        (testShopCatalog && (!shopCatalog.Bind(api,mod) || !shopCatalog.Configure(
-            sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini") || shopCatalog.VisualOnly()!=shopVisualOnly)) ||
+        (testShopCatalog && (!shopCatalog.Bind(api,mod) ||
+            !(shopPurchase ? shopCatalog.ConfigurePurchasePreview(
+                sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini") :
+              shopCatalog.Configure(sdgo_test::directory+L"\\inputs\\shop-assertions.ini",sdgo_test::directory+L"\\inputs\\shop-runtime-display.ini")) ||
+            shopCatalog.VisualOnly()!=shopVisualOnly || (shopPurchase && !shopPurchaseActions.Bind(api,mod,&actions,&shopCatalog)))) ||
          (testOperatorFlow && !BindOperatorSession(api,mod)) ||
         (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||

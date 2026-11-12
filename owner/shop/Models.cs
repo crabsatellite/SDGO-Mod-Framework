@@ -29,6 +29,8 @@ namespace Sdgo.Shop
         public int schema_version { get; set; }
         public string catalog_id { get; set; }
         public List<Product> products { get; set; }
+        public int default_presets_version { get; set; }
+        public bool default_presets_applied { get; set; }
         public static Catalog Empty() { return new Catalog { schema_version=1, catalog_id="host-shop", products=new List<Product>() }; }
     }
     public sealed class Settings
@@ -54,6 +56,9 @@ namespace Sdgo.Shop
     public sealed class ActiveProduct
     {
         public int ProductId,OptionId,Category,Validity;
+        public int Price;
+        public string Currency;
+        public bool SingleItem;
     }
     public sealed class Snapshot
     {
@@ -145,6 +150,39 @@ namespace Sdgo.Shop
             if(id==0||sku==null) throw new InvalidOperationException("本页可用的 Mod 商品编号已用完。");
             return new Product {key="p-"+Guid.NewGuid().ToString("N"),product_id=id,item_id=sku,template_id=t.Id,category_id=item.Id,
                 name=name,label=item.Label(item.TimeLimit==1 ? 7 : 1),price=500,currency="GB",validity=item.TimeLimit==1 ? 7 : 1,enabled=true};
+        }
+        public static Catalog DefaultPresets(Catalog catalog,Snapshot snapshot)
+        {
+            // Initial binding only. An existing or edited catalog is never
+            // applied implicitly, and removing a preset does not recreate it.
+            if(catalog.default_presets_version!=0||catalog.products.Count!=0)
+                return null;
+            var candidate=Clone(catalog);
+            var keys=new[]{"unit-permanent","unit-rental","operator","blueprint","consumable"};
+            var names=new[]{"预设·永久机体","预设·租赁机体","预设·副官","预设·设计图","预设·消耗品"};
+            var kinds=new[]{11,11,12,15,22};
+            for(int index=0;index<keys.Length;index++)
+            {
+                int kind=kinds[index];int time=index==0?0:index==1?1:-1;
+                var source=snapshot.ActiveProducts.OrderBy(p=>p.ProductId).ThenBy(p=>p.OptionId).FirstOrDefault(p=>
+                    p.SingleItem&&p.Price>0&&(p.Currency=="GB"||p.Currency=="MB")&&p.Validity>0&&p.Validity<=1000000&&
+                    snapshot.Templates.Any(t=>t.Id==p.ProductId&&t.Kind==kind)&&
+                    snapshot.Items.Any(i=>i.Id==p.Category&&i.Kind==kind&&(time<0||i.TimeLimit==time)&&
+                        (i.TimeLimit!=1||p.Validity<=36500)&&(kind!=11||i.TimeLimit!=0||p.Validity==1)));
+                if(source==null)throw new InvalidOperationException("默认商城预设缺少有效的现货来源："+names[index]+"；未创建或上架任何预设。");
+                var item=snapshot.Items.First(i=>i.Id==source.Category);
+                // Clone the selected offer's own native template, retaining
+                // original eligibility/gifting fields as well as sale terms.
+                var nativeSource=new Snapshot {Items=snapshot.Items,ProductIds=snapshot.ProductIds,Skus=snapshot.Skus,
+                    Templates=snapshot.Templates.Where(t=>t.Id==source.ProductId&&t.Kind==kind).Take(1).ToList()};
+                var product=Create(candidate,nativeSource,item,names[index]);
+                product.key="preset-v1-"+keys[index];product.price=source.Price;product.currency=source.Currency;
+                product.validity=source.Validity;product.label=item.Label(source.Validity);product.enabled=true;
+                candidate.products.Add(product);
+            }
+            candidate.default_presets_version=1;
+            Validate(candidate,snapshot);ValidateChinese(candidate);
+            return candidate;
         }
         public static string Ini(Catalog catalog)
         {

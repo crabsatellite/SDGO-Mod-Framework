@@ -2,6 +2,7 @@ import {e,button,field,download} from '/panel_helpers.js';
 export async function mount(root,ctx){
  root.inert=true;
  let state, selected=null, query='';
+ root.append(e('p','首次绑定空商城目录会自动上架永久机体、租赁机体、副官、设计图和消耗品预设，沿用本服现货的价格与期限。初始化后可在下方编辑或下架；更新不会重置你的修改。','muted'));
  const hasChinese=value=>/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(value||'');
  const automaticLabel=(product,validity)=>{const item=state.items.find(row=>row.Id===product.category_id);if(!item)return product.label;if(item.TimeLimit===1)return (item.Kind===11?'租赁 ':'有效期 ')+validity+' 天';return item.Kind===11?'永久':'数量 '+validity;};
  const controls=e('div',undefined,'actions'),search=document.createElement('input');search.placeholder='搜索商品名称或编号';search.oninput=()=>{query=search.value;render();};controls.append(search);

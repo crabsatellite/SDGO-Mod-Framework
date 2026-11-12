@@ -1,5 +1,9 @@
 # Shop import templates: four item classes, five authoring examples
 
+Ordinary installation uses the [built-in defaults](../../docs/shop-catalog.md#installed-default-presets):
+first binding an empty workspace lists five editable presets. This directory retains an optional developer
+exchange-example tool. Its disabled drafts and authoring ZIPs are separate from the installed default behavior.
+
 [简体中文](README.zh-CN.md) · [Shop operations](../../docs/shop-catalog.md)
 
 This directory contains neutral recipes and executable authoring code, not a server's offers, unit assets or

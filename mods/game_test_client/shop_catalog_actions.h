@@ -27,7 +27,7 @@
 // opens the shipped buy/gift option services. It invokes only each popup's
 // BuyCancelBtn. It never invokes a popup BuyBtn, writes a wallet/inventory,
 // constructs a reply, or treats callback return as completion. An explicitly
-// sealed operator-purchase scope may hand its validated buy preview to the
+// sealed purchase scope may hand its validated buy preview to the
 // separate mutating adapter before the ordinary cancellation stage.
 class ShopCatalogActions
 {
@@ -572,14 +572,22 @@ public:
     const Bindings& NativeBindings() const { return bindings_; }
 
     bool ConfigureOperatorPreview(const std::wstring& catalog, const std::wstring& display) {
+        return ConfigureOwnerPreview(catalog, display, true);
+    }
+
+    bool ConfigureOwnerPreview(const std::wstring& catalog, const std::wstring& display, bool operatorOnly = false) {
         operatorPreview_=false;
         if (!Configure(catalog,display) || stockAssertions_ || visualOnly_ ||
-            products_.size()!=1 || products_[0].category/100000!=12 ||
+            products_.size()!=1 || (operatorOnly && products_[0].category/100000!=12) ||
             !bindings_.edit_set_text || !bindings_.edit_get_text) return false;
         query_=products_[0].name.substr(0,36);
         if (!query_.empty() && query_.back()>=0xD800 && query_.back()<=0xDBFF)query_.pop_back();
         operatorPreview_=!query_.empty();
         return operatorPreview_;
+    }
+
+    bool ConfigurePurchasePreview(const std::wstring& catalog, const std::wstring& display) {
+        return ConfigureOwnerPreview(catalog, display) && purchaseAssertions_;
     }
 
     bool HandoffBuyOptions(uint32_t product, uint32_t category, void** output) const {
@@ -1026,12 +1034,13 @@ private:
                 L"Scope",
                 L"OwnerCatalog");
         visualOnly_ = scope == L"StockVisualAssertions";
+        purchaseAssertions_ = scope == L"OwnerPurchaseAssertions";
         if(visualOnly_ && (!bindings_.tooltip_vtable || !bindings_.tooltip_unit_vtable))throw 1;
         query_ = visualOnly_ ? Value(shop,L"Query",L"") : L"";
         if(query_.size()>36 || (!query_.empty() && (!bindings_.edit_set_text || !bindings_.edit_get_text)))throw 1;
         if (scope == L"StockAssertions" || visualOnly_)
             stockAssertions_ = true;
-        else if (scope == L"OwnerCatalog")
+        else if (scope == L"OwnerCatalog" || purchaseAssertions_)
             stockAssertions_ = false;
         else
             throw 1;
@@ -1353,7 +1362,7 @@ private:
         baseline_ = std::move(image);
         hasBaseline_ = true;
         observation_.wallet_unchanged = 1;
-        observation_.inventory_unchanged = 1;
+        observation_.inventory_unchanged = purchaseAssertions_ ? 0 : 1;
         stage_ = kStageEnterShop;
         return Publish(kWaitingForLobby);
     }
@@ -2137,7 +2146,7 @@ private:
                 kNativeNameTargetMissing;
             return kNativeNameMismatch;
         }
-        // Custom operator stock keeps a neutral raw grid title. The
+        // Owner-managed stock keeps a neutral raw grid title. The
         // localization hook exposes the sealed author title only after the
         // live option tuple matches. Ordinary stock assertions still require
         // exact raw-title equality.
@@ -2642,6 +2651,7 @@ private:
             return kWalletChanged;
         }
         observation_.wallet_unchanged = 1;
+        if(purchaseAssertions_)return kComplete;
         if (current.active_slot !=
                 baseline_.active_slot ||
             current.capacity !=
@@ -2657,6 +2667,17 @@ private:
 
     Result CaptureIntegrity(IntegrityImage* output)
     {
+        if(purchaseAssertions_) {
+            // The mutating purchase case makes no native whole-inventory
+            // preservation claim. Its inventory receipt is independent SQL
+            // before/after plus a fresh login. Read the genuine wallet only;
+            // the ordinary native Shop can be opened directly from the lobby.
+            uint8_t* profile=nullptr;
+            if(!output || !ReadIndirect(bindings_.profile_pointer,&profile) || !profile ||
+               !ReadValue(profile,kProfileGp,&output->gp) ||
+               !ReadValue(profile,kProfileCash,&output->cash))return kInventoryUnavailable;
+            return kComplete;
+        }
         observation_.inventory_failure=1;
         if (!output)
             return kInventoryUnavailable;
@@ -3559,6 +3580,7 @@ private:
     std::set<std::wstring> verifiedKeys_;
     std::set<uint32_t> requestedInventoryPages_;
     bool stockAssertions_ = false;
+    bool purchaseAssertions_ = false;
     bool visualOnly_ = false;
     bool operatorPreview_ = false;
     std::wstring query_;

@@ -72,6 +72,18 @@ namespace Sdgo.Shop
             Unchanged();Model.Validate(Catalog,Snapshot);ValidateDraftChinese();Model.Save(CatalogFile,Catalog);
             savedHash=Model.FileHash(CatalogFile);CaptureProducts();
         }
+        public bool InitializeDefaultPresets()
+        {
+            Unchanged();
+            if(Catalog.default_presets_version==0&&Catalog.products.Count==0&&Applied.Count!=0)
+                throw new InvalidOperationException("服务器已有此商城标识管理的商品。请选择原商城配置目录；未初始化或覆盖默认商品。");
+            var candidate=Model.DefaultPresets(Catalog,Snapshot);
+            if(candidate==null)return false;
+            // Persist assigned identities before the native SQL transaction.
+            // On failure these remain reviewable drafts, never silently retried.
+            Catalog=candidate;SaveDraft();Apply();
+            return true;
+        }
         static void Probe(string dir)
         {
             Directory.CreateDirectory(dir);string test=Path.Combine(dir,".shop-write-"+Guid.NewGuid().ToString("N"));
@@ -178,6 +190,7 @@ namespace Sdgo.Shop
             {
                 Applied=Catalog.products.Where(p=>!p.retired).Select(p=>new Applied {Id=p.product_id,Sku=p.item_id,Category=p.category_id,Price=p.price,Validity=p.validity,Currency=p.currency,Visible=p.enabled,Label=p.label,Name=p.name}).ToList();demoRepository.Applied=Applied;
                 Snapshot.ActiveProducts=Applied.Where(a=>a.Visible).Select(a=>new ActiveProduct {ProductId=a.Id,OptionId=a.Id,Category=a.Category,Validity=a.Validity}).ToList();
+                if(Catalog.default_presets_version==1)Catalog.default_presets_applied=true;
                 SaveDraft();return;
             }
             string helper=Path.Combine(ModDirectory,"shop_catalog_apply.exe");
@@ -200,6 +213,7 @@ namespace Sdgo.Shop
             {
                 Model.Atomic(Path.Combine(ModDirectory,"catalog.ini"),File.ReadAllBytes(candidate));
                 Model.Atomic(Path.Combine(ModDirectory,"runtime-display.ini"),File.ReadAllBytes(Path.Combine(run,"runtime-display.ini")));
+                if(Catalog.default_presets_version==1)Catalog.default_presets_applied=true;
                 SaveDraft();
                 if(displayDir!=null) Model.Atomic(Path.Combine(displayDir,"display.ini"),File.ReadAllBytes(Path.Combine(run,"runtime-display.ini")));
             }
@@ -212,6 +226,8 @@ namespace Sdgo.Shop
             if(incoming.catalog_id!=Catalog.catalog_id&&(Catalog.products.Count>0||Applied.Any(a=>a.Visible))) throw new InvalidOperationException("导入配置的标识不同。当前目录已管理商品，请为另一套配置选择单独的管理目录。");
             if(incoming.catalog_id==Catalog.catalog_id)
             {
+                incoming.default_presets_version=Catalog.default_presets_version;
+                incoming.default_presets_applied=Catalog.default_presets_applied;
                 foreach(var old in Catalog.products)
                 {
                     var replacement=incoming.products.FirstOrDefault(p=>p.key==old.key);

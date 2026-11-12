@@ -11,7 +11,7 @@ import zipfile
 
 from manager import packages, storage
 from manager.shop import (PACKAGE_FILES, Shop, _blueprint_category_map,
-                          _shop_acquisition_sources, _shop_category_maps)
+                          _shop_acquisition_sources, _shop_category_maps, _symbol_fragment)
 from manager.workspace import Workspace
 
 
@@ -445,6 +445,25 @@ class ShopClientPackageTests(unittest.TestCase):
         symbol.write_text('[host]\ntimestamp=0x54BE1568\nsize_of_image=0x00C97000\n', encoding='ascii')
         with self.assertRaisesRegex(ValueError, '不完整或版本不一致'):
             self.export()
+
+
+class RepositoryShopSymbolContractTests(unittest.TestCase):
+    def test_shipped_host_and_module_fragments_satisfy_the_actual_export_consumer(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as temporary:
+            client = Path(temporary)
+            symbols = client/'sdgo/symbols'
+            symbols.mkdir(parents=True)
+            shutil.copy2(ROOT/'symbols'/(HOST+'.ini'), symbols/(HOST+'.ini'))
+            manifests = {}
+            for identity in ('shop_labels', 'shop_localization'):
+                destination = client/'sdgo/mods'/identity
+                destination.mkdir(parents=True)
+                source = ROOT/'mods'/identity
+                manifests[identity] = storage.ini_values((source/'mod.ini').read_bytes())
+                if (source/'symbols.fragment.ini').is_file():
+                    shutil.copy2(source/'symbols.fragment.ini', destination/'symbols.fragment.ini')
+            self.assertTrue(_symbol_fragment(client, manifests, HOST))
 
 
 if __name__ == '__main__':

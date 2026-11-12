@@ -71,6 +71,7 @@ namespace Sdgo.Manager
                     else {product.retired=action=="delete";product.enabled=action=="restore";}
                     service.SaveDraft();
                 }
+                else if(action=="initialize-presets")service.InitializeDefaultPresets();
                 else if(action=="apply")service.Apply();
                 else if(action=="search-index")
                 {
@@ -81,6 +82,8 @@ namespace Sdgo.Manager
                 {
                     var incoming=Model.Json().Deserialize<Catalog>(Model.Json().Serialize(body["catalog"]));Model.Validate(incoming,service.Snapshot);
                     if(incoming.catalog_id!=service.Catalog.catalog_id)throw new InvalidOperationException("导入配置属于不同的商城工作区。");
+                    incoming.default_presets_version=service.Catalog.default_presets_version;
+                    incoming.default_presets_applied=service.Catalog.default_presets_applied;
                     foreach(var old in service.Catalog.products)
                     {
                         var next=incoming.products.FirstOrDefault(p=>p.key==old.key);

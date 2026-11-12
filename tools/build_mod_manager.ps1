@@ -22,6 +22,8 @@ if($LASTEXITCODE -ne 0){throw 'Manager domain test build failed'}
 if($LASTEXITCODE -ne 0){throw 'Manager Chinese product contract test build failed'}
 & $compiler /nologo /target:exe ("/out:"+(Join-Path $services 'ShopSearchIndexTests.exe')) ("/r:"+$library) /r:System.Data.dll /r:System.Web.Extensions.dll (Join-Path $repo 'tests/ShopSearchIndexTests.cs')
 if($LASTEXITCODE -ne 0){throw 'Manager shop search-index contract test build failed'}
+& $compiler /nologo /target:exe ("/out:"+(Join-Path $services 'ShopDefaultPresetTests.exe')) ("/r:"+$library) /r:System.Data.dll /r:System.Web.Extensions.dll (Join-Path $repo 'tests/ShopDefaultPresetTests.cs')
+if($LASTEXITCODE -ne 0){throw 'Manager shop default-preset contract test build failed'}
 $env:LIB=$oldCompilerLib
 if($ServicesOnly){Write-Output $services;return}
 $oldLibrary=$env:SDGO_MANAGER_SERVICES
