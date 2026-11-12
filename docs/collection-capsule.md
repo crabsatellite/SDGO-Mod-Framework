@@ -409,6 +409,34 @@ The unit rows and root metadata then commit or roll back together. The standalon
 content is already installed. The next `export` writes published family metadata
 into the public snapshot, and later `build-kit` runs reuse it automatically.
 
+### Example: register a fictional two-form training unit
+
+This is metadata only, with no unit records or artwork. Assume fictional forms `29011` and `29012` are already
+properly installed on both sides, transform reciprocally, and only `29011` is the independently ownable root:
+
+```json
+{
+  "protocol": "sdgo.unit-family",
+  "protocol_version": 1,
+  "installable": true,
+  "package_id": "example.training.two-form",
+  "family": {
+    "root_form": "base",
+    "forms": [
+      {"id": 29011, "key": "base", "transform_target": 29012},
+      {"id": 29012, "key": "alternate", "transform_target": 29011}
+    ]
+  }
+}
+```
+
+Save it as your `family-a.json` and use the `register-family` command above, or register inside the unit importer's
+definition transaction. Example IDs are not reservations: use the actually installed forms. This declaration uses
+`protocol_version`, unlike the client unit `definitions.json`'s `schema_version`. Registration checks live edges and
+root eligibility; it does not create units, delivery categories or player inventory. After matching category/client
+content is installed, the live catalog and exclusions determine candidates. No copied prize list or unlock reset is
+needed. Use exclusions for content not yet offered instead of inventing an entry or deleting player history.
+
 ## Update, disable, and restore
 
 For a catalog, cover, Mod, or framework update:

@@ -91,6 +91,10 @@ Everyday frame-rate, display, hangar and claim controls.
 
 ## Owner management and content editing
 
+Start with [import routes and content boundaries](docs/content-boundaries.md#choose-the-correct-custom-import-route).
+Operator, map, unit/skill, blueprint, shop and capsule guides use fictional examples and distinguish author inputs,
+configuration drafts and generated player packages.
+
 Edit and publish server content in SDGO Mod Manager for players to install.
 
 | Feature | Overview |

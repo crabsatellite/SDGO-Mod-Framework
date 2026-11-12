@@ -14,6 +14,11 @@ missing one, and existing entries keep their workspace. No desktop shortcut is c
 Client/server selection, mod configuration, shop, operators, unit import, capsule machines, rewards, FRP and AI
 catalogs share one local interface. Users do not install Python or launch per-feature programs.
 
+Identify custom content with the [import route table](content-boundaries.md#choose-the-correct-custom-import-route).
+Operator `.opack`, map `map.json`, capsule/shop JSON, owner profiles and generated player ZIPs have different
+consumers. Read the root manifest rather than the extension. Feature guides provide fictional training examples
+with inputs, outputs and paired application steps; **导入配置包** installs a generated runtime package.
+
 **添加目录** (add folder) and **浏览…** (browse) in settings open the Windows folder or file picker. If the picker
 cannot open, Manager shows a box for typing the path instead. Manager installs the framework into a newly added
 folder, and the page lists its features once the installation finishes.

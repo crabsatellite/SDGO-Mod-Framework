@@ -24,6 +24,33 @@ available; its absence never prevents the capsule runtime from loading. Existing
 sources and blueprint fields are preserved, and unapplied activity drafts are not
 advertised as available sources.
 
+## Example: a fictional Training Pool and configuration exchange
+
+Use six eligible sortie roots with complete resources in your own target catalog, and choose a six-slot template
+matching their grades. Another importer registers unit/weapon/model data; capsule JSON does not create those assets.
+
+1. Create a fixed machine named “训练机池” in Manager. Let the tool allocate its identity and display position.
+2. Select the six target units and enter illustrative weights `50, 150, 200, 200, 200, 200`, totaling `1000`.
+   Keep the template's grade constraints and set your own price. Do not edit native draw sequences directly.
+3. For new portraits, upload your own PNG, crop and confirm in the native card preview. Exported semantic JSON
+   carries image/crop data, not a local absolute image path.
+4. Save and export the complete configuration. Reimport in the same source workspace without changing
+   `source_identity`, unit metadata or candidate policy. For another source/database, establish its own catalog
+   and choose matching units instead of changing the source identity to force an old pool through validation.
+5. Compile/preview the client, then **导入到游戏** applies paired client/server data with the same `catalog_revision`.
+   Players receive the generated `player/` package or owner content update; authors exchange semantic JSON.
+
+Custom-machine candidate count is separate from rare-slot count. Approved, same-database C/B/A imported roots can
+enter ordinary slots under `slot_rules`, eligibility and import-registration checks; never relabel them as SR.
+Rare S-grade candidates still follow the SR/SS-without-a-blueprint policies. Nothing adds a unit to a machine
+without the owner's selection.
+
+Activity machines use a separate 10000-entry frequency scale, poster, currency and reward categories. Do not use
+the fixed machine's 1000-weight fragment as activity JSON. Collection capsule uses the live catalog and root
+declarations; see the [fictional two-form example](collection-capsule.md#example-register-a-fictional-two-form-training-unit).
+
+## Data and installation
+
 `capsule_catalog` ships disabled until the owner supplies a complete generated
 runtime. No game assets, player data, database credentials or machine-specific
 paths are checked into this repository. Owners provide their own supported client

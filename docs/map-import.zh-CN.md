@@ -39,6 +39,95 @@
 
 服务端写入在一个事务里完成。已存在、但不是由地图导入写入的同键行会让整个应用被拒绝，不会覆盖原有数据。
 
+## 不依赖现成地图素材的最小案例
+
+先做虚构的“训练场”：平地、一层纯色地表、两队各六个出生点，无模型和任务。
+下面的源码开发示例只生成几张纯色图片和 `map.json`，不读取任何现有地图包。
+运行环境需要 Pillow；普通服主可用图像工具制作相同尺寸的图片，再按协议填写清单。
+
+```python
+from pathlib import Path
+import hashlib
+import json
+from PIL import Image
+
+root = Path("example-training-yard")
+root.mkdir(exist_ok=False)
+images = {
+    "terrain/height.png": Image.new("L", (257, 257), 0),
+    "terrain/ground.png": Image.new("RGB", (64, 64), (90, 120, 80)),
+    "images/preview.png": Image.new("RGB", (128, 128), (90, 120, 80)),
+    "images/minimap.png": Image.new("RGB", (128, 128), (90, 120, 80)),
+}
+for name, image in images.items():
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path, format="PNG")
+
+def spawn(x, z):
+    return {"position": [x, 100, z], "facing": [0, 1]}
+
+manifest = {
+    "schema": "sdgo.map-package", "schema_version": 1,
+    "map_key": "example.training-yard",
+    "name": {"zh": "训练场", "en": "Training Yard"},
+    "modes": ["normal"], "servers": ["beginner"],
+    "terrain": {
+        "half_extent": 4096,
+        "height": {"image": "terrain/height.png", "min": 0, "max": 0},
+        "layers": [{"texture": "terrain/ground.png", "tiling": 32}],
+        "lighting": {"bake_shadows": False},
+    },
+    "objects": [],
+    "spawns": {
+        "team_a": [spawn(-1500, -300 + i * 120) for i in range(6)],
+        "team_b": [spawn(1500, -300 + i * 120) for i in range(6)],
+        "shared": [spawn(0, 0)],
+    },
+    "presentation": {
+        "preview": "images/preview.png", "minimap": "images/minimap.png",
+        "bgm": {"native": "BGM\\0001.mp3"},
+    },
+    "files": {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+              for name in images},
+}
+(root / "map.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+```
+
+`BGM\\0001.mp3` 只是原生音乐引用示例，编译前须确认目标客户端存在，或换为作者自己的包内 MP3，
+同时登记它的文件摘要。`files` 不列 `map.json` 自身；图片改变后重新计算摘要。
+包的尺寸、字段和摘要可用 `owner.maps.package.load(root)` 读取校验；完整编译仍需目标客户端的兼容原生模板。
+
+在 Manager 登记刚生成的文件夹，保存卡片，编译全部启用地图，安装客户端包，再检查、应用和读回服务端计划。
+目录注册只复制制作资料；未完成编译和两端安装时，游戏里不会出现这张地图。
+要加物件，提供自己制作的 glTF/贴图，并将每个外部缓冲区、纹理文件列入 `files`。
+
+再增加虚构“30 秒演习”时，将下面内容保存为 `missions/drill.json`。
+`500` 只是格式示例，必须替换成两端确实存在的 NPC 模板；这份任务不携带原生模型或 AI 脚本：
+
+```json
+{
+  "schema": "sdgo.map-mission", "schema_version": 1,
+  "mission_key": "example.training-yard.drill",
+  "name": {"zh": "30 秒演习", "en": "30-second Drill"},
+  "description": {"zh": "在训练场坚持 30 秒"},
+  "briefing": {"zh": ["坚持 30 秒，熟悉移动和防御。"]},
+  "difficulties": [{"level": 1, "required_rank": 1, "time_limit": 120, "lives": 3}],
+  "bgm": {"native": "BGM\\0001.mp3"},
+  "npcs": {"target": {"template": 500}},
+  "phases": [{
+    "key": "hold", "objective": {"zh": "坚持 30 秒"},
+    "slots": {"ally": 0, "enemy": 1},
+    "spawns": [{"npc": "target", "positions": [[600, 100, 0]], "at": 1}],
+    "goal": {"survive": 30}
+  }]
+}
+```
+
+把任务 JSON 也列入 `map.json.files` 并计算 SHA-256 后重新登记、编译、安装和应用；
+目标 NPC 模板、音乐、后续头像和横幅均须在目标存在或由作者显式提供，掉落另行配置。
+只复制一张任务海报或修改地图名称不会创建任务。命名门板等新语义另按所需 v2/v3 版本声明。
+
 ## 地图包协议（`map.json`）
 
 地图包是一个文件夹：一个 `map.json`，以及它引用的 glTF 2.0 模型（`.glb`/`.gltf`）、图片和可选的 MP3。所有文件都必须在 `files` 中登记 SHA-256。

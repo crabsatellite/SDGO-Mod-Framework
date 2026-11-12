@@ -60,6 +60,33 @@ Later content exports retain the published program lock while that program versi
 
 Validate the resulting client/server combination before publishing it. Players install the owner's exact program and Mod versions rather than independently selecting the latest incompatible release.
 
+## Example: deliver fictional training content offline
+
+Assume the author has applied paired definitions/resources for a fictional Training Unit, Training Operator and
+Training Pool. No existing server's profile, artwork or address is needed for this example.
+
+1. Select **服主 DIY** for the authoring client, review installed programme versions and confirm the paired content.
+2. Choose a new output outside the client, such as `D:\ExampleFeed\training`, under owner profile/content publication.
+   Leave the Git publication address empty and export. Do not add the whole author workspace, databases, logs,
+   credentials or private rosters as extra assets.
+3. The output contains `server-profile.json`, `profile-source.json` and `content/`. Verify that generated catalogs,
+   self-authored images and shared settings are declared; programmes remain supplied by their locked Mod source.
+   Do not put a DLL into the content layer as if it were artwork.
+4. Copy the entire output folder to another computer, not just one JSON file. Prepare a compatible original client,
+   select either manifest from that copied folder in **服主配置与内容更新**, then **一键安装／跟随服主配置**.
+5. Manager resolves the base requirement, programme locks, content hashes and installation transaction. The player
+   does not execute server SQL and does not need the author's original editing workspace.
+
+“Offline directory” describes the content transport; it does not waive package, version or hash checks. Missing
+programmes must still be accessible through their declared source or an exact verified cache. An HTTPS feed
+may place the manifest at `/training/server-profile.json`; that is a path, not a downloadable address. Enter
+the owner's full accessible HTTPS address in Manager, supplying the same manifest and files.
+
+After editing a self-authored poster, export the same publisher/source again: its content revision and hashes
+change, and followers obtain the update. Do not change `revision` manually to conceal differing bytes or replace
+the publisher with another owner's profile. Client installation, server definition application and actual process
+activation remain separate states; a completed download alone does not prove paired activation.
+
 ## State and installation safety
 
 Shared gameplay parameters and custom resources follow owner updates. Personal login, display/FPS and explicitly declared personal fields stay local. Accounts, inventory, currency, passwords, birthday rosters, databases, logs and recovery data never enter player content. Player installation runs no SQL or database migration.

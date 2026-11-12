@@ -88,6 +88,8 @@ Manager 已内置所需组件；**玩家客户端不需要 Python，也不需要
 **这些素材及包含它们的 `.opack` 不进入 Manager EXE、公开框架 Release、源码仓库或通用服务端包。**
 
 完整格式、限制、语音策略和 API 见[分享包与能力扩展协议](operator-pack-protocol.zh-CN.md)。
+其中的[虚构训练副官案例](operator-pack-protocol.zh-CN.md#从零组合一个非敏感分享包)给出可执行的打包代码、
+图像路径、模板继承、预览摘要与两端应用顺序，不需要取得其他服主的素材或分享包。
 
 ## 能力配置
 

@@ -21,6 +21,38 @@ Profiles with [owner programmes](owner-programmes.md) lock the matching Manager,
 
 A private distribution endpoint is not a credential or player-database export. The owner authoring workspace and its player-shareable subset are separate.
 
+## Choose the correct custom-import route
+
+Identify the root manifest/protocol, not just the `.zip` extension. Author inputs, editable configuration and player
+runtime packages are different artifacts:
+
+| Input | Identification and Manager route | Remaining work |
+|---|---|---|
+| Raw unit RAR/ZIP or `sdgo.unit-project` | [Unit Import](unit-import.md), parse/save project | Complete definitions and previews; new skills use the [paired skill example](unit-skill-import.md). |
+| Compiled unit `publication/` | `server-plan.json` plus `package/`; batch roster apply | Server preflight/maintenance/apply/readback and matching client installation. |
+| `.opack` | `operator-pack.json`, `sdgo.operator-pack`; [operator pack preview](operator-pack-protocol.md#assemble-a-neutral-sharing-package) | Draft first; server, client, ability activation and optional shop steps remain separate. |
+| Map authoring folder | `map.json`, `sdgo.map-package`; [Map Import](map-import.md#a-minimal-example-without-existing-map-artwork) | Register, compile, install client, check/apply server. |
+| Capsule semantic JSON | `units`, `fixed_machines`, `custom_machines`; [capsule editor](capsule-catalog.md#example-a-fictional-training-pool-and-configuration-exchange) | Retain source identity/policy, compile and apply both sides. |
+| Shop JSON | `catalog_id`, `products`; [Shop](shop-catalog.md#example-sell-an-already-registered-training-unit) | Same-workspace draft import, explicit listing/apply; no model import. |
+| AI grouping rules | `exclude`, `levels`, `templates`; [AI Catalog](ai-catalog.md) developer fields | Check current catalogs, generate/install one version on both sides; rules are not AI code. |
+| Mission `profile.bin` | Matching profile in [Mission Behavior](mission-behavior.md) | Validate the full client/Battle group, paired apply and required restart. |
+| `server-profile.json` / `profile-source.json` | [Owner profile/content update](owner-updates.md#example-deliver-fictional-training-content-offline) | Player resolves locks/downloads/hashes before installation; no server SQL execution. |
+| Generated player runtime ZIP | Select client under Game Features, **导入配置包** | Manifest/dependency/ownership checks. Renaming an author `.opack`, map folder or shop JSON does not make it a runtime package. |
+
+FRP uses its [generic endpoint example](frp-distribution.md). Posters, portraits and audio use their respective
+authoring tools' asset inputs. A single image, rule or native record does not create its referenced unit, offer,
+mission or database definition implicitly.
+
+A fictional chain imports a Training Unit and its skill first, reads back paired definitions, then explicitly adds
+it to a Training Pool or creates an unlisted Training Unit offer; separately imports an author-drawn Training Operator;
+and publishes the chosen shared content and version locks. Keep stable identities between steps. Do not use another
+owner's content as a template. Choosing no new acquisition route is also valid.
+
+The source directory `owner/` and compatibility fields containing `pending` or `authoring` are not private owner data
+or global capability verdicts. Trace the current entry point's validator, compiler and consumer. Report the precise
+field, dependency, target version or missing consumer instead of removing skills/forms, substituting artwork, or
+inferring complete-protocol support solely from an older draft status.
+
 ## SQL ownership
 
 `distribution/artifact-ownership.json` declares every framework SQL file. Generic SQL may define tables, procedures and triggers or run parameterized queries and maintenance operations against the selected server. It is implementation code, not a dump of that server's records.

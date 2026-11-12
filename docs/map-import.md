@@ -39,6 +39,99 @@ Numbers are assigned at compile time: map numbers continue after the client's ow
 
 The server write runs in one transaction. A row with the same key that was not written by the map import refuses the whole apply, so original data is never overwritten.
 
+## A minimal example without existing map artwork
+
+Start with a fictional “Training Yard”: flat terrain, one plain-color ground layer, six spawns per team,
+and no models or missions. This source-development example creates only plain images and `map.json`;
+it reads no existing map package. It requires Pillow. Owners can instead create images of these dimensions
+with their own image editor and fill the same manifest.
+
+```python
+from pathlib import Path
+import hashlib
+import json
+from PIL import Image
+
+root = Path("example-training-yard")
+root.mkdir(exist_ok=False)
+images = {
+    "terrain/height.png": Image.new("L", (257, 257), 0),
+    "terrain/ground.png": Image.new("RGB", (64, 64), (90, 120, 80)),
+    "images/preview.png": Image.new("RGB", (128, 128), (90, 120, 80)),
+    "images/minimap.png": Image.new("RGB", (128, 128), (90, 120, 80)),
+}
+for name, image in images.items():
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path, format="PNG")
+
+def spawn(x, z):
+    return {"position": [x, 100, z], "facing": [0, 1]}
+
+manifest = {
+    "schema": "sdgo.map-package", "schema_version": 1,
+    "map_key": "example.training-yard",
+    "name": {"zh": "训练场", "en": "Training Yard"},
+    "modes": ["normal"], "servers": ["beginner"],
+    "terrain": {
+        "half_extent": 4096,
+        "height": {"image": "terrain/height.png", "min": 0, "max": 0},
+        "layers": [{"texture": "terrain/ground.png", "tiling": 32}],
+        "lighting": {"bake_shadows": False},
+    },
+    "objects": [],
+    "spawns": {
+        "team_a": [spawn(-1500, -300 + i * 120) for i in range(6)],
+        "team_b": [spawn(1500, -300 + i * 120) for i in range(6)],
+        "shared": [spawn(0, 0)],
+    },
+    "presentation": {
+        "preview": "images/preview.png", "minimap": "images/minimap.png",
+        "bgm": {"native": "BGM\\0001.mp3"},
+    },
+    "files": {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+              for name in images},
+}
+(root / "map.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+```
+
+`BGM\\0001.mp3` is an illustrative native music reference: verify it exists in the target client, or replace
+it with the author's packaged MP3 and include its hash. Do not list `map.json` inside its own `files` map.
+Recompute hashes after edits. `owner.maps.package.load(root)` checks the package; full compilation still
+requires compatible templates from the selected target client.
+
+Register the generated folder in Manager, save the card, compile all enabled maps, install the client package,
+then check/apply/read back the server plan. Registration only copies authoring material: the map appears in the
+game after compilation and paired installation. Add objects using your own glTF/textures and list every external
+buffer and image in `files`.
+
+For a fictional “30-second drill”, save the following as `missions/drill.json`. Replace the illustrative `500`
+with an NPC template present in both targets. This JSON carries no native model or AI script:
+
+```json
+{
+  "schema": "sdgo.map-mission", "schema_version": 1,
+  "mission_key": "example.training-yard.drill",
+  "name": {"zh": "30 秒演习", "en": "30-second Drill"},
+  "description": {"zh": "在训练场坚持 30 秒"},
+  "briefing": {"zh": ["坚持 30 秒，熟悉移动和防御。"]},
+  "difficulties": [{"level": 1, "required_rank": 1, "time_limit": 120, "lives": 3}],
+  "bgm": {"native": "BGM\\0001.mp3"},
+  "npcs": {"target": {"template": 500}},
+  "phases": [{
+    "key": "hold", "objective": {"zh": "坚持 30 秒"},
+    "slots": {"ally": 0, "enemy": 1},
+    "spawns": [{"npc": "target", "positions": [[600, 100, 0]], "at": 1}],
+    "goal": {"survive": 30}
+  }]
+}
+```
+
+Hash the mission JSON in `map.json.files`, then register/compile/install/apply again. The NPC template, music,
+later portraits and unit strips must exist in the target or be explicitly supplied; configure rewards separately.
+An image or renamed map alone does not create a mission.
+Use the appropriate v2/v3 schemas for newer semantics such as named gate blocks.
+
 ## Map package protocol (`map.json`)
 
 A map package is a folder: one `map.json` plus the glTF 2.0 models (`.glb`/`.gltf`), images and optional MP3 it references. Every file must be listed with its SHA-256 in `files`.

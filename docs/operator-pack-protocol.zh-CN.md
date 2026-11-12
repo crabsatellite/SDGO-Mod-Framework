@@ -11,6 +11,66 @@
 提供的客户端包或更新交付，不能捆绑进 SDGO Mod Manager EXE、公开框架 Release、源码仓库或通用
 服务端包。Manager 和公开框架发行物只提供通用协议、导入器、编译器和能力运行代码。
 
+## 从零组合一个非敏感分享包
+
+虚构案例“训练副官”只使用作者自绘的 `training.png`，所有图像角色暂用同一张图，
+台词和语音明确沿用目标模板，能力设为常规 GP 加成 5%，不附带掉落。
+`60001` 只是模板编号示例，必须在目标客户端及服务端目录中存在；实际副官的新编号由 Manager 分配。
+这不是某位服主的副官素材，也不包含任何游戏原图或语音。
+
+普通服主可以在 Manager 新建副官、上传自己的 PNG、编辑能力并保存。
+需要制作可交换 `.opack` 的开发者，在框架源码环境中运行下面的代码；`training.png` 是自己的 1–2048 像素 PNG：
+
+```python
+from pathlib import Path
+from manager.engines.operators.assets import validate_png, sprite_binary
+from manager.engines.operators.legacy_pack import package
+
+image = Path("training.png").read_bytes()
+width, height = validate_png(image)
+files = {
+    "txrs/9001.txr": image,
+    "sprs/9001.spr": sprite_binary("txrs/9001.txr", width, height),
+}
+abilities = {
+    "schema_version": 1, "mode": "custom",
+    "general": {"gp_percent": 5, "unit_exp_percent": 0, "energy_save_percent": 0},
+    "victory": {"gp_percent": 0, "unit_exp_percent": 0, "energy_save_percent": 0},
+    "defeat": {"gp_percent": 0, "unit_exp_percent": 0, "energy_save_percent": 0},
+    "timed": [], "pilot_exp_percent": 0, "mission_parts": None, "extensions": {},
+}
+raw = package(
+    files,
+    {"dialogue": "", "sprites": ["sprs/9001.spr"] * 7, "intro_voice": ""},
+    pack_id="example.training.operator", name="训练副官", source_template=60001,
+    resources_metadata={"voice_policy": "native_fallback"},
+    abilities=abilities,
+    acquisition={"delivery": "product", "drops": []},
+    storefront={"name": "训练副官", "label": "永久副官", "price": 1000,
+                "currency": "GB", "validity": 1},
+)
+with Path("training-operator.opack").open("xb") as output:
+    output.write(raw)
+```
+
+`package` 自动生成根 `operator-pack.json`、精确资源大小和 SHA-256，并把资源放入 ZIP。
+TXR 在这个例子中保存实际 PNG 编码；SPR 由框架写入合法布局和纹理引用。
+七个图像角色使用同一张图只适合演示；正式制作时分别提供合适的图像和原生裁切，不要改变数组顺序。
+要替换语音，另提供台词 GDT、出击 ZSD、每行两个语音字段引用的 ZSD，并设 `provided_only`；
+本例的 `native_fallback` 明确表示依赖目标原生台词及语音，不是独立本地化语音包。
+
+导入与生效按以下顺序操作：
+
+1. 在“副官与能力”选择目标客户端和服务端定义，点击“导入副官分享包”预览生成的 `.opack`。
+2. 检查图像、模板、基础依赖、5% 常规加成和 `product` 发放方式，再确认创建草稿。
+3. 自动化客户端先读取当前 `revision`，发送 `import-preview`；确认时用返回的 `pack_sha256` 填入请求字段 `sha256`。
+   预览会规范化 ZIP，不能用原 ZIP 的文件摘要或 `source_archive_sha256` 代替这个缓存标识。
+4. 保存草稿，分别应用服务端定义和生成／安装副官客户端包；新增定义按 Manager 提示刷新原生服务。
+   独立能力需要对应 Battle 运行组件时，另检查其安装与重启状态。
+5. 若要销售，在商城读取已应用到同一数据库的副官类别，创建未上架商品草稿，再明确上架并应用。
+   本例的 `storefront` 只是预填，`delivery=product` 不会赠送副官或直接开卖。
+6. 给玩家分发生成的客户端更新包。`.opack` 用于作者之间交换，不是 Manager 普通“导入配置包”的运行包。
+
 ## 四个协议层
 
 | 层 | version 1 的作用 | 导入后的状态 |
@@ -168,13 +228,14 @@ SPR 支持 version `10000`/`11000`、kind `20`、1–1024 帧。导入器保留�
 | 偏移 | 长度 | 含义 |
 |---:|---:|---|
 | `+0` | 50 wchar | `event` |
-| `+50` | 50 wchar | `event_variant`，保持原字节，不推测额外语义 |
 | `+100` | 200 wchar | 字幕 |
 | `+502` | 50 wchar | 语音变体 0 |
 | `+602` | 50 wchar | 语音变体 1 |
 
 导入器遍历所有台词行和两个语音字段，语音文件数和事件数没有固定要求。ZSD 保留原生可播放的 MP3、
 WAVE 或 MPEG 同步流字节，不调用外部转码器。
+偏移以字节计；当前读取器将 `+0` 的 50 wchar 作为事件字符串，不把它中间的 `+50` 再解释为一段重叠字段。
+其余未解释字节保持原样。
 
 `voice_policy`：
 

@@ -16,6 +16,26 @@ contains no credentials or local paths.
 
 After a successful apply, the selected client receives acquisition data for actually visible unit and blueprint offers, distinguishing purchases from rentals and removing unlisted sources. Distribute that data with the client update; players with [unit acquisition sources](acquisition-sources.md) enabled can see it in the encyclopedia. This integration is optional and does not affect shop purchases when the acquisition Mod is absent.
 
+## Example: sell an already registered Training Unit
+
+Assume the fictional unit and its permanent item category are already applied to the same database, with matching
+client models/icons. Refresh the item catalog, select that category, create “训练机使用权” with label “永久”,
+price `1000 GB`, `validity=1`, and save it unlisted. Manager allocates the product ID, SKU and native template.
+A unit ID is not an item-category ID, and another workspace's product identity must not be copied.
+
+Export JSON, change this product's `price` to `1200`, and reimport in the same workspace while retaining
+`catalog_id`, `key`, `product_id`, `item_id`, `template_id` and `category_id`. Review the draft, explicitly list it
+and apply. Distribute client display resources separately. JSON import neither grants a unit nor installs its model.
+
+This is same-catalog configuration exchange, not a universal product installer. Another `catalog_id` or missing
+target item/template is refused: create a matching offer in that target instead of deleting identity fields or
+overwriting ledgers. Missing old offers in a complete JSON import are retired with their IDs preserved; do not
+reduce an export to only the product being edited. Imported operators likewise need their category applied before
+an unlisted shop draft can be created. Registered imported units/operators/blueprints use existing native single-item
+templates; shop configuration does not create new game resources or multi-item bundles.
+
+## Application and limits
+
 The WorldServer module (`548A86E3-0010C000`) starts disabled until configured and is installed once with
 the standalone `Install.ps1`. It updates only its own single-item offers in a transaction and keeps native
 listing, billing and delivery; accounts, balances, inventory and history are untouched. Prices must be

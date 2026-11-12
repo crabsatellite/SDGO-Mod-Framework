@@ -329,6 +329,34 @@ register_unit_family(db, declaration, in_transaction=True)
 自己的事务；它适合内容已经安装完成后的补充注册。下一次 `export` 会把已发布的家族元数据
 写入公开快照，后续 `build-kit` 会自动沿用。
 
+### 登记一个虚构双形态训练机
+
+以下只演示声明格式，不带任何机体记录或素材。假设作者已合法安装虚构根形态 `29011` 和变形态 `29012`，
+两端关系均为 `29011 ↔ 29012`，且只有 `29011` 是可独立持有的库存根：
+
+```json
+{
+  "protocol": "sdgo.unit-family",
+  "protocol_version": 1,
+  "installable": true,
+  "package_id": "example.training.two-form",
+  "family": {
+    "root_form": "base",
+    "forms": [
+      {"id": 29011, "key": "base", "transform_target": 29012},
+      {"id": 29012, "key": "alternate", "transform_target": 29011}
+    ]
+  }
+}
+```
+
+保存为作者自己的 `family-a.json`，按上面的 `register-family` 命令登记，或由机体导入器在写入定义的同一事务登记。
+示例编号不是预约，必须换成目标实际已安装的形态。`protocol_version` 是这份收藏入口声明的字段，
+不要与机体客户端 `definitions.json` 的 `schema_version` 混淆。
+注册器核对 live 关系和根形态，不创建机体、永久交付类别或玩家库存。
+确认类别和客户端内容配套后，收藏候选按 live 目录和除外名单更新；不需要复制固定奖池或清空解锁记录。
+同一机体若尚未开放抽取，使用除外名单明确关闭，而不是伪造入口或删除玩家历史。
+
 ## 更新、停用与恢复
 
 更新机体目录、封面、Mod 或 framework 时：

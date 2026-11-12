@@ -208,6 +208,23 @@ Registered families then appear in the downstream editors exactly like confirmed
 Applying a changed publication changes its revision; a changed publication must be applied and registered again, and an
 old registration is never reused silently. Where a single-family project owns the same root or family, the project wins.
 
+## Example: a Training Unit blueprint and its display assets
+
+After supplying the fictional Training Unit's complete paired definitions, add an authored blueprint to its project.
+Select compatible native recipe/item templates, three distinct material units and their minimum levels; explicitly
+set the player-level requirement and blueprint discard repayment. Unit ID, recipe ID and blueprint-item category
+are separate identities with separate fields/allocators; do not reuse one number for all three.
+
+The default display generator can reuse your own selected capsule portrait and add the target client's native
+blueprint frame. It needs neither another owner's complete card nor a bare portrait pasted into the large slot.
+For complete authored display records, use `sdgo.unit-blueprint-client-templates/2` to bind the recipe/item records,
+SPR and every TXR dependency. Valid v2 templates are publishable; v1 remains authoring-only. A standalone validation
+receipt does not grant installation permission, and editing its booleans cannot bypass compilation.
+
+Save, preview, confirm, install matching client content and apply the server plan. Definition import does not grant
+blueprints/materials. Offer the blueprint through a separately configured shop/drop route and verify each material
+is obtainable. A transform form is not an extra inventory material, and recipe edits do not reset players' items.
+
 ## Blueprints, projects and activity pools
 
 Blueprint authoring adds editable recipes with explicit recovered,

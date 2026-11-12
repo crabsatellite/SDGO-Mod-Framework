@@ -14,6 +14,67 @@ must not be embedded in the SDGO Mod Manager executable, public framework releas
 or generic server package. Manager and public framework artifacts contain only the common protocol,
 importer, compiler, and ability runtime.
 
+## Assemble a neutral sharing package
+
+The fictional “Training Operator” uses only the author's `training.png`, the same image for all seven roles,
+explicitly inherited native dialogue/voices, a 5% general GP bonus and no drops. `60001` is an example template
+that must exist in the target client/server catalog; Manager allocates the new operator's actual ID.
+No existing owner's character, game artwork or voice recording is used.
+
+Owners can create an operator, upload their own PNG and edit abilities directly in Manager. Package authors
+can run this in a framework source environment with their own 1–2048-pixel `training.png`:
+
+```python
+from pathlib import Path
+from manager.engines.operators.assets import validate_png, sprite_binary
+from manager.engines.operators.legacy_pack import package
+
+image = Path("training.png").read_bytes()
+width, height = validate_png(image)
+files = {
+    "txrs/9001.txr": image,
+    "sprs/9001.spr": sprite_binary("txrs/9001.txr", width, height),
+}
+abilities = {
+    "schema_version": 1, "mode": "custom",
+    "general": {"gp_percent": 5, "unit_exp_percent": 0, "energy_save_percent": 0},
+    "victory": {"gp_percent": 0, "unit_exp_percent": 0, "energy_save_percent": 0},
+    "defeat": {"gp_percent": 0, "unit_exp_percent": 0, "energy_save_percent": 0},
+    "timed": [], "pilot_exp_percent": 0, "mission_parts": None, "extensions": {},
+}
+raw = package(
+    files,
+    {"dialogue": "", "sprites": ["sprs/9001.spr"] * 7, "intro_voice": ""},
+    pack_id="example.training.operator", name="训练副官", source_template=60001,
+    resources_metadata={"voice_policy": "native_fallback"},
+    abilities=abilities,
+    acquisition={"delivery": "product", "drops": []},
+    storefront={"name": "训练副官", "label": "永久副官", "price": 1000,
+                "currency": "GB", "validity": 1},
+)
+with Path("training-operator.opack").open("xb") as output:
+    output.write(raw)
+```
+
+`package` writes `operator-pack.json`, exact sizes/hashes and the resources into the ZIP. The TXR contains real
+PNG encoding; the framework creates the SPR layout and texture reference. Sharing one image across roles is
+only a demonstration: production authors should supply suitable artwork/crops without changing the array order.
+To replace voices, also provide dialogue GDT, intro ZSD and both voice fields' dependencies, and select
+`provided_only`. This example's explicit `native_fallback` depends on target-native dialogue and voices; it is
+not a self-contained localized voice pack.
+
+1. Select the target client/server definitions in **副官与能力**, then preview the `.opack` with **导入副官分享包**.
+2. Review artwork, templates, base dependencies, the 5% general bonus and `product` delivery; confirm a draft.
+3. API callers read the current `revision`, submit `import-preview`, then pass its `pack_sha256` as the import
+   request's `sha256`. Preview normalizes the ZIP: neither the original file hash nor `source_archive_sha256`
+   identifies that normalized cache entry.
+4. Save the draft, apply server definitions and generate/install the operator client package separately. Refresh
+   native services as Manager requires; separately check Battle components/restarts for independent abilities.
+5. To sell it, read the applied operator category from the same database in Shop, create an unlisted offer, then
+   explicitly list/apply it. `storefront` is a prefill; `delivery=product` neither grants nor lists the operator.
+6. Distribute the generated client update. An `.opack` is an author exchange package, not the runtime ZIP accepted
+   by the ordinary **导入配置包** installer.
+
 ## Four layers
 
 | Layer | Version 1 purpose | State after import |
@@ -78,11 +139,13 @@ should be included as its own file.
 The texture reference has a separate 32-wchar field: at most 31 UTF-16 code units plus its terminator.
 The following 32-wchar text field and remaining frame bytes are preserved independently.
 
-Dialogue records are 710 bytes. The importer preserves `event` at `+0`, a separate `event_variant`
-field at `+50`, the caption at `+100`, and two independent 50-wchar voice references at `+502` and
+Dialogue records are 710 bytes. Byte offsets identify a 50-wchar `event` at `+0`,
+the caption at `+100`, and two independent 50-wchar voice references at `+502` and
 `+602`. The importer traverses every dialogue row and both voice variants; there is no fixed number of
 voice files or events. ZSD keeps natively playable MP3, WAVE, or MPEG sync-stream bytes without an
 external transcoder.
+The current reader does not interpret the overlapping `+50` position as another independent event field;
+uninterpreted bytes remain unchanged.
 
 `voice_policy` is either:
 

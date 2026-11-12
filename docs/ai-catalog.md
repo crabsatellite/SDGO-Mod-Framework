@@ -55,6 +55,19 @@ A→LV3, other S→LV4 and SS/SR→LV5. These are roster groups, not measured AI
 Templates must exist on both server and client. By default the native AI script is chosen from weapon
 type, grade and HP.
 
+### Example: add a fictional Training Unit to an AI level pool
+
+First import the Training Unit, weapons, skills and resources into the matching database/client. AI Catalog is
+not a model importer; putting an unknown unit ID in a rule does not create it. Use your own rule JSON in the
+developer fields, set `levels` for actual target units, and select only `templates` present on both sides.
+The IDs above illustrate format and are not universal target templates.
+
+Run **检查** first, then generate a new catalog. Preserve the previous `catalog.json` allocation ledger during
+updates, install the same generated version into participating clients and each BattleServer, and restart as
+required. Players receive **导出玩家包**, not the author's rules, SQL export or baseline assets. `!ai e1 lv3`
+selects one enemy from LV3 and does not guarantee a particular Training Unit; use appropriate tests for a fixed
+case instead of removing other units or changing player inventory to manufacture that conclusion.
+
 ## Toggle and remove
 
 The addon is off by default and is switched in the Manager; restart the affected processes after a

@@ -2,6 +2,9 @@
 
 [简体中文](operator-assistant.zh-CN.md) · [Back to the feature index](../README.md) · [Pack and extension protocol](operator-pack-protocol.md)
 
+For a source-independent example, see [assemble a neutral Training Operator package](operator-pack-protocol.md#assemble-a-neutral-sharing-package).
+It covers executable packaging code, image paths, template inheritance, normalized preview hashes and separate client/server application.
+
 ![Operator management: change a display name and save the configuration draft](operator-manager-demo.webp)
 
 Thanks to [幻羽未来 (Bilibili UID 564285)](https://space.bilibili.com/564285) for sharing the operator template used as a reference for this project.

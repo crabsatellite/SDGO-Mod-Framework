@@ -75,6 +75,19 @@ side. A server owner may instead deliver the same files through their normal cli
 their target-side bytes; importing a newer owner package intentionally installs that package's matching
 configuration.
 
+## Example: exchange a paired mission behavior profile
+
+A fictional owner prepares a Training Server profile from matching native mission data, imports
+`training-profile.bin` on the Mission Behavior page, preflights one client and the full Battle group, and applies
+them together. A filename is not an identity: the binary codec, integrity and target baseline are checked.
+Renaming arbitrary JSON, a map package or another BIN does not create a valid profile. This does not extract another
+owner's content or implement new mission logic.
+
+After checking the paired version and required restarts, export the player configuration package. Players install
+that generated ZIP using **导入配置包**. Sending only the raw BIN does not install the matching programs/configuration.
+[Map mission JSON](map-import.md) defines a new map mission; a behavior profile selects/adapts already-supported
+behavior for its pinned target. These are different import routes.
+
 ## If OC is unavailable or refused
 
 - **Owner profile missing:** import a matching `profile.bin` in the Mission behavior page. OC is not
