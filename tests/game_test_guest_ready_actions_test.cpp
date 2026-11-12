@@ -6,7 +6,7 @@ namespace {
 static_assert(sizeof(void*)==4,"native Ready ABI is Win32");
 int failures=0,sends=0,replies=0,businesses=0;bool host=false,queued=false,apply=true,rejectReplyHook=false;
 alignas(4) uint8_t app[0x4A8]{},owner[8]{},manager[0x80]{},mainState[0x14]{},model[0x4B00]{},room[0x500]{},player[16]{},command[16]{};
-void *ownerVtable[2]{},*managerVtable[3]{},*mainVtable[12]{},*modelVtable[32]{},*commandVtable[11]{};
+void *ownerVtable[2]{},*managerVtable[3]{},*missionManagerVtable[16]{},*mainVtable[12]{},*missionMainVtable[12]{},*modelVtable[32]{},*commandVtable[11]{};
 uint8_t* states[1]{};
 template<class T>void Put(void* p,size_t o,T value){memcpy(static_cast<uint8_t*>(p)+o,&value,sizeof(value));}
 template<class T>T Get(const void* p,size_t o){T value{};memcpy(&value,static_cast<const uint8_t*>(p)+o,sizeof(value));return value;}
@@ -41,13 +41,15 @@ void* Symbol(SdgoMod*,const char* name){
     struct Entry{const char* name;void* value;};
     const Entry entries[]={
         {"game.app",reinterpret_cast<void*>(&App)},{"flow.is_room_master",reinterpret_cast<void*>(&Master)},
-        {"flow.normal_3d_main_state_vtable",mainVtable},{"flow.three_d_wait_room_vtable",ownerVtable},
+        {"flow.mission_is_room_master",reinterpret_cast<void*>(&Master)},
+        {"flow.normal_3d_main_state_vtable",mainVtable},{"flow.mission_3d_main_vtable",missionMainVtable},
+        {"flow.three_d_wait_room_vtable",ownerVtable},
         {"flow.guest_ready_command_vtable",commandVtable},{"flow.mission_room_info",reinterpret_cast<void*>(&Info)},
         {"flow.guest_ready_local_slot",reinterpret_cast<void*>(&Slot)},{"flow.guest_ready_model_flag",reinterpret_cast<void*>(&ReadyFlag)},
         {"flow.guest_ready_main_business",reinterpret_cast<void*>(&Business)},{"flow.guest_ready_player_send",reinterpret_cast<void*>(&Send)},
         {"flow.guest_ready_player_reply",reinterpret_cast<void*>(&Reply)},
         {"flow.normal_3d_manager_vtable",managerVtable},{"flow.ai_3d_manager_vtable",managerVtable+1},
-        {"flow.battleship_3d_manager_vtable",managerVtable+2}};
+        {"flow.battleship_3d_manager_vtable",managerVtable+2},{"flow.mission_3d_manager_vtable",missionManagerVtable}};
     for(const auto& entry:entries)if(!strcmp(name,entry.name))return entry.value;
     return nullptr;
 }
@@ -58,13 +60,13 @@ int Hook(SdgoMod* mod,const char* name,void* detour,void** original){
     if(!strcmp(name,"flow.guest_ready_player_reply"))replyHook=reinterpret_cast<ReplyHook>(detour);
     return 1;
 }
-void Reset(Driver& driver){
+void Reset(Driver& driver,bool mission=false){
     driver.Reset();memset(app,0,sizeof(app));memset(manager,0,sizeof(manager));memset(mainState,0,sizeof(mainState));
     memset(model,0,sizeof(model));memset(room,0,sizeof(room));memset(player,0,sizeof(player));memset(command,0,sizeof(command));
     sends=replies=businesses=0;host=queued=false;apply=true;sendOpcode=0x05A6;native.transport={};
     Put<uint32_t>(app,0x4A0,18);Put(app,0x4A4,owner);Put(owner,0,ownerVtable);Put(owner,4,manager);
-    Put(manager,0,managerVtable);Put(manager,0x0C,states);states[0]=mainState;
-    Put(mainState,0,mainVtable);Put<uint32_t>(mainState,8,2);Put(mainState,0x0C,manager+0x24);Put(mainState,0x10,manager);
+    Put(manager,0,mission?missionManagerVtable:managerVtable);Put(manager,0x0C,states);states[0]=mainState;
+    Put(mainState,0,mission?missionMainVtable:mainVtable);Put<uint32_t>(mainState,8,2);Put(mainState,0x0C,manager+0x24);Put(mainState,0x10,manager);
     manager[0x26]=1;Put(manager,0x38,model);Put(model,0,modelVtable);Put<int>(model,0x30,1);Put<uint32_t>(room,0,81);
     modelVtable[0x1C/4]=reinterpret_cast<void*>(&Info);modelVtable[0x28/4]=reinterpret_cast<void*>(&ReadyFlag);
     Put<uint32_t>(model,0x1744+0x48E,42);Put<uint32_t>(player,0,1);Put(player,8,manager+0x24);
@@ -80,6 +82,8 @@ int main(){
     Check(!rejected.Bind(&api,reinterpret_cast<SdgoMod*>(1),&native),"partial Ready bind fails closed");
     sendHook(command,nullptr);Check(sends==1,"a failed Ready bind leaves its sender pass-through");rejectReplyHook=false;
     Driver driver;Check(driver.Bind(&api,reinterpret_cast<SdgoMod*>(1),&native),"actual Main/player Ready contracts bind");
+    Reset(driver,true);Check(driver.Ready(81)&&businesses==1,"mission Main queues the same original guest Ready business");
+    Reset(driver,true);Check(driver.Ready(81),"mission guest Ready is queued before native send");TickSend();Deliver();Check(driver.State().result==Driver::Accepted,"mission guest Ready consumes the real 05A6/0999 path");
     Reset(driver);host=true;Check(!driver.Ready(81)&&businesses==0,"host cannot take guest Ready path");
     Reset(driver);Put<uint32_t>(mainState,8,1);Check(!driver.Ready(81),"Ready waits for native idle Main");
     Reset(driver);modelVtable[0x28/4]=nullptr;Check(!driver.Ready(81),"unrecognized model getter fails closed");

@@ -8,6 +8,7 @@
 #include "friend_room_actions.h"
 #include "unit_gift_actions.h"
 #include "pvp_session_actions.h"
+#include "mission_coop_session_actions.h"
 #include "sdgo/game_test.h"
 #include "sdgo/native_data_guard_observer.h"
 #include "sdgo/scene_lifecycle_observer.h"
@@ -37,7 +38,9 @@ class FriendSession {
     FriendExtraActions* extras_=nullptr;
     FriendRoomActions* roomActions_=nullptr;
     PvpSessionActions* pvpActions_=nullptr;
+    MissionCoopSessionActions* missionCoopActions_=nullptr;
     bool pvpCommand_=false;
+    bool missionCoopCommand_=false;
     UnitGiftActions unitGifts_;
     uint8_t** profile_=nullptr;
     bool extraCommand_=false;
@@ -81,6 +84,10 @@ class FriendSession {
         if(!wcscmp(text,L"gift_home_context"))return 40;
         if(!wcscmp(text,L"gift_picker_page"))return 41;
         if(!wcscmp(text,L"gift_picker_select"))return 42;
+        if(!wcscmp(text,L"mission_room"))return 43;
+        if(!wcscmp(text,L"mission_ready"))return 44;
+        if(!wcscmp(text,L"mission_start"))return 45;
+        if(!wcscmp(text,L"mission_lobby"))return 46;
         for(uint32_t i=1;i<38;++i)if(!wcscmp(text,names[i]))return i;
         return 0;
     }
@@ -93,6 +100,11 @@ class FriendSession {
         } else if(captureCommand_) {
             state.result=SUCCEEDED(captureResult_)?FriendActions::kReady:FriendActions::kNativeFault;
             state.command_sequence=sequence_;state.operation=0;
+            state.request_sent=state.reply_consumed=0;
+            state.request_opcode=state.reply_opcode=state.reply_status=0;
+        } else if(missionCoopCommand_&&missionCoopActions_) {
+            const auto mission=missionCoopActions_->State();state.result=mission.result;
+            state.operation=mission.operation;state.command_sequence=mission.sequence;
             state.request_sent=state.reply_consumed=0;
             state.request_opcode=state.reply_opcode=state.reply_status=0;
         } else if(pvpCommand_&&pvpActions_) {
@@ -197,6 +209,7 @@ class FriendSession {
         if(storageWrite_)storageWrite_(f);
         fprintf(f,"[capture]\npending=%u\nhresult=%lu\n",capturePending_?1u:0u,static_cast<unsigned long>(captureResult_));
         if(pvpActions_)pvpActions_->Append(f);
+        if(missionCoopActions_)missionCoopActions_->Append(f);
         if(const auto library=GetModuleHandleW(L"ai_dialogue.dll")) {
             const auto get=reinterpret_cast<SdgoAiDialogueGetStatusV1Fn>(GetProcAddress(library,SDGO_AI_DIALOGUE_OBSERVER_EXPORT));
             SdgoAiDialogueStatusV1 value{};value.size=sizeof(value);value.version=1;
@@ -246,6 +259,7 @@ public:
         unitGifts_.BindCursor(api,mod);
     }
     void BindPvp(PvpSessionActions* pvp){pvpActions_=pvp;}
+    void BindMissionCoop(MissionCoopSessionActions* mission){missionCoopActions_=mission;}
     int Poll(const SdgoGameTestContextV1* context) {
         if(!actions_){context->Assert(0,"friend action adapter is unavailable");return SDGO_GAME_TEST_FAIL;}
         const std::wstring abortPath=std::wstring(context->directory)+L"\\friend-abort.ini";
@@ -289,6 +303,7 @@ public:
         actions_->Tick();
         if(roomActions_)roomActions_->Tick(context);
         if(pvpActions_)pvpActions_->Tick(context);
+        if(missionCoopActions_)missionCoopActions_->Tick(context);
         const auto observed=Observation();
         const bool terminal=IsFriendCommandTerminal(observed);
         if(active_&&terminal) {
@@ -316,7 +331,8 @@ public:
             }
             active_=false;Write(context,true);
         }
-        const uint64_t commandTimeout=pvpCommand_&&pvpActions_&&pvpActions_->State().operation==PvpSessionActions::FinishBattle?900000:90000;
+        const uint64_t commandTimeout=pvpCommand_&&pvpActions_&&pvpActions_->State().operation==PvpSessionActions::FinishBattle?900000:
+            missionCoopCommand_?180000:90000;
         if(active_&&GetTickCount64()-commandAt_>commandTimeout) {
             Write(context,true);
             context->Assert(0,"native friend operation timed out waiting for real state/reply");return SDGO_GAME_TEST_FAIL;
@@ -374,14 +390,19 @@ public:
         }
         if(command.operation==12&&roomTitle_&&!roomTitle_(command.body)){context->Assert(0,"friend room_create body is not a supported room command");return SDGO_GAME_TEST_FAIL;}
         pvpCommand_=command.operation>=34&&command.operation<=37;
+        missionCoopCommand_=command.operation>=43&&command.operation<=46;
         giftCommand_=(command.operation>=18&&command.operation<=33)||(command.operation>=38&&command.operation<=42);
-        roomCommand_=command.operation>=12&&!giftCommand_&&!pvpCommand_;
-        extraCommand_=command.operation>=10&&!roomCommand_&&!giftCommand_&&!pvpCommand_;
+        roomCommand_=command.operation>=12&&!giftCommand_&&!pvpCommand_&&!missionCoopCommand_;
+        extraCommand_=command.operation>=10&&!roomCommand_&&!giftCommand_&&!pvpCommand_&&!missionCoopCommand_;
         const uint32_t channel=GetPrivateProfileIntW(L"command",L"channel_id",0,commandPath.c_str());
         const uint32_t room=GetPrivateProfileIntW(L"command",L"room_id",0,commandPath.c_str());
         if(roomCommand_&&(!roomActions_||channel>UINT16_MAX)){context->Assert(0,"friend room command lacks a supported native bridge or channel");return SDGO_GAME_TEST_FAIL;}
         FriendActions::Result result;
-        if(pvpCommand_) {
+        if(missionCoopCommand_) {
+            const uint32_t humans=GetPrivateProfileIntW(L"command",L"human_count",0,commandPath.c_str());
+            if(!missionCoopActions_){context->Assert(0,"coordinated native mission adapter is unavailable");return SDGO_GAME_TEST_FAIL;}
+            result=missionCoopActions_->Submit(command,humans,room);
+        } else if(pvpCommand_) {
             const uint32_t humans=GetPrivateProfileIntW(L"command",L"human_count",0,commandPath.c_str());
             if(!pvpActions_){context->Assert(0,"coordinated native PvP adapter is unavailable");return SDGO_GAME_TEST_FAIL;}
             const uint32_t group=GetPrivateProfileIntW(L"command",L"channel_group",UINT32_MAX,commandPath.c_str());

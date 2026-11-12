@@ -210,13 +210,18 @@ public:
         }
     }
 
-    bool Ready() {
-        if(!bound_||InterlockedCompareExchange(&joinResult_,0,0)!=kJoinAccepted)return false;
+    bool ReadyExactRoom(uint32_t expectedRoom) {
+        if(!bound_||!expectedRoom)return false;
         if(!readyBindAttempted_) {
             readyBindAttempted_=true;readyBound_=ready_.Bind(api_,mod_,native_);
         }
-        return readyBound_&&ready_.Ready(static_cast<uint32_t>(InterlockedCompareExchange(&expectedRoomId_,0,0)));
+        return readyBound_&&ready_.Ready(expectedRoom);
     }
+    bool Ready() {
+        if(InterlockedCompareExchange(&joinResult_,0,0)!=kJoinAccepted)return false;
+        return ReadyExactRoom(static_cast<uint32_t>(InterlockedCompareExchange(&expectedRoomId_,0,0)));
+    }
+    void ResetReadyObservation() {ready_.Reset();}
     uint32_t ReadyStage() const {return ready_.Stage();}
     uint32_t ReadyContextFlags() const {return ready_.Flags();}
 

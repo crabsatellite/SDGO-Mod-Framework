@@ -137,6 +137,8 @@ public:
             Symbol<void*>("flow.three_d_wait_room_vtable");
         normalThreeDManagerVtable_ =
             Symbol<void*>("flow.normal_3d_manager_vtable");
+        missionThreeDManagerVtable_ =
+            Symbol<void*>("flow.mission_3d_manager_vtable");
         messengerVtable_ =
             Symbol<void*>("friends.messenger_vtable");
         threeDMessengerVtable_ =
@@ -168,6 +170,8 @@ public:
         normalThreeDInviteStateVtable_ =
             Symbol<void*>(
                 "friends.normal_3d_invite_state_vtable");
+        missionThreeDInviteStateVtable_ =
+            Symbol<void*>("friends.mission_3d_invite_state_vtable");
         Reset();
         bound_ =
             api_ && api_->Symbol && mod_ && native_ &&
@@ -196,6 +200,7 @@ public:
         std::memset(&observation_, 0, sizeof(observation_));
         observation_.selected_conversation = -1;
         pending_ = false;
+        requestOpcode_ = kInvitationRequestOpcode;
         awaitingMessenger_ = false;
         pendingTargetId_ = 0;
         std::memset(
@@ -410,6 +415,8 @@ public:
                 if (!ResolveThreeDQueue(&queueBefore))
                     return Publish(kThreeDQueueUnavailable);
                 observation_.three_d_queue_matched = 1;
+                requestOpcode_ = *reinterpret_cast<void**>(queueBefore.manager) == missionThreeDManagerVtable_ ?
+                    0x067B : kInvitationRequestOpcode;
                 pendingQueueState_ = queueBefore.state;
                 pendingQueueHead_ = queueBefore.head;
                 pendingQueueCount_ = queueBefore.count;
@@ -438,7 +445,7 @@ public:
             const NativeActions::TransportObservation after =
                 native_->FindTransportSince(
                     before.send_sequence,
-                    kInvitationRequestOpcode);
+                    requestOpcode_);
             RecordTransport(after);
             if (TransportMatches(before, after)) {
                 observation_.request_sent = 1;
@@ -495,7 +502,7 @@ public:
                 native_->FindTransportSince(
                     observation_.
                         transport_sequence_before,
-                    kInvitationRequestOpcode);
+                    requestOpcode_);
             if (!after.send_sequence)
                 return Publish(kRequestPending);
             RecordTransport(after);
@@ -1049,8 +1056,9 @@ private:
                 owner +
                 kWaitRoomManagerOffset);
         if (!manager ||
-            *reinterpret_cast<void**>(manager) !=
-                normalThreeDManagerVtable_)
+            (*reinterpret_cast<void**>(manager) != normalThreeDManagerVtable_ &&
+             (!missionThreeDManagerVtable_ ||
+              *reinterpret_cast<void**>(manager) != missionThreeDManagerVtable_)))
             return false;
 
         auto** states =
@@ -1062,9 +1070,13 @@ private:
                 ? states[
                       kNormalThreeDInviteState]
                 : nullptr;
+        const void* expectedInviteState =
+            *reinterpret_cast<void**>(manager) == missionThreeDManagerVtable_ ?
+                missionThreeDInviteStateVtable_ : normalThreeDInviteStateVtable_;
         if (!state ||
+            !expectedInviteState ||
             *reinterpret_cast<void**>(state) !=
-                normalThreeDInviteStateVtable_ ||
+                expectedInviteState ||
             *reinterpret_cast<const uint32_t*>(
                 state +
                 kThreeDStateIdOffset) !=
@@ -1076,8 +1088,16 @@ private:
             *reinterpret_cast<uint8_t**>(
                 state +
                 kThreeDStateManagerOffset) !=
-                manager)
+                manager) {
+            if (api_ && api_->Log)
+                api_->Log(mod_, SDGO_LOG_INFO,
+                    "native invite queue identity: manager=%p table=%p index=%u state=%p table=%p id=%u expected_table=%p",
+                    manager, *reinterpret_cast<void**>(manager), kNormalThreeDInviteState, state,
+                    state ? *reinterpret_cast<void**>(state) : nullptr,
+                    state ? *reinterpret_cast<const uint32_t*>(state+kThreeDStateIdOffset) : UINT32_MAX,
+                    expectedInviteState);
             return false;
+        }
 
         uint8_t* head =
             *reinterpret_cast<uint8_t**>(
@@ -1347,14 +1367,14 @@ private:
                 size) == 0;
     }
 
-    static bool TransportMatches(
+    bool TransportMatches(
         const NativeActions::TransportObservation& before,
         const NativeActions::TransportObservation& after)
     {
         return after.send_sequence !=
                 before.send_sequence &&
             after.opcode ==
-                kInvitationRequestOpcode &&
+                requestOpcode_ &&
             after.packet_size ==
                 kInvitationRequestSize &&
             after.result != 0;
@@ -1403,8 +1423,11 @@ private:
     InviteBusinessFn inviteBusiness_ = nullptr;
     InviteBusinessFn threeDInviteBusiness_ = nullptr;
     void* normalThreeDInviteStateVtable_ = nullptr;
+    void* missionThreeDInviteStateVtable_ = nullptr;
+    void* missionThreeDManagerVtable_ = nullptr;
     bool bound_ = false;
     bool pending_ = false;
+    uint16_t requestOpcode_ = kInvitationRequestOpcode;
     bool awaitingMessenger_ = false;
     bool threeDOpenRequested_ = false;
     bool threeDOpenResult_ = false;

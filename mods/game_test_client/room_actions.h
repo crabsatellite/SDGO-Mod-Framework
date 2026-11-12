@@ -136,12 +136,70 @@ public:
     {
         if (!api || !mod || !native || (active_ && active_ != this)) return false;
         api_=api;mod_=mod;native_=native;
+        pvpMutatorsEnabled_=false;
         battleEndHandler_=Symbol<BattleEndHandlerFn>("flow.battle_end_handler");
         if (!battleEndHandler_) return false;
         active_=this;
         if (!api_->HookCode(mod_,"flow.battle_end_handler",reinterpret_cast<void*>(&ObserveBattleEndHandler),
                             reinterpret_cast<void**>(&battleEndHandler_))) {
             active_=nullptr;return false;
+        }
+        return true;
+    }
+
+    // Passive mission-room binding. It observes the original wait-room factory,
+    // packed room model and battle-end consumer without loading or enabling the
+    // PvP create/start businesses. Mission creation and Start remain owned by
+    // MissionFlowActions.
+    bool BindMissionObserver(
+        const SdgoApi* api,
+        SdgoMod* mod,
+        NativeActions* native)
+    {
+        if (!api || !mod || !native || (active_ && active_ != this))
+            return false;
+
+        api_ = api;
+        mod_ = mod;
+        native_ = native;
+        pvpMutatorsEnabled_ = false;
+        gameApp_ = Symbol<GameAppFn>("game.app");
+        waitRoomObjectFactory_ =
+            Symbol<WaitRoomObjectFactoryFn>("flow.wait_room_object_factory");
+        isRoomMaster_ = Symbol<IsRoomMasterFn>("flow.mission_is_room_master");
+        waitRoomPlayerCount_ =
+            Symbol<WaitRoomPlayerCountFn>("flow.wait_room_player_count");
+        profilePointer_ = Symbol<uint8_t**>("flow.profile_pointer");
+        roomInfo_ = Symbol<RoomInfoFn>("flow.mission_room_info");
+        threeDWaitRoomVtable_ =
+            Symbol<void*>("flow.three_d_wait_room_vtable");
+        missionThreeDManagerVtable_ =
+            Symbol<void*>("flow.mission_3d_manager_vtable");
+        battleEndHandler_ =
+            Symbol<BattleEndHandlerFn>("flow.battle_end_handler");
+
+        if (!gameApp_ || !waitRoomObjectFactory_ || !isRoomMaster_ ||
+            !waitRoomPlayerCount_ || !profilePointer_ || !roomInfo_ ||
+            !threeDWaitRoomVtable_ || !missionThreeDManagerVtable_ ||
+            !battleEndHandler_)
+            return false;
+
+        active_ = this;
+        if (!api_->HookCode(
+                mod_,
+                "flow.wait_room_object_factory",
+                reinterpret_cast<void*>(&ObserveWaitRoomObjectFactory),
+                reinterpret_cast<void**>(&waitRoomObjectFactory_))) {
+            active_ = nullptr;
+            return false;
+        }
+        if (!api_->HookCode(
+                mod_,
+                "flow.battle_end_handler",
+                reinterpret_cast<void*>(&ObserveBattleEndHandler),
+                reinterpret_cast<void**>(&battleEndHandler_))) {
+            active_ = nullptr;
+            return false;
         }
         return true;
     }
@@ -156,6 +214,7 @@ public:
         mod_ = mod;
         native_ = native;
         config_ = config;
+        pvpMutatorsEnabled_ = false;
         gameApp_ = Symbol<GameAppFn>("game.app");
         createRoomInit_ =
             Symbol<CreateRoomInitFn>("flow.create_room_packet_init");
@@ -281,6 +340,7 @@ public:
                 reinterpret_cast<void*>(&ObserveRoomListReply),reinterpret_cast<void**>(&roomListReplyDispatch_)))return false;
         if(roomListInit_ && !api_->HookCode(mod_,"flow.native_room_list_init",reinterpret_cast<void*>(&ObserveRoomListInit),
             reinterpret_cast<void**>(&roomListInit_)))return false;
+        pvpMutatorsEnabled_ = true;
         return true;
     }
 
@@ -342,6 +402,14 @@ public:
     bool Create() const
     {
         InterlockedIncrement(&createAttempt_);
+        if (!pvpMutatorsEnabled_) {
+            RecordCreateDiagnostics(
+                kCreateStagePlan,
+                kCreateErrorUnavailable,
+                0,
+                0);
+            return false;
+        }
         RecordCreateDiagnostics(
             kCreateStagePlan,
             kCreateErrorNone,
@@ -472,6 +540,8 @@ public:
 
     bool StartBattleNativeHost() const
     {
+        if (!pvpMutatorsEnabled_)
+            return false;
         if (!gameApp_ || !startOrReady_ || !isRoomMaster_ ||
             !profilePointer_ || !threeDWaitRoomVtable_ ||
             !threeDStartCommandVtable_ || !threeDRoomHasState_ ||
@@ -847,25 +917,36 @@ public:
             uint8_t* profile = *profilePointer_;
             if (!profile)
                 return observed;
-            void* room = CurrentRoomData();
+            uint8_t* model = nullptr;
+            void* room = CurrentRoomData(&model);
             if (!room)
                 return observed;
             const uint8_t* bytes = static_cast<const uint8_t*>(room);
             observed.room_id =
                 *reinterpret_cast<const uint32_t*>(bytes);
-            observed.player_count =
-                static_cast<uint32_t>(waitRoomPlayerCount_(room));
+            observed.room_mode = *(bytes + 5);
+            const bool mission = observed.room_mode == 5 || observed.room_mode == 8;
+            using NativeReadyFn = uint8_t(__thiscall*)(uint8_t*,int);
+            auto* modelTable = model ? *reinterpret_cast<uint8_t**>(model) : nullptr;
+            const auto nativeReady = mission && modelTable ?
+                *reinterpret_cast<NativeReadyFn*>(modelTable+0x28) : nullptr;
+            if (mission && !nativeReady) return observed;
+            // Mission/team room headers precede the same packed player rows
+            // with different fields. Match the existing native title broker
+            // and room-model slot readers rather than use PvP offsets.
             observed.host_pilot_id =
-                *reinterpret_cast<const uint32_t*>(bytes + 0x4CE);
+                *reinterpret_cast<const uint32_t*>(bytes + (mission ? 0x561 : 0x4CE));
             // player_count is humans only. Read the same twelve packed slots
             // that back CBaseRoomData's native owner/ready getters and UI.
-            for (size_t slot = 0; slot < 12; ++slot) {
-                const uint8_t* entry = bytes + 0x533 + slot * 0x48E;
+            for (size_t slot = 0; slot < (mission ? 4u : 12u); ++slot) {
+                const uint8_t* entry = bytes + (mission ? 0x5C6 : 0x533) + slot * 0x48E;
                 std::memcpy(&observed.slot_pilot_ids[slot], entry + 0x429, sizeof(uint32_t));
-                observed.slot_ready[slot] = entry[0x42F];
+                observed.slot_ready[slot] = mission ? nativeReady(model,static_cast<int>(slot)) : entry[0x42F];
                 if (observed.slot_pilot_ids[slot]) ++observed.occupied_slot_count;
                 if (observed.slot_pilot_ids[slot] & 0x80000000u) ++observed.ai_pilot_count;
             }
+            observed.player_count = mission ? observed.occupied_slot_count - observed.ai_pilot_count :
+                static_cast<uint32_t>(waitRoomPlayerCount_(room));
             observed.room_variant = *(bytes + 4);
             observed.room_mode = *(bytes + 5);
             observed.model_present = 1;
@@ -1031,8 +1112,9 @@ private:
     static constexpr size_t kReplyError = 0x06;
     static constexpr size_t kBattleEndResultType = 0x12;
     static constexpr size_t kWaitRoomObjectType = 0x10;
-    uint8_t* CurrentRoomData() const
+    uint8_t* CurrentRoomData(uint8_t** observedModel=nullptr) const
     {
+        if(observedModel)*observedModel=nullptr;
         __try {
             auto* app=gameApp_ ? gameApp_():nullptr;
             if(app && *reinterpret_cast<uint32_t*>(app+kGameAppState)==kThreeDWaitRoomState) {
@@ -1042,11 +1124,13 @@ private:
                 if(!manager)return nullptr;
                 void* managerType=*reinterpret_cast<void**>(manager);
                 if(managerType!=normalThreeDManagerVtables_[0] && managerType!=normalThreeDManagerVtables_[1] &&
-                   managerType!=normalThreeDManagerVtables_[2])return nullptr;
+                   managerType!=normalThreeDManagerVtables_[2] &&
+                   managerType!=missionThreeDManagerVtable_)return nullptr;
                 auto* model=*reinterpret_cast<uint8_t**>(manager+0x38);
                 auto* vtable=model ? *reinterpret_cast<uint8_t**>(model):nullptr;
                 // Shared by the stock PvP and mission CBaseRoomData models.
                 if(!vtable || !roomInfo_ || *reinterpret_cast<RoomInfoFn*>(vtable+0x1C)!=roomInfo_)return nullptr;
+                if(observedModel)*observedModel=model;
                 return roomInfo_(model);
             }
             auto* profile=profilePointer_ ? *profilePointer_:nullptr;
@@ -1628,5 +1712,6 @@ private:
     mutable volatile LONG startReplyError_ = 0;
     using StartCommandPacketFn=int(__thiscall*)(void*,int,int,int,int,void*);
     StartCommandPacketFn startCommandPacket_=nullptr;
+    bool pvpMutatorsEnabled_=false;
     inline static RoomActions* active_ = nullptr;
 };

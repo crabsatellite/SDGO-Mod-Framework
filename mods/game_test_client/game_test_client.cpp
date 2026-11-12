@@ -19,6 +19,7 @@
 #include "sdgo/friend_unit_gift_client_observer.h"
 #include "capsule_catalog_actions.h"
 #include "battle_combat_actions.h"
+#include "map_gate_probe.h"
 #include "apsalus_transform_probe.h"
 #include "unit_presentations_actions.h"
 #include "blueprint_actions.h"
@@ -159,6 +160,7 @@ OperatorSessionActions operatorSession;
 OperatorSessionActions::Config operatorSessionConfig{};
 bool testOperatorFlow=false;
 MissionFlowActions mission;
+MissionCoopSessionActions missionCoopSession;
 uint16_t missionMode=0;
 uint32_t missionGameModeId=0;
 uint32_t missionBehaviorProfile=0; // 1: OC, 2: GCO
@@ -240,6 +242,7 @@ BattleAiBehaviorProbe battleAiBehavior;
 NativeDeathProbe nativeDeathProbe;
 NativeAiLivesProbe nativeAiLives;
 NativePlayerCombatProbe nativePlayerCombat;
+MapGateProbe mapGateProbe;
 uint32_t scoreboardCombatSequence = 0, scoreboardCombatChanges = 0;
 SdgoPvpAiClientScoreboardStatusV1 scoreboardLast{};
 char accountName[32] = {}, accountPassword[128] = {}, roomTitle[21] = {};
@@ -701,7 +704,7 @@ bool LoadPlan() {
             activityDrawOnce || testShopCatalog || roomTitlesOnly))return false;
     if(captureUnitPortraits && (!testUnitPresentations || !captureNativeFrames))return false;
     if (static_cast<unsigned>(bootstrapOnly) + battleshipOnly + giftRequestsOnly + deckOnly + pagesOnly + friendsOnly + roomTitlesOnly > 1) return false;
-    if (friendsOnly && (missionMode || playUnitUid || collectionDraw || testShopCatalog))return false;
+    if (friendsOnly && (playUnitUid || collectionDraw || testShopCatalog))return false;
     wchar_t relative[512] = {}, nonce[16] = {}, user[32] = {}, password[128] = {};
     GetPrivateProfileStringW(L"run", L"account_path", L"private/account.ini", relative, 512, job.c_str());
     std::wstring accountPath = relative;
@@ -850,6 +853,7 @@ bool LoadPlan() {
         if(GetPrivateProfileStringW(L"run",L"mode_sequence",L"",forbidden,128,job.c_str()) ||
             GetPrivateProfileStringW(L"run",L"expected_ai",L"",forbidden,128,job.c_str()))return false;
         if(bootstrapOnly || battleshipOnly || giftRequestsOnly || deckOnly || pagesOnly || roomTitlesOnly || randomLoadout)return false;
+        if(friendsOnly && (expectedAi!=0 || missionRespawns || missionBehaviorProfile || !missionGameModeId))return false;
         return true;
     }
     wchar_t modes[128] = {};
@@ -5219,6 +5223,20 @@ int MissionProgress(const SdgoGameTestContextV1* context,MissionFlowActions::Res
     return SDGO_GAME_TEST_WAIT;
 }
 int __cdecl CreateMission(const SdgoGameTestContextV1* context) {
+    // Selecting an owned unit uses the real hangar. Return through its normal
+    // bottom-menu action before the mission channel's top-menu entry.
+    if(actions.AppState()==5) {
+        static bool requested=false;
+        if(!requested) {
+            const auto result=hangarNavigation.ClickBottomRadio(L"GameRoomRadio",0x48);
+            if(result>=HangarNavigation::kDownmenuServiceMismatch || result==HangarNavigation::kUnbound) {
+                context->Assert(0,"native GameRoomRadio must leave the owned-unit hangar before mission entry");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            if(result==HangarNavigation::kReady)requested=true;
+        }
+        return SDGO_GAME_TEST_WAIT;
+    }
     // Keep evidence of the shipped default before the test enters its nonce title.
     // Otherwise compiler regressions in the authored name disappear from every run.
     static bool defaultFrameRequested=false;
@@ -5256,6 +5274,8 @@ void CaptureImportedReviewFrame(const SdgoGameTestContextV1* context) {
     if(!missionGameModeId || missionBehaviorProfile || missionRespawns)return;
     const uint64_t now=GetTickCount64();
     const uint32_t state=actions.OnboardingState().native_app_state;
+    if(state==22 && rooms.BattleEndState().sequence==observedMissionEndBaseline)
+        mapGateProbe.Poll(context,missionGameModeId);
     const bool loading=observedMissionStartedAt && state!=18 && state!=6;
     if((state!=22 && !loading) || frames>=300 || now-lastFrame<4000)return;
     const std::wstring folder=sdgo_test::directory+L"\\import-frames";
@@ -6029,6 +6049,10 @@ int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
         return SDGO_GAME_TEST_WAIT;
     }
     const auto result=friendSession.Poll(context);
+    if(missionMode) {
+        if(actions.AppState()==22)mapGateProbe.Poll(context,missionGameModeId);
+        return result;
+    }
     const auto cohort=pvpSession.State();
     if(cohort.battle_seen) {
         SdgoPvpAiClientSnapshotV1 live{};
@@ -6047,6 +6071,11 @@ void RegisterPlannedCases() {
     if (fpsOnly) {
         provider.suite="native-fps-limit";provider.count=3;provider.cases=fpsCases;return;
     }
+    if (friendsOnly) {
+        plannedCases.assign(realCases,realCases+3);
+        plannedCases.push_back({"friends.session",3600000,&FriendFlow});
+        provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
+    }
     if(missionMode) {
         plannedCases.assign(realCases,realCases+3);
         if(playUnitUid)plannedCases.push_back(playUnitCase);
@@ -6061,11 +6090,6 @@ void RegisterPlannedCases() {
         provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
     }
     if (bootstrapOnly) { provider.count = 3; return; }
-    if (friendsOnly) {
-        plannedCases.assign(realCases,realCases+3);
-        plannedCases.push_back({"friends.session",3600000,&FriendFlow});
-        provider.count=static_cast<uint32_t>(plannedCases.size());provider.cases=plannedCases.data();return;
-    }
     if (roomTitlesOnly) {
         static_cast<void>(legacyTitleCases);
         plannedCases.assign(realCases,realCases+3);
@@ -6498,7 +6522,7 @@ SDGO_MOD_ENTRY {
     sdgo_test::nativeShutdownAfterSuccess=!nativeRecordLifecycleIds.empty();
     if (!nativeDeathProbe.Install(api,mod)) return 0;
     if (!nativeAiLives.Install(api,mod)) return 0;
-    if (!nativePlayerCombat.Install(api,mod)) return 0;
+    if (!nativePlayerCombat.Install(api,mod) || !mapGateProbe.Install(api,mod)) return 0;
     nativePlayerCombat.SetSpecialEventSource(&ReadOcSpecialEvents);
     reviewCamera.Install(api,mod);
     if (!apsalus_probe::packetObserver.Install(api,mod)) return 0;
@@ -6559,7 +6583,8 @@ SDGO_MOD_ENTRY {
          (testOperatorFlow && !BindOperatorSession(api,mod)) ||
         (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
-        ((missionRespawns || (missionGameModeId && !missionBehaviorProfile)) && !rooms.BindBattleEndObserver(api,mod,&actions)) ||
+        (missionMode && friendsOnly && !rooms.BindMissionObserver(api, mod, &actions)) ||
+        ((missionRespawns || (missionGameModeId && !missionBehaviorProfile)) && !friendsOnly && !rooms.BindBattleEndObserver(api,mod,&actions)) ||
         !tutorial.Bind(api, mod, &actions) || !onboarding.Bind(api, mod, &actions))
         sdgo_test::Fail("normal-flow native request bindings or private account configuration are unavailable");
     if (friendsOnly) {
@@ -6569,10 +6594,14 @@ SDGO_MOD_ENTRY {
             !roomJoin.Bind(api,mod,&actions))
             sdgo_test::Fail("native friend operation bindings are unavailable");
         roomJoin.SetRoomResolver([](void* opaque)->const uint8_t*{return static_cast<RoomActions*>(opaque)->LiveRoomInfo();},&rooms);
-        if(!pvpSession.Bind(&actions,&rooms,&roomJoin,&Snapshot,&Start,roomTitle,RequestedMode(),expectedAi,&PvpControlEnabled,&PvpGuestChannel))
+        if(!missionMode && !pvpSession.Bind(&actions,&rooms,&roomJoin,&Snapshot,&Start,roomTitle,RequestedMode(),expectedAi,&PvpControlEnabled,&PvpGuestChannel))
             sdgo_test::Fail("coordinated native PvP operation bindings are unavailable");
         friendSession.Bind(&friendActions,&friendExtras,api,mod,&friendRoomActions);
-        friendSession.BindPvp(&pvpSession);
+        if(missionMode) {
+            if(!missionCoopSession.Bind(&mission,&rooms,&roomJoin,missionMode,missionGameModeId))
+                sdgo_test::Fail("coordinated native mission operation bindings are unavailable");
+            friendSession.BindMissionCoop(&missionCoopSession);
+        } else friendSession.BindPvp(&pvpSession);
         friendSession.BindRoomTitle(&ApplyFriendRoomCommand);
         friendSession.BindStorageActions(&FriendStorageAction,&FriendStorageWrite);
         friendSession.BindFrameCapture(

@@ -614,6 +614,15 @@ does not enable this candidate bypass.
 
 ### Coordinated multiplayer
 
+For imported missions, prepare two separate existing-account runs with
+`--friends-only --mission-mode 5 --mission-game-mode-id <listed-id> --mission-ai-count 0`.
+Launch both normally, then run `tools/game_test_mission_coop.py --host-run <host-run>
+--peer-run <peer-run> --output <report.json> --external-confirmation`. The caller's
+isolated input driver confirms the original mission invitation popup. The coordinator uses real mission room creation,
+friend invitations, guest Ready and host Start. The optional `MapGateProbe` observer
+reads native geometry and HP; it does not alter the gate or its result. Client gate
+receipts and a separately observed server lifecycle are reported independently.
+
 Prepare one quiet `--friends-only` run for each distinct existing account, using
 the same isolated native backend, a single `--mode-sequence`, and the same
 `--expected-ai` setting. Each client needs its own mutable files; a stopped,

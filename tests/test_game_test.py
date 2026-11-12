@@ -203,6 +203,57 @@ class GameTestRunnerTests(unittest.TestCase):
             with self.subTest(scope=scope),self.assertRaises(game_test.GameTestError):
                 game_test.required_flow_cases('1',friends_only=True,**scope)
 
+    def test_mission_friend_scope_seals_zero_wingmen_import_and_rejects_tampering(self):
+        profile = game_test.read_ini(self.account_profile)
+        profile['registration']['state'] = 'existing_account'
+        game_test.write_ini(self.account_profile, profile)
+        staged = self.stage / 'client/sdgo/mods/room_titles'
+        staged.mkdir()
+        (staged / 'room_titles.dll').write_bytes(b'extended title fixture')
+        (staged / 'mod.ini').write_text(
+            '[mod]\nid=room_titles\ncategory=gameplay\nfeature=room-titles\n'
+            f'version=0.2.4\ndll=room_titles.dll\nhosts={game_test.HOST_KEY}\nenabled=0\n',
+            encoding='ascii',
+        )
+        run_dir = self.prepare(
+            'mission-friends',
+            mission_mode=5,
+            mission_game_mode_id=88072,
+            mission_ai_count=0,
+            friends_only=True,
+        )
+        metadata = self.metadata(run_dir)
+        public = game_test.read_public_plan(run_dir / 'client')
+        expected = game_test.FLOW_CASES[:3] + ('friends.session',)
+        sealed = game_test.read_ini(run_dir / 'client/sdgo/gametest/run.ini')['run']
+        self.assertEqual(metadata['suite'], 'native-friends')
+        self.assertEqual(public['friends_only'], True)
+        self.assertEqual(public['mission_game_mode_id'], 88072)
+        self.assertEqual(public['mission_ai_count'], 0)
+        self.assertEqual(game_test.required_cases_for_plan(public), expected)
+        self.assertEqual(sealed['required_cases'], ','.join(expected))
+        self.assertEqual(sealed['friends_only'], '1')
+        self.assertEqual(game_test.validate_metadata(run_dir)['plan'], metadata['plan'])
+
+        config_path = run_dir / 'client/sdgo/gametest/run.ini'
+        config = game_test.read_ini(config_path)
+        config['run']['friends_only'] = '0'
+        game_test.write_ini(config_path, config)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run_dir)
+
+        invalid = (
+            ('wingmen', {'mission_mode': 5, 'mission_game_mode_id': 88072, 'friends_only': True}),
+            ('no-id', {'mission_mode': 5, 'mission_ai_count': 0, 'friends_only': True}),
+            ('owned-unit', {
+                'mission_mode': 5, 'mission_game_mode_id': 88072, 'mission_ai_count': 0,
+                'play_unit_uid': 1, 'friends_only': True,
+            }),
+        )
+        for name, scope in invalid:
+            with self.subTest(scope=name), self.assertRaises(game_test.GameTestError):
+                self.prepare('mission-friends-' + name, **scope)
+
     def test_real_manifest_merges_the_optional_production_observer_profile_alias(self):
         # An older normal installation may have only flow.profile_pointer.
         # match_ai binds game.profile_pointer optionally, but the real test

@@ -181,6 +181,9 @@ public:
         managerVtables_[2] =
             Symbol<void*>(
                 "flow.battleship_3d_manager_vtable");
+        managerVtables_[3] =
+            Symbol<void*>(
+                "flow.mission_3d_manager_vtable");
         promptCloneEntry_ =
             reinterpret_cast<void*>(promptClone_);
         promptInitializeEntry_ =
@@ -194,6 +197,7 @@ public:
             !promptDtor_ || !promptVtable_ || !promptCallback_ ||
             !threeDWaitRoomVtable_ || !managerVtables_[0] ||
             !managerVtables_[1] || !managerVtables_[2] ||
+            !managerVtables_[3] ||
             (active_ && active_ != this))
             return false;
 
@@ -833,7 +837,9 @@ private:
                          managerVtable ==
                              managerVtables_[1] ||
                          managerVtable ==
-                             managerVtables_[2])
+                             managerVtables_[2] ||
+                         managerVtable ==
+                             managerVtables_[3])
                     ? 1
                     : 0;
             if (observation_.room_model_matched &&
@@ -1326,7 +1332,7 @@ private:
     void* promptCloneEntry_ = nullptr;
     void* promptInitializeEntry_ = nullptr;
     void* threeDWaitRoomVtable_ = nullptr;
-    void* managerVtables_[3] = {};
+    void* managerVtables_[4] = {};
     bool bound_ = false;
     bool armed_ = false;
     bool dispatchScope_ = false;

@@ -698,6 +698,52 @@
       "activation": "restart_required",
       "minimum": 0,
       "maximum": 65535
+    },
+    {
+      "id": "map_gate_probe",
+      "key": "MapGateProbe",
+      "label": "原生门板碰撞只读观察",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "map_gate_probe_block",
+      "key": "MapGateProbeBlock",
+      "label": "观察的门板运行编号",
+      "type": "integer",
+      "default": 0,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    {
+      "id": "map_gate_probe_from",
+      "key": "MapGateProbeFrom",
+      "label": "碰撞观察线起点 x,y,z",
+      "type": "string",
+      "default": "",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "map_gate_probe_to",
+      "key": "MapGateProbeTo",
+      "label": "碰撞观察线终点 x,y,z",
+      "type": "string",
+      "default": "",
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
     }
   ],
   "presentation": "configurable",

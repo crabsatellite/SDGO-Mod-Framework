@@ -369,6 +369,14 @@ Python `prepare` / `reuse_prepared` API 接受 `unit_transform_steps=1..16`，�
 
 ### 多客户端协同对战
 
+导入任务可为两个不同的已有账号分别准备
+`--friends-only --mission-mode 5 --mission-game-mode-id <已列出的任务编号> --mission-ai-count 0`。
+正常启动两个测试客户端后，运行
+`tools/game_test_mission_coop.py --host-run <房主运行目录> --peer-run <队友运行目录> --output <报告.json> --external-confirmation`。
+调用方的隔离输入驱动负责确认原生任务邀请窗口。
+协调器使用真实任务建房、好友邀请、队友准备和房主开始流程。可选的 `MapGateProbe`
+只读取原生物件碰撞与 HP，不修改门或任务结果；客户端门状态证据与单独观察的服务端生命周期分别报告。
+
 为每个不同的已有账号准备一个静音、后台的 `--friends-only` 运行目录，指向同一套隔离原生后端，
 使用相同的单个 `--mode-sequence` 和 `--expected-ai`。各客户端的可写文件独立；已停止且通过的
 归档基线可以提供共享只读资源包。所有客户端安装 `match_ai`，后端安装 `pvp_ai` 和被动观察器，

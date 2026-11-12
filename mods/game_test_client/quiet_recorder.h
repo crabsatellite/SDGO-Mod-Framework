@@ -37,7 +37,7 @@ public:
         if (n && n<MAX_PATH) ffmpeg_=value;
         wchar_t text[1024]{};
         n=GetEnvironmentVariableW(L"SDGO_GAME_TEST_RECORD_ENCODER",text,1024);
-        encoder_=(n && n<1024) ? text : L"-c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p";
+        encoder_=(n && n<1024) ? text : L"-vf pad=ceil(iw/2)*2:ceil(ih/2)*2 -c:v libx264 -preset veryfast -crf 16 -pix_fmt yuv420p";
         n=GetEnvironmentVariableW(L"SDGO_GAME_TEST_RECORD_FPS",text,1024);
         if (n && n<1024) { const int fps=_wtoi(text); if (fps>=1 && fps<=120) fps_=fps; }
         LARGE_INTEGER f{}; QueryPerformanceFrequency(&f); frequency_=f.QuadPart;

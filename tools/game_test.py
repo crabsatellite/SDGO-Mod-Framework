@@ -1948,8 +1948,15 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
     if sum((bool(bootstrap_only),bool(battleship_only),bool(gift_requests_only),bool(deck_only),bool(pages_only),bool(friends_only),bool(room_titles_only))) > 1:
         raise GameTestError('choose only one account preparation operation')
     if friends_only:
-        if collection_draw or play_unit_uid is not None or mission_mode is not None or shop_catalog:
-            raise GameTestError('friend sessions cannot add battle, mission or shop scope')
+        if collection_draw or play_unit_uid is not None or shop_catalog:
+            raise GameTestError('friend sessions cannot add owned-unit, collection, or shop scope')
+        if mission_mode is not None and (
+                mode_sequence != '1'
+                or mission_behavior_profile is not None
+                or mission_game_mode_id is None
+                or mission_respawns is not None
+        ):
+            raise GameTestError('mission friend sessions require one exact ordinary imported mission without behavior or respawn fixtures')
         return FLOW_CASES[:3]+('friends.session',)
     if play_unit_uid is not None and any((bootstrap_only,battleship_only,gift_requests_only,deck_only)):
         raise GameTestError('--play-unit-uid is supported only for PvP and pages scenarios, or mission smoke')
@@ -2077,7 +2084,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         raise GameTestError("shop GameTest plan is missing sealed input fields")
     shop_catalog = bool(shop_fields)
     if "mission_mode" in plan:
-        behavior_profile, _ = validate_mission_behavior(
+        behavior_profile, mission_game_mode_id = validate_mission_behavior(
             plan.get("mission_behavior_profile"),
             plan.get("mission_game_mode_id"),
             plan.get("mission_mode"),
@@ -2087,11 +2094,13 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
             "ai_layout",
             "bootstrap_only",
             "battleship_only", "gift_requests_only", "deck_only",
-            "pages_only", "hangar_confirm_gb", "hangar_sort", "friends_only", "room_titles_only", "collection_draw", "random_loadout", "same_room_rematch",
+            "pages_only", "hangar_confirm_gb", "hangar_sort", "room_titles_only", "collection_draw", "random_loadout", "same_room_rematch",
             *SHOP_PLAN_FIELDS,
         }
         if forbidden.intersection(plan):
             raise GameTestError("mission smoke plan cannot contain PvP, pages, or preparation scope")
+        if "friends_only" in plan and plan["friends_only"] is not True:
+            raise GameTestError("mission friend scope must use the canonical enabled boolean")
         required = {
             "mission_mode", "mission_scope", "mission_ai_count",
             "mission_ai_level", *MISSION_CLAIM_FIELDS,
@@ -2105,6 +2114,14 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
             if behavior_profile is not None
             else MISSION_SCOPE
         )
+        if plan.get("friends_only") and (
+            behavior_profile is not None
+            or mission_game_mode_id is None
+            or plan.get("mission_ai_count") != 0
+            or plan.get("mission_respawns") is not None
+            or plan.get("play_unit_uid") is not None
+        ):
+            raise GameTestError("mission friend sessions require the sealed zero-wingmen imported mission scope")
         if (
             plan["mission_scope"] != expected_scope
             or validate_mission_ai_count(
@@ -2767,11 +2784,17 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             }
             if not required_mission_fields.issubset(run.keys()):
                 raise ValueError('mission smoke plan is missing sealed scope fields')
-            if any(field in run for field in (
-                'mode_sequence', 'expected_ai', 'ai_pool_level', 'ai_difficulty',
-                'ai_layout',
-                *preparation_fields,
-            )):
+            mission_preparation_fields = tuple(
+                field for field in preparation_fields if field != 'friends_only'
+            )
+            if (
+                any(field in run for field in (
+                    'mode_sequence', 'expected_ai', 'ai_pool_level', 'ai_difficulty',
+                    'ai_layout',
+                    *mission_preparation_fields,
+                ))
+                or ('friends_only' in run and not friends_only)
+            ):
                 raise ValueError('mission smoke plan contains PvP, pages, or preparation scope')
             if run['mission_mode'] not in tuple(str(mode) for mode in SUPPORTED_MISSION_MODES):
                 raise ValueError('invalid mission mode')
@@ -2837,6 +2860,14 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 )
             except GameTestError as error:
                 raise ValueError(str(error)) from error
+            if friends_only and (
+                mission_ai_count != 0
+                or behavior_profile is not None
+                or behavior_mission_id is None
+                or mission_respawns is not None
+                or play_unit_uid is not None
+            ):
+                raise ValueError('mission friend session differs from the sealed zero-wingmen imported mission scope')
             if run['room_title'] != mission_room_title(
                 run['title_nonce'], mission_respawns, mission_ai_difficulty,
                 mission_ai_count=mission_ai_count,
@@ -2847,6 +2878,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 mission_respawns=mission_respawns,
                 mission_behavior_profile=behavior_profile,
                 mission_game_mode_id=behavior_mission_id,
+                friends_only=friends_only,
             )
             allowed = {
                 'id', 'role', 'suite', 'normal_flow', 'endpoint',
@@ -2858,7 +2890,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 'mission_ai_count', 'mission_ai_level', 'mission_respawns',
                 'mission_ai_difficulty', *MISSION_CLAIM_FIELDS,
                 *MISSION_BEHAVIOR_FIELDS,
-                'play_unit_uid', 'network_policy',
+                'play_unit_uid', 'friends_only', 'network_policy',
                 *ROUTE_PLAN_FIELDS, 'quiet', 'quiet_loopback', 'review_footage',
             }
             unexpected = set(run.keys()) - allowed
@@ -3688,6 +3720,14 @@ def prepare(
             mission_game_mode_id,
             mission_respawns,
         )
+        if friends_only and mission_mode is not None and (
+            mission_ai_count != 0
+            or mission_behavior_profile is not None
+            or mission_game_mode_id is None
+            or mission_respawns is not None
+            or play_unit_uid is not None
+        ):
+            raise GameTestError('--friends-only mission sessions require an exact zero-wingmen imported mission without behavior, respawn, or owned-unit fixtures')
         if mission_ai_count == 0:
             # The sealed extended title must reach the server's title broker;
             # a disabled client provider would silently submit a legacy name.
@@ -4438,7 +4478,7 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
                 "ai_layout",
                 "bootstrap_only",
                 "battleship_only", "gift_requests_only", "deck_only",
-                "pages_only", "hangar_confirm_gb", "hangar_sort", "friends_only", "room_titles_only", "collection_draw", "random_loadout",
+                "pages_only", "hangar_confirm_gb", "hangar_sort", "room_titles_only", "collection_draw", "random_loadout",
             }
             if forbidden.intersection(plan):
                 raise GameTestError("run.json adds PvP, pages, or preparation scope to a mission smoke")

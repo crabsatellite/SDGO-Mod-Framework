@@ -418,7 +418,8 @@ public:
         uint16_t mode,
         const char* roomTitle,
         bool submit = true,
-        uint32_t missionId = 0)
+        uint32_t missionId = 0,
+        bool lobbyOnly = false)
     {
         if (!bound_ || !native_)
             return Publish(kUnbound);
@@ -463,6 +464,8 @@ public:
                 InterlockedExchangePointer(
                     &missionLobbyOwner_,
                     lobby);
+                if (lobbyOnly)
+                    return Publish(kMissionChannelAccepted);
                 const Result lobbyResult =
                     DriveMissionLobby(lobby);
                 return Publish(lobbyResult);

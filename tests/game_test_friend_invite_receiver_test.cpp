@@ -80,7 +80,7 @@ uint8_t g_manager[0x80] = {};
 
 void* g_promptVtable[32] = {};
 void* g_waitOwnerVtable[16] = {};
-void* g_managerVtables[3][16] = {};
+void* g_managerVtables[4][16] = {};
 
 unsigned g_callbackCalls = 0;
 unsigned g_dtorCalls = 0;
@@ -462,6 +462,10 @@ void* ApiSymbol(
             name,
             "flow.battleship_3d_manager_vtable") == 0)
         return g_managerVtables[2];
+    if (std::strcmp(
+            name,
+            "flow.mission_3d_manager_vtable") == 0)
+        return g_managerVtables[3];
     return nullptr;
 }
 
@@ -661,7 +665,7 @@ void ConfigureVtables()
             &FakePromptLayout);
 }
 
-void PublishJoinedRoom()
+void PublishJoinedRoom(size_t managerKind = 0)
 {
     Put<uint32_t>(g_room, 0, kRoomId);
     Put<uint8_t*>(
@@ -680,7 +684,7 @@ void PublishJoinedRoom()
     Put<void*>(
         g_manager,
         0,
-        g_managerVtables[0]);
+        g_managerVtables[managerKind]);
     Put<uint8_t*>(
         g_app,
         0x4A4,
@@ -921,6 +925,16 @@ int main()
     Check(direct.phase==friends::FriendInviteReceiver::kRoomJoined && direct.decision_sent && direct.room_model_matched && direct.local_guest &&
           !direct.join_continuation_observed && !direct.join_request_sent,
           "direct native guest completion does not invent a legacy continuation or join packet");
+
+    ResetFixture();
+    Check(receiver.Arm(Expected(friends::FriendInviteReceiver::kAccept)),"mission-room accept armed through the ordinary friend prompt");
+    g_packetDetour(nullptr,nullptr,0,0,0,0x059A,invite);
+    Check(receiver.InvokeDecision(),"mission-room acceptance used the genuine original callback");
+    PublishJoinedRoom(3);
+    const auto mission=receiver.Refresh();
+    Check(mission.phase==friends::FriendInviteReceiver::kRoomJoined && mission.manager_vtable_matched &&
+          mission.room_model_matched && mission.local_guest,
+          "mission manager is accepted only after the exact native guest room is installed");
 
     friends::FriendInviteReceiver::active_ = nullptr;
     return g_failures == 0 ? 0 : 1;
