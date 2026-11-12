@@ -113,6 +113,7 @@ private:
     bool weaponReported_ = false;
     bool ammoBaselineValid_ = false;
     bool ammoSpent_ = false;
+    bool sampledAmmoReported_ = false;
     int16_t previousAmmo_ = 0;
     uint32_t sampledUnit_ = 0, sampledWeapon_ = 0;
     bool sampledAlternate_ = false;
@@ -187,6 +188,7 @@ private:
         boundUnit_ = nullptr;
         weaponReported_ = false;
         ammoBaselineValid_ = false;
+        sampledAmmoReported_ = false;
     }
 
     void BeginBattle(
@@ -846,7 +848,17 @@ private:
             }
             const bool sameWeapon = sampledUnit_ == caps.unitId && sampledWeapon_ == weapon.id &&
                                     sampledAlternate_ == caps.alternate && sampledAttack_ == liveAttack;
-            if (ammoBaselineValid_ && sameWeapon && ammo >= 0 && ammo < previousAmmo_) ammoSpent_ = true;
+            if (!sameWeapon) sampledAmmoReported_ = false;
+            if (ammoBaselineValid_ && sameWeapon && ammo >= 0 && ammo < previousAmmo_) {
+                ammoSpent_ = true;
+                if (!sampledAmmoReported_) {
+                    char text[192];
+                    sprintf_s(text,"native player ammunition consumed unit_data=%u slot=%d weapon=%u before=%d after=%d",
+                              caps.unitId,requestedWeaponSlot_,weapon.id,previousAmmo_,ammo);
+                    context->Observe(text);
+                    sampledAmmoReported_ = true;
+                }
+            }
             previousAmmo_ = ammo;
             ammoBaselineValid_ = true;
             sampledUnit_ = caps.unitId; sampledWeapon_ = weapon.id;

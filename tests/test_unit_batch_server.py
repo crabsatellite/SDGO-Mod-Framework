@@ -211,6 +211,16 @@ class PublicationTests(unittest.TestCase):
 
 
 class ApplyTests(ServerGroup):
+    def test_read_only_restart_verification_accepts_running_services_but_refuses_edited_rows(self):
+        folder=write_publication(self.root,ordered_families())
+        batch_server.apply(folder,self.ini)
+        before=len(self.writes())
+        with patch.object(batch_server,'running_services',return_value=['active fixture service']):
+            self.assertTrue(batch_server.verify_installed(folder,self.ini,types.SimpleNamespace(root=self.root/'client')))
+            self.fake.tables['tbl_Units'][25070]['HP']+=1
+            self.assertFalse(batch_server.verify_installed(folder,self.ini,types.SimpleNamespace(root=self.root/'client')))
+        self.assertEqual(before,len(self.writes()),'restart verification must not write fixed or player data')
+
     def test_dependency_order_applies_where_plan_order_would_fail(self):
         folder = write_publication(self.root, ordered_families())
         events = []
@@ -311,8 +321,15 @@ class ApplyTests(ServerGroup):
         publication = batch_server.load_publication(folder)
         request['records'] = [{'id': 25070, 'client_sha256': batch_server._sha(publication.records[2][25070])}]
         folder = write_publication(self.root / 'with-graph', families, graphs=[request])
-        old_graph = self.hosts[0] / 'sdgo/mods/unit_catalog_server/form-graphs.bin'
-        old_graph.write_bytes(b'previous candidate')
+        from test_unit_form_graph_runtime import fixture, prepared, grade_rows
+        from owner.units.form_graph_runtime import compile_native_files
+        previous=fixture();previous_plan=prepared(previous)
+        previous_plan['owners'][0]['owner']='fixture.batch.a'
+        old_candidate,old_authority=compile_native_files(previous_plan,previous[2],grade_rows(previous[2]))
+        for host in self.hosts:
+            (host/'sdgo/mods/unit_catalog_server/form-graphs.bin').write_bytes(old_candidate)
+            authority=host/'sdgo/install-state/unit-form-authority.bin'
+            authority.parent.mkdir(parents=True,exist_ok=True);authority.write_bytes(old_authority)
         compiled = []
 
         def compile_graphs(cursor, requests, records, *, originals):
@@ -331,7 +348,7 @@ class ApplyTests(ServerGroup):
             self.assertEqual(values.get('settings', 'Enabled'), '1')
         receipt, = self.receipts()
         backup = self.root / 'Server/sdgo/local-state/changes/backups' / receipt['id'] / 'BattleServer2'
-        self.assertEqual((backup / 'sdgo/mods/unit_catalog_server/form-graphs.bin').read_bytes(), b'previous candidate')
+        self.assertEqual((backup / 'sdgo/mods/unit_catalog_server/form-graphs.bin').read_bytes(), old_candidate)
         self.assertIn(b'enabled=0', (backup / 'sdgo/mods/unit_catalog_server/mod.ini').read_bytes())
         self.assertEqual((result['readback']['graph_hosts'], result['readback']['graph_hosts_installed']), (2, 2))
 
@@ -352,7 +369,8 @@ class ApplyTests(ServerGroup):
 
 class ManagerActionTests(ServerGroup):
     def provider(self):
-        workspace = types.SimpleNamespace(settings={'modules': {'units': {'server_ini': str(self.ini)}}}, root=self.root / 'state')
+        workspace = types.SimpleNamespace(settings={'modules': {'units': {'server_ini': str(self.ini)}}}, root=self.root / 'state',
+            services=types.SimpleNamespace(register=lambda *args:None),save_workspace=lambda:None)
         return Units(workspace)
 
     def test_job_reports_progress_and_completion(self):

@@ -411,6 +411,7 @@ class Workspace:
                 'names':[{'UnitNumber':r['id'],'NameCN':draft['name'] if r['id']==root else r['name'],
                           'NameEN':r['server'].get('UnitModelName',r['name'])} for r in draft['forms']]}
         if draft.get('blueprints'):result['blueprints']=copy.deepcopy(draft['blueprints'])
+        if draft.get('behavior_profile'):result['behavior_profile']=draft['behavior_profile']
         return result
 
     def requirements(self,draft,state=None):
@@ -500,9 +501,27 @@ class Workspace:
             need('behavior_mismatch','这份记录有变形目标，不能作为无变形机体发布','behavior_profile','error')
         elif profile=='native-self-transform-v1' and (len(forms)!=1 or any(r['transform_target']!=i for i,r in forms.items())):
             need('behavior_mismatch','自变形机体要求单条记录且变形目标为自身','behavior_profile','error')
+        elif profile=='native-self-transform-v1':
+            need('self_reference_semantics','自引用记录会保留，但变形目标等于自身不会自动产生第二种状态；R行为需要配套的原生消费者、动作及实机证据。需要两个独立状态时应提供两条完整互指记录',
+                 'behavior_profile','warning')
         elif profile=='native-entry-forms-v1':
             if len(forms)!=1 or not any(r['transform_target'] and r['transform_target'] not in forms for r in forms.values()):
                 need('behavior_mismatch','入口形态要求单条记录，其变形目标为已发布的双向形态之一','behavior_profile','error')
+        elif profile=='native-three-stage-forms-v1':
+            if len(forms)!=3:
+                need('unsupported_forms','三阶段机体要求 3 条完整形态记录','behavior_profile','error')
+            if any(r['transform_target'] and r['transform_target'] not in forms for r in forms.values()):
+                need('behavior_mismatch','三阶段机体的全部变形目标必须在同一项目内','behavior_profile','error')
+            if root in forms:
+                reached=set();cursor=root
+                while cursor in forms and cursor not in reached:
+                    reached.add(cursor);cursor=forms[cursor]['transform_target']
+                if reached!=set(forms):
+                    need('unreachable_form','有形态无法从根形态到达，请核对原始变形关系',None,'error')
+                if cursor:
+                    need('behavior_mismatch','三阶段机体必须按根形态依次前进，并以变形目标为 0 的终态结束','behavior_profile','error')
+            need('form_graph_runtime','三阶段需要客户端和服务端配套安装；服务端须核对已登记定义与所有权后生成形态图绑定。原始变形条件保留，选择此类型不会自动产生战斗阶段触发器',
+                 'behavior_profile','warning')
         elif profile in ('native-linked-forms-v1','native-one-way-forms-v1'):
             if len(forms)!=2:need('unsupported_forms','当前适配器要求双形态；三形态以上的有向图需要原生形态图运行时','behavior_profile','error')
             if root in forms:
@@ -538,6 +557,9 @@ class Workspace:
                             need('weapon',f'{row["id"]} 的武器 {weapon} 缺少客户端或服务端定义',f'weapons.{weapon}',accept='.bin,.json')
                     for name in model.SKILL_REFS:
                         skill=row['server'].get(name)
+                        if name in ('SkillNumber_1','SkillNumber_2') and skill:
+                            from .skill_slots import ordinary
+                            if not ordinary(skill):need('skill_slot_category',f'{row["id"]} 的技能 {skill} 被原生客户端分到额外技能槽，不能直接用于机体技能1/2；请使用普通技能编号或配套的类别适配器',name,'error')
                         if skill and skill in self.repository.catalog.get('pending_skill_ids',set()):
                             need('skill_runtime_pending',f'技能 {skill} 的制作数据已保存；请先保存草稿，使用该技能的机体尚不能发布',
                                  f'forms.{row["id"]}.{name}','error')
@@ -635,6 +657,7 @@ class Workspace:
                         'callback_roles':['ranged','special_ranged','initializer'],'authoring':True,'native_publication':False},
                     'native_content':{'schema':'sdgo.unit-native-content/1','authoring':True,'bundled_members':True,
                         'known_record_kinds':[11,13],'opaque_record_retention':True,'server_field_authoring':True,
+                        'ordinary_skill_slot_ranges':[[1,75000],[3220001,3225000],[3473001,3478000],[3558001,3559000],[3613002,3615999]],
                         'partial_server_drafts':True,'native_publication':False},
                     'blueprints':{'schema_version':1,'authoring':True,
                     'native_registration':NATIVE_REGISTRATION_SUPPORTED,'target_record_kind':33,

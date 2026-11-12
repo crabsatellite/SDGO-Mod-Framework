@@ -220,6 +220,10 @@ profile. Later runs reuse that profile. After the first preparation, add
 with a new run UUID. The previous receipt and binary hashes are consolidated;
 retired jobs go to the Recycle Bin instead of keeping another full client.
 An archive baseline referenced by another capsule cannot be reused this way.
+For generated default units, pass `--unit-presets <paired-publication>` during preparation or reuse. The normal
+data-only installer updates the separate preset scope after programme staging and before runtime hashes are sealed,
+while preserving primary owner units. Changing a preset publication requires a new preparation; never replace its
+catalog or sidecars inside a sealed or running client.
 On Windows, reuse also checks the native executable name when the previous PID
 has no readable image path. A PID recycled into a different executable does not
 block reuse; an unknown identity or a matching game name still blocks all changes.

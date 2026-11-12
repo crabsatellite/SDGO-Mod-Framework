@@ -1,0 +1,313 @@
+{
+  "schema": "sdgo.unit-default-presets/1",
+  "recipe_version": 1,
+  "enabled_by_default": true,
+  "owner": "local-stage-examples",
+  "host": "GOnline-54BE1568-00C97000",
+  "host_sha256": "e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92",
+  "templates": [
+    {
+      "kind": 2,
+      "id": 10001,
+      "sha256": "a7a3503c278bd70092bfb15548ba0db576db4ff58641273ccadefb492143c897"
+    },
+    {
+      "kind": 2,
+      "id": 10022,
+      "sha256": "def3b9f17704e2fdb8647b1b6eff9d7c3af6106ab8e3db31ed9835863cdecb5b"
+    },
+    {
+      "kind": 2,
+      "id": 10063,
+      "sha256": "900d43d84b2ac49904e00d08a20c1dfe4a8119a0f625eef2955ba16dc3408c99"
+    },
+    {
+      "kind": 2,
+      "id": 10064,
+      "sha256": "4da08ad8a45666670646eb41c4c4b9ead3f9d3c92c6f15fbaaddd72c757cfcb9"
+    },
+    {
+      "kind": 2,
+      "id": 20008,
+      "sha256": "c9165e6fcf5bca72ab00ea42236d7d11197dd66e3ea2bea6cbe64b76fa2ee3b4"
+    },
+    {
+      "kind": 10,
+      "id": 40005,
+      "sha256": "5192d7a4113eaa49d19dcfe4252b67d8a418dfab4f83d048b8788dd16c1a22eb"
+    },
+    {
+      "kind": 10,
+      "id": 41002,
+      "sha256": "4eddfa6ce09e8b23043f7a6bfbdb4d78a06ed2e615c57bad0cffd1d4aa9a0f80"
+    },
+    {
+      "kind": 10,
+      "id": 45072,
+      "sha256": "12a9a6781c6195113d21a54a87cdc51354cb5cf86634c7001c38ffc5812a8807"
+    },
+    {
+      "kind": 13,
+      "id": 70004,
+      "sha256": "8b3da47254c5b9c59ca70c15b412b024f00988a5dfe12c440dbf9eb90658f65b"
+    },
+    {
+      "kind": 13,
+      "id": 70077,
+      "sha256": "86bb3f3cc062ce2eb79371c33bd0f4c317ae5b1a17c9391aaa4e6d47a20a12ff"
+    }
+  ],
+  "skills": [
+    {
+      "id": 74950,
+      "template": 70077,
+      "name": "薪火·战术接续",
+      "internal_name": "Kindling_Tactical",
+      "fields": {
+        "ActivateValue": 85,
+        "Defense": 5,
+        "Attack": 5,
+        "BoostIncreaseRate": 0.0,
+        "BoostPower": 0
+      },
+      "description": "耐久85%以下时授权高达换装，小幅提高攻击、防御；不恢复耐久。"
+    },
+    {
+      "id": 74951,
+      "template": 70077,
+      "name": "薪火·决战授权",
+      "internal_name": "Kindling_Decisive",
+      "fields": {
+        "ActivateValue": 45,
+        "Defense": 0,
+        "Attack": 5,
+        "DashLv": 8,
+        "MotiveLv": 5,
+        "BoostIncreaseRate": 0.0,
+        "BoostPower": 30
+      },
+      "description": "耐久45%以下时授权ν高达决战换装，提高攻击与机动；不回血，阵亡后需重新触发。"
+    },
+    {
+      "id": 74952,
+      "template": 70004,
+      "name": "余烬·复合外壳",
+      "internal_name": "Ember_Shell",
+      "fields": {
+        "Defense": 5
+      },
+      "description": "提高基本防御，装甲形态擅长承受伤害。"
+    },
+    {
+      "id": 74953,
+      "template": 70077,
+      "name": "余烬·破壳驱动",
+      "internal_name": "Ember_Purge",
+      "fields": {
+        "ActivateValue": 60,
+        "Defense": 0,
+        "Attack": 5,
+        "DashLv": 8,
+        "MotiveLv": 8,
+        "BoostPower": 50
+      },
+      "description": "耐久60%以下时单向爆甲，提高攻击、机动与推进性能；不恢复耐久。"
+    }
+  ],
+  "presets": [
+    {
+      "key": "kindling-inheritor",
+      "family_key": "local-example.kindling-inheritor",
+      "name": "薪火计划·继承者",
+      "profile": "native-three-stage-forms-v1",
+      "root_unit_id": 29950,
+      "item_category_id": 1119980,
+      "item_template_id": 1120001,
+      "forms": [
+        {
+          "id": 29950,
+          "template": 10022,
+          "target": 29951,
+          "name": "薪火·量产框架",
+          "fields": {
+            "StrikingPower": 110,
+            "DefensivePower": 110,
+            "UnitGradeNumber": 3,
+            "UnitGradeNumber2": 4,
+            "BattleCost": 455,
+            "Star": 4,
+            "HP": 14000,
+            "WeaponNumber_2": 49950,
+            "Shield": 2000,
+            "UnitGrowIndex": 3,
+            "MaxEnergyCost": 500.0
+          }
+        },
+        {
+          "id": 29951,
+          "template": 10001,
+          "target": 29952,
+          "name": "薪火·标准换装",
+          "fields": {
+            "StrikingPower": 125,
+            "DefensivePower": 120,
+            "UnitGradeNumber": 3,
+            "UnitGradeNumber2": 4,
+            "BattleCost": 455,
+            "Star": 4,
+            "HP": 14000,
+            "WeaponNumber_2": 49951,
+            "Shield": 2000,
+            "UnitGrowIndex": 3,
+            "MaxEnergyCost": 500.0
+          }
+        },
+        {
+          "id": 29952,
+          "template": 20008,
+          "target": 0,
+          "name": "薪火·决战换装",
+          "fields": {
+            "StrikingPower": 135,
+            "DefensivePower": 125,
+            "UnitGradeNumber": 3,
+            "UnitGradeNumber2": 4,
+            "BattleCost": 455,
+            "Star": 4,
+            "HP": 14000,
+            "Shield": 2000,
+            "MoveLevel": 13,
+            "DashLevel": 78,
+            "MotivePower": 62,
+            "WeaponNumber_2": 49953,
+            "UnitGrowIndex": 3,
+            "MaxEnergyCost": 500.0
+          }
+        }
+      ],
+      "skills": [
+        74950,
+        74951
+      ],
+      "weapons": [
+        {
+          "id": 49950,
+          "template": 40005,
+          "name": "薪火试作式光束枪",
+          "internal_name": "Example_Rifle_49950",
+          "fields": {
+            "DamageSize": 1025,
+            "AttackSpeed": 1.7,
+            "BulletRemain": 10,
+            "ReloadTime": 150,
+            "RangeSize": 2800
+          }
+        },
+        {
+          "id": 49951,
+          "template": 45072,
+          "name": "试验型光束步枪",
+          "internal_name": "Example_Rifle_49951",
+          "fields": {
+            "DamageSize": 1250,
+            "RangeSize": 3000,
+            "BulletRemain": 9,
+            "ReloadTime": 190
+          }
+        },
+        {
+          "id": 49953,
+          "template": 45072,
+          "name": "薪火决战型光束步枪",
+          "internal_name": "Kindling_Decisive_Rifle",
+          "fields": {
+            "DamageSize": 1325,
+            "RangeSize": 3000,
+            "BulletRemain": 8,
+            "ReloadTime": 200
+          }
+        }
+      ],
+      "description": "以量产框架积累战场数据的AR级成长试验机。用较弱的前期换取低耐久决战装备，整条形态链按4点计费。升级不回血；本局重生保留标准装备，决战装备需重新触发。",
+      "gameplay_notes": "定位为4点AR成长机，三阶段统一14000耐久、455对战成本。量产框架复用吉姆光束喷枪；耐久85%以下且战术接续生效时取得标准换装，45%以下且决战授权生效时进入ν外观的决战换装。终态强化低血火力，基础机动与步枪持续输出低于原版ν高达；变形不恢复耐久。阵亡后回到标准换装，下局重新从量产框架开始。不能手动提前升级。"
+    },
+    {
+      "key": "ember-purge",
+      "family_key": "local-example.ember-purge",
+      "name": "余烬装甲试验机",
+      "profile": "native-one-way-forms-v1",
+      "root_unit_id": 29953,
+      "item_category_id": 1119981,
+      "item_template_id": 1120001,
+      "forms": [
+        {
+          "id": 29953,
+          "template": 10063,
+          "target": 29954,
+          "name": "余烬·装甲形态",
+          "fields": {
+            "StrikingPower": 112,
+            "DefensivePower": 135
+          }
+        },
+        {
+          "id": 29954,
+          "template": 10064,
+          "target": 0,
+          "name": "余烬·破壳形态",
+          "fields": {
+            "StrikingPower": 132,
+            "DefensivePower": 110,
+            "DashLevel": 75,
+            "MotivePower": 62,
+            "WeaponNumber_2": 49952
+          }
+        }
+      ],
+      "skills": [
+        74952,
+        74953
+      ],
+      "weapons": [
+        {
+          "id": 49952,
+          "template": 41002,
+          "name": "试验型光束步枪",
+          "internal_name": "Example_Rifle_49952",
+          "fields": {
+            "DamageSize": 1150,
+            "BulletRemain": 9,
+            "ReloadTime": 210
+          }
+        }
+      ],
+      "description": "用可抛弃的复合外壳换取前半场生存空间的装甲试验机。破壳后失去重甲防护，转为机动步枪战，不恢复失去的耐久。",
+      "gameplay_notes": "设计目标：耐久降至60%时单向爆甲，启动余烬驱动。保留原生装甲与脱甲模型的清楚区别。名称和设定为通用原创演示，非官方机体设定。"
+    }
+  ],
+  "stage_rules": [
+    {
+      "max_hp_percent": 85,
+      "skill_id": 74950,
+      "target_unit_id": 29951,
+      "unit_id": 29950
+    },
+    {
+      "max_hp_percent": 45,
+      "skill_id": 74951,
+      "target_unit_id": 29952,
+      "unit_id": 29951
+    },
+    {
+      "max_hp_percent": 60,
+      "skill_id": 74953,
+      "target_unit_id": 29954,
+      "unit_id": 29953
+    }
+  ],
+  "acquisition": {
+    "creates_shop_products": false,
+    "creates_gacha_slots": false,
+    "grants_inventory_units": false
+  }
+}

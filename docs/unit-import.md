@@ -11,12 +11,50 @@ Packages prepared from any source can be submitted through the documented import
 Import a unit archive (RAR/ZIP) in SDGO Mod Manager, fill in missing definitions, generate the shop, capsule and
 encyclopedia images, then write the unit definitions to the server and build a client package for players.
 
-Single-form, two-form (reciprocal or one-way)
-and self-transforming units are supported, as are entry forms into an already published reciprocal pair.
+Single-form and two-form (reciprocal or one-way) units are supported, as are entry forms into an already published
+reciprocal pair. Self-referencing records can be preserved, but a same-ID target alone does not create an R-key
+state change; it requires the corresponding native behavior and actual runtime validation.
+The three-stage profile (`native-three-stage-forms-v1`) declares exactly three complete records in one project:
+inventory root → second stage → final stage, whose transform target must be zero. Install the server form-graph
+binding through batch apply. Selecting the profile does not create an automatic progression trigger; native skills,
+transform conditions and weapons still need matching definitions and actual game validation.
 Direct confirmation in the single-family editor requires skills available in the server catalog. A complete protocol
 publication can instead carry new skill records, icon resources and server definitions through the batch apply route,
 even for one family. See the fictional [custom skill import example](unit-skill-import.md). Before going live, try an imported unit in
 real battles on a test server to check its weapons, skills and transformation.
+
+## Default demo presets included with the Mod
+
+![Kindling Inheritor: three excerpts of native GM, Gundam and decisive-equipment combat](unit-default-growth-demo.webp)
+
+Manager enables automatic registration of two public demo recipes by default: Kindling Inheritor (three stages)
+and Ember Armor Testbed (one-way armor purge). After the owner selects a compatible original client and WorldServer
+configuration, Manager prepares and registers the paired data while that server group is stopped and matching
+programmes are installed. It never stops or restarts game services. The unit panel shows status and an opt-out;
+turning automatic registration off retains installed data.
+
+The programme package includes recipes and the importer. Models, animations and original textures come from the
+owner's compatible client. Generated data lives in the separate `unit_catalog/presets` content directory; existing
+owner content and unrelated form graphs retain their ownership and integrity checks. The ordinary owner client/profile
+publication includes the generated data. **No separate demo-unit Release is needed.**
+
+Registration does not grant inventory units, create shop products or add gacha slots. Owners configure acquisition
+through the existing editors. Other authors' custom content is outside these public presets.
+
+| Demo | Native resources and battle design |
+| --- | --- |
+| Kindling Inheritor | A four-point AR growth unit: GM → Gundam → ν Gundam appearance. All stages use 14,000 HP and A-tier battle cost. The first upgrade requires the native tactical skill and HP at or below 85%; the final upgrade requires the decisive skill and HP at or below 45%. Neither restores HP. Standard equipment remains after respawn in that match; decisive equipment must trigger again. A new match starts with the GM frame. |
+| Ember Armor Testbed | Armored Alex → unarmored Alex, using the original models to make the armor loss recognizable. The native purge skill and HP at or below 60% request the one-way change. It trades armor for mobility and rifle pressure without healing. |
+
+These names and mechanics are original demo designs. Their skills compose native passive fields, with independently
+imported icons. A sealed `stage-rules.bin` links each source record, skill, HP threshold and existing directed edge to
+the exact catalog. The runtime waits for the real native skill activation and sends the original transform request;
+it does not set HP, ammunition or movement state. The normal transformation eligibility still applies.
+
+Kindling trades early performance for a low-HP power window and a lower point cost than a stock S-rank unit.
+Its final equipment has a slower, shorter-range rifle and lower base mobility than stock ν Gundam; it also lacks
+ν Gundam's full Psychoframe bonuses. A/AS/AR share the target client's A-tier cost group. Every form retains the
+same AR classification and four-point cost. These are starting balance values for owner playtesting.
 
 | part | runs on | does |
 |---|---|---|
@@ -24,7 +62,7 @@ real battles on a test server to check its weapons, skills and transformation.
 | `unit_catalog` | client | loads the imported units' native records and resources |
 | `unit_catalog_server` | battle servers | binds the imported units' skills and forms |
 
-The generic release contains only the tools, never units. Owner drafts, images, publications and install receipts stay
+The generic release contains tools and public demo recipes, without original asset payloads. Owner drafts, images, publications and install receipts stay
 in the owner's workspace.
 The **机体导入** panel runs only inside Manager; the game never loads it. Both runtime Mods are installed switched off,
 and the game does not load a Mod that is off. Server publication switches on `unit_catalog_server`; installing the
@@ -108,8 +146,10 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   renumbering.
 - **原生行为配置** (native behavior profile) offers: single form (`native-single-form-v1`), reciprocal two-form links
   (`native-linked-forms-v1`), one-way links whose final form cannot transform back (`native-one-way-forms-v1`), a
-  single record that transforms into itself (`native-self-transform-v1`), and entry forms that transform into one
+  single self-referencing record (`native-self-transform-v1`), and entry forms that transform into one
   form of an already published reciprocal pair (`native-entry-forms-v1`).
+- For two independently switchable states, supply two complete reciprocal records and matching native transform
+  animations. They may share a model. A self-reference by itself can be a native no-op and is not proof of two states.
 - An entry form enters the hangar as its own unit, and its first transform enters the reciprocal pair. Moving back
   and forth between the pair's two forms afterwards needs a form graph installed on the server (the
   [batch apply](#applying-a-batch-roster-to-the-server) writes it); without one, the unit stays in the form it

@@ -9,6 +9,13 @@
 // --play-unit-uid and the original transform admission/request business.
 // No keyboard, profile, inventory, model, FSM or server state is fabricated.
 namespace apsalus_probe {
+using LocalFind = unsigned char*(__thiscall*)(void*, unsigned);
+inline unsigned char* LocalPlayer(void* manager,LocalFind find) {
+    __try {
+        auto* unit=*reinterpret_cast<unsigned char**>(static_cast<unsigned char*>(manager)+0x88);
+        return unit&&unit[0x31e9]&&find(manager,*reinterpret_cast<unsigned*>(unit+4))==unit?unit:nullptr;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+}
 inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMod* mod, ScoreboardActions& input) {
     static const bool legacy = api->SettingInt(mod, "ApsalusRoundtrip", 0) != 0;
     static const bool directed = api->SettingInt(mod, "UnitDirectedTransforms", 0) != 0;
@@ -27,6 +34,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     static auto moveInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_move_input"));
     static auto fireInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_primary_input"));
     static unsigned issued = 0, completed = 0, initialId = 0, lastMode = ~0u, lastId = 0;
+    static unsigned issuedBank = 0;
     static sdgo_test::transforms::Path path{};
     static uint64_t issuedAt = 0;
     static uint64_t admissionAt = 0, lastRequestAt = 0, deniedObservationAt = 0;
@@ -39,7 +47,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         context->Assert(0, "Apsalus probe requires verified native request and unit-manager bindings");
         return SDGO_GAME_TEST_FAIL;
     }
-    auto* unit = find(*manager, 1);
+    auto* unit = LocalPlayer(*manager,find);
     if (!unit) return SDGO_GAME_TEST_WAIT;
     // Native unit command 0x1d reads unit[0x272] before calling 006D8B90.
     // unit+9CC is the attack FSM; the movement/transform FSM is unit+9C8.
@@ -70,12 +78,14 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
             context->Assert(0,"selected actor has an actual native unit definition");return SDGO_GAME_TEST_FAIL;
         }
         const int configured=directed?api->SettingInt(mod,"UnitTransformSteps",3):2;
+        unsigned initialTarget=0;std::memcpy(&initialTarget,spec+316,4);
+        const bool self=initialTarget==id&&!directed&&!legacy;
         const char* error=nullptr;
         if(configured<1||configured>static_cast<int>(sdgo_test::transforms::MaxSteps)||
             !sdgo_test::transforms::Build(id,static_cast<unsigned>(configured),!directed||legacy,
                 [&](unsigned identity){const unsigned char* raw=nullptr;
                     return lookup(grid(),&raw,identity,2,0)&&raw?sdgo_test::transforms::Record{raw,4976}:sdgo_test::transforms::Record{};
-                },path,error)){
+                },path,error,self)){
             context->Assert(0,error?error:"native transform path step count is outside 1..16");return SDGO_GAME_TEST_FAIL;
         }
         initialId=id;
@@ -142,7 +152,8 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         return SDGO_GAME_TEST_WAIT;
     }
     if (issued > completed) {
-        if (mode == 0 && completed<path.steps && id == path.ids[completed+1]) {
+        if (mode == 0 && completed<path.steps && id == path.ids[completed+1] &&
+            (path.ids[completed]!=path.ids[completed+1] || unit[0xe34]!=issuedBank)) {
             ++completed;
             char message[192];sprintf_s(message,"native transform committed step=%u expected=%u actual=%u mode=%u bank=%u",completed,path.ids[completed],id,mode,unit[0xe34]);
             context->Observe(message);
@@ -159,6 +170,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         if(lastRequestAt&&context->elapsed_ms-lastRequestAt<500)return SDGO_GAME_TEST_WAIT;
         lastRequestAt=context->elapsed_ms;
         if(!admissionAt)admissionAt=context->elapsed_ms;
+        const unsigned previousBank=unit[0xe34];
         const unsigned result = request(move);
         // AL is the native admission result. A denied local request has not
         // started a transformation; wait for normal reload/cooldown/eligibility
@@ -183,7 +195,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
             return SDGO_GAME_TEST_WAIT;
         }
         admissionAt=deniedObservationAt=0;
-        ++issued; issuedAt = context->elapsed_ms;
+        ++issued; issuedAt = context->elapsed_ms;issuedBank=previousBank;
         // Admission alone is insufficient. Require the actual form commit and
         // released movement state; never resend an admitted request each frame.
         char message[192];

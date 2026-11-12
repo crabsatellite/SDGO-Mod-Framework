@@ -15,6 +15,48 @@ from unit_import_support import Baseline,Repository,archive,png,publisher,comple
 
 
 class WorkspaceTests(unittest.TestCase):
+    def directed(self,targets):
+        from unit_import_support import unit
+        with zipfile.ZipFile(io.BytesIO(archive())) as source:
+            files={n:source.read(n) for n in source.namelist() if n!='gdrs/unit.bin'}
+        for identity,target in targets.items():files[f'gdrs/form-{identity}.bin']=unit(identity,target)
+        output=io.BytesIO()
+        with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as z:
+            for name,raw in files.items():z.writestr(name,raw)
+        state=self.workspace.inspect('directed.zip',output.getvalue(),self.workspace.public()['revision'])
+        return self.workspace.update(state['draft']['id'],{
+            'root_unit_id':min(targets),'behavior_profile':'native-three-stage-forms-v1'},state['revision'])
+
+    def test_directed_profile_preserves_three_form_chain_and_project_roundtrip(self):
+        state=complete(self.workspace,self.directed({91001:91002,91002:91003,91003:0}))
+        draft=state['draft'];self.assertTrue(draft['can_confirm'],draft['requirements'])
+        self.assertEqual('native-three-stage-forms-v1',self.workspace.plan(draft)['behavior_profile'])
+        self.assertEqual([91001,91002,91003],draft['form_graph']['root_routes'][0]['path'])
+        self.assertEqual('no-target',draft['form_graph']['root_routes'][0]['end'])
+        self.assertEqual([1,0,0],[r['server']['SallyReady'] for r in draft['forms']])
+        self.assertTrue(any(r['code']=='form_graph_runtime' and r['level']=='warning' for r in draft['requirements']))
+        from owner.units.project import export_project
+        other=Workspace(Path(self.tmp.name)/'directed-receiver',baseline=Baseline(),repository=Repository(),publisher=publisher)
+        try:
+            imported=other.inspect('project.zip',export_project(self.workspace,draft),other.public()['revision'])['draft']
+            self.assertEqual('native-three-stage-forms-v1',imported['behavior_profile'])
+            self.assertEqual(draft['form_graph'],imported['form_graph'])
+            self.assertTrue(imported['can_confirm'],imported['requirements'])
+        finally:other.close()
+
+    def test_directed_profile_rejects_external_unreachable_and_out_of_budget_graphs(self):
+        cases=[({91001:91002,91002:0},'unsupported_forms'),
+               ({91001:91002,91002:0,91003:91002},'unreachable_form'),
+               ({91001:91002,91002:91003,91003:91001},'behavior_mismatch'),
+               ({i:i+1 if i<91017 else 0 for i in range(91001,91018)},'unsupported_forms')]
+        for targets,code in cases:
+            with self.subTest(code=code,count=len(targets)):
+                state=self.directed(targets)
+                self.assertFalse(state['draft']['can_confirm'])
+                self.assertTrue(any(r['code']==code and r['level']=='error' for r in state['draft']['requirements']))
+        with self.assertRaisesRegex(ValueError,'transform target is missing'):
+            self.directed({91001:91002,91002:91003,91003:99999})
+
     def test_three_form_authoring_shows_directed_graph_without_dropping_entry_or_opening_runtime(self):
         from unit_import_support import unit
         with zipfile.ZipFile(io.BytesIO(archive())) as source:

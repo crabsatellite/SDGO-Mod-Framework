@@ -868,6 +868,9 @@ namespace sdgo::resource_overlay
         if (std::strcmp(owner, "unit_catalog") == 0)
             return LoadSealedBundle(modDirectory, configName, "unit_catalog",
                                     &UnitResourcePathCheck, bundle, error);
+        if (std::strcmp(owner, "unit_catalog_presets") == 0)
+            return LoadSealedBundle(modDirectory, configName, "unit_catalog_presets",
+                                    &UnitResourcePathCheck, bundle, error);
         if (std::strcmp(owner, "map_catalog") == 0)
             return LoadSealedBundle(modDirectory, configName, "map_catalog",
                                     &MapResourcePathCheck, bundle, error);

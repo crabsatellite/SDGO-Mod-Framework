@@ -261,6 +261,13 @@ def load_publication(folder) -> Publication:
         raise ValueError('批量发布目录不存在')
     plan = _validate_plan(_read_json(root / 'server-plan.json', 'server-plan.json'))
     records = _catalog_records(root)
+    from .skill_slots import ordinary
+    for family in plan['families']:
+        for row in family['units']:
+            for field in ('SkillNumber_1','SkillNumber_2'):
+                identity=row.get(field,0)
+                if identity and not ordinary(identity):
+                    raise ValueError(f"机体 {row.get('UnitNumber')} 的 {field} 编号 {identity} 被原生客户端分到额外技能槽；请使用普通技能编号或配套的类别适配器")
     graphs_path = root / 'form-graph-requests.json'
     graphs = _validate_graphs(_read_json(graphs_path, 'form-graph-requests.json') if graphs_path.is_file() else None, plan, records)
     for section, kind in (('skills', 13), ('funnels', 11)):
@@ -539,6 +546,24 @@ def preflight(folder, server_ini) -> dict:
 
 # ---------------------------------------------------------------- apply
 
+def verify_installed(folder,server_ini,baseline) -> bool:
+    """Read-only restart check, including live rows and complete graph owners."""
+    from types import SimpleNamespace
+    from . import graph_preservation
+    publication=load_publication(folder)
+    review=preflight(folder,server_ini)
+    if review['problems'] or not readback(publication,server_ini)['complete']:return False
+    retained=graph_preservation.read(server_ini,SimpleNamespace(graph_requests=[]),baseline)
+    installed={row['owner']:row for row in retained['requests']}
+    for desired in publication.graph_requests:
+        actual=installed.get(desired['owner'])
+        if (not actual or actual['revision']!=desired['revision'] or
+            set(actual['roots'])!=set(desired['roots']) or
+            set(actual['families'])!=set(desired.get('families',[desired['owner']])) or
+            {row['id']:row['client_sha256'] for row in actual['records']}!=
+            {row['id']:row['client_sha256'] for row in desired['records']}):return False
+    return True
+
 def _apply_shared(server_ini, publication: Publication) -> dict:
     from . import server_dependencies as dependencies
     connection = repository._connect(Path(server_ini))
@@ -587,7 +612,7 @@ def _enable_mod(raw: bytes) -> bytes:
     return storage.patch_ini(raw, [('mod', 'enabled', '1')])
 
 
-def install_graphs(server_ini, publication: Publication, hosts: list[dict], backup_root: Path | None) -> dict:
+def install_graphs(server_ini, publication: Publication, hosts: list[dict], backup_root: Path | None,graph_context=None) -> dict:
     """Compile host authority from the installed rows and write it to every battle host."""
     from manager import storage
     from .form_graph_runtime import prepare_native_from_cursor
@@ -596,7 +621,13 @@ def install_graphs(server_ini, publication: Publication, hosts: list[dict], back
         cursor = connection.cursor()
         cursor.execute('SET XACT_ABORT ON')
         cursor.execute('BEGIN TRANSACTION')
-        candidate, authority = prepare_native_from_cursor(cursor, publication.graph_requests, publication.records.get(2, {}), originals={})
+        context=graph_context or {'requests':[],'records':{},'originals':{}}
+        if set(context)!={'requests','records','originals'}:raise ValueError('保留形态图控制器上下文无效')
+        client_records=dict(context['records'])
+        for identity,raw in publication.records.get(2,{}).items():
+            if identity in client_records and client_records[identity]!=raw:raise ValueError('保留形态图与新目录记录冲突')
+            client_records[identity]=raw
+        candidate, authority = prepare_native_from_cursor(cursor, [*context['requests'],*publication.graph_requests], client_records, originals=context['originals'])
         cursor.execute('COMMIT TRANSACTION')
         connection.commit()
     except ValueError:
@@ -635,7 +666,7 @@ def install_graphs(server_ini, publication: Publication, hosts: list[dict], back
             'authority_sha256': _sha(authority), 'hosts': written}
 
 
-def apply(folder, server_ini, progress: Progress | None = None) -> dict:
+def apply(folder, server_ini, progress: Progress | None = None,graph_context=None,*,baseline=None) -> dict:
     """Apply shared rows, families in dependency order and form graphs.
 
     Requires every native service of the selected group to be stopped (the
@@ -659,6 +690,15 @@ def apply(folder, server_ini, progress: Progress | None = None) -> dict:
 
     report('gate')
     with server_change(Path(server_ini), ACTION, ('fixed_catalog',)) as change:
+        if publication.graph_requests:
+            from . import graph_preservation
+            if baseline is not None:
+                if graph_context is not None:raise ValueError('保留形态图上下文重复')
+                # Read the current graph/SQL/client witnesses under the same
+                # group mutation gate as the incoming family writes.
+                graph_context=graph_preservation.read(server_ini,publication,baseline)
+            elif graph_context is None:
+                graph_preservation.require_no_unrelated(hosts,publication)
         # Same ordered check as the preflight, against the locked live catalog,
         # so a refusal stops the batch before its first write.
         report('check')
@@ -679,7 +719,7 @@ def apply(folder, server_ini, progress: Progress | None = None) -> dict:
         graphs = {'requests': 0, 'hosts': []}
         if publication.graph_requests:
             report('graphs', total)
-            graphs = install_graphs(server_ini, publication, hosts, change.directory / 'backups' / change.id)
+            graphs = install_graphs(server_ini, publication, hosts, change.directory / 'backups' / change.id,graph_context)
         report('readback', total)
         counts = readback(publication, server_ini, graphs)
         return change.result({'revision': publication.revision, 'owner': publication.owner,

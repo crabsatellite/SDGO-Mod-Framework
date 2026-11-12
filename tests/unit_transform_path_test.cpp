@@ -34,6 +34,10 @@ int main(){
     for(unsigned steps:{0u,MaxSteps+1})Check(!Build(901,steps,false,lookup,path,error),"invalid path budgets fail");
     records[903]=Unit(903,904);Check(!Build(901,3,false,lookup,path,error),"missing next form fails instead of truncating the test");
     records[903]=Unit(903,903);Check(!Build(901,3,false,lookup,path,error),"self-loop is not mistaken for a changed native form");
+    Check(Build(903,2,true,lookup,path,error,true)&&path.ids[0]==903&&path.ids[1]==903&&path.ids[2]==903,
+        "explicit self-transform inspection retains the real same-ID route; the runtime must prove bank flips");
+    Check(!Build(901,2,true,lookup,path,error,true),"self-transform inspection cannot admit unrelated multi-record edges");
+    Check(!Build(903,2,false,lookup,path,error,true),"self-transform inspection is confined to its explicit roundtrip scope");
     records[903]=Unit(903,0);Check(!Build(901,3,false,lookup,path,error),"terminal path cannot synthesize a reverse transform");
     records[903]=Unit(904,902);Check(!Build(901,3,false,lookup,path,error),"returned record identity must match the lookup");
     records[903]=Unit(903,902);records[903][4]=1;Check(!Build(901,3,false,lookup,path,error),"unpublished native records fail");

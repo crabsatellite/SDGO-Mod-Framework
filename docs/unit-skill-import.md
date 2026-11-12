@@ -7,7 +7,7 @@ ID, a native client record and resources, and a corresponding server definition.
 interpret that data. A new ID alone does not require another skill Mod, replacing it with a stock ID, or removing it.
 
 This entirely fictional example gives a “Training Test Unit” a “Training Guard” skill using the native stat path.
-Its defense field is `5`; the other fields are explicitly authored below. ID `9901001`, owner `example-training`
+Its defense field is `5`; the other fields are explicitly authored below. ID `74001`, owner `example-training`
 and the resource names are illustrative, not reservations or downloadable/default content. Authors supply their own records and artwork.
 
 ## Choose the input route
@@ -25,8 +25,25 @@ those skills. Complete publications check actual definitions, records and owners
 
 ## 1. Supply the complete native record
 
-Provide a target-compatible kind `13`, 1132-byte record whose ID is `9901001`. Names, descriptions, activation,
+Choose an **unused ID in the correct native category**. The supported client routes `1–75000` to ordinary skill
+slots; new ordinary skills normally use a free ID in `70001–75000`. Check this example's `74001` against both
+target catalogs before using it. Native part skills also have ordinary-slot ranges `3220001–3225000`,
+`3473001–3478000`, `3558001–3559000` and `3613002–3615999`; classification alone does not establish their dependencies or behavior.
+
+Other IDs route to the client's separate extra-skill slot. For example, a kind-13 record at `79950` can register
+and display an icon, while ordinary skill-state notifications do not activate it through `SkillNumber_1/2`.
+Both single-family and batch validation check this category. Keep the full authoring record, then relocate it
+with its references/hashes to an appropriate free ID, or supply the required category adapter before publication.
+This native consumer rule is **not a whitelist of skill effects**.
+
+Provide a target-compatible kind `13`, 1132-byte record whose ID is `74001`. Names, descriptions, activation,
 stats, icon frame and native dispatch belong to that record; an ID or a text description alone is insufficient.
+
+When composing a native skill, update its displayed text as well as its numeric effects. On the supported client,
+the unit-information page reads the name at byte `5` (50 UTF-16LE code units including the terminator), the
+description at byte `531` / `0x213` (100 units including the terminator), and the icon frame as a little-endian
+`u16` at byte `426`. A renamed 45% skill whose copied description still says 85% is incomplete authoring.
+The bundled demo recipes provide their own descriptions and write them into the native records.
 An authoring tool supplies the complete valid record. The importer preserves and validates it; a zero-filled
 buffer is not a substitute for an actual skill.
 
@@ -79,7 +96,7 @@ In these JSON examples, replace every `<...>` placeholder with a lowercase SHA-2
     }]
   }],
   "skills": [{
-    "id": 9901001,
+    "id": 74001,
     "record_sha256": "<complete-1132-byte-record-sha256>",
     "sprite": "sprs/example_training_guard.spr"
   }]
@@ -104,13 +121,13 @@ This example's `server-skills.json` supplies all fields without depending on a p
   "owner": "example-training",
   "revision": "<server-skills-revision-sha256>",
   "skills": [{
-    "id": 9901001,
+    "id": 74001,
     "client_sha256": "<complete-1132-byte-record-sha256>",
     "definition": {
       "kind": "explicit",
       "origin": "authored",
       "values": {
-        "SkillID": 9901001,
+        "SkillID": 74001,
         "SkillName": "Training Guard",
         "Activate": 0,
         "ActivateValue": 0,
@@ -155,7 +172,7 @@ The attachment's root `manifest.json` uses [`sdgo.unit-native-content/1`](unit-n
   "revision": "<native-content-revision-sha256>",
   "records": [{
     "kind": 13,
-    "id": 9901001,
+    "id": 74001,
     "profile": "native-type13-1132-v1",
     "member": "records/training-guard.bin",
     "sha256": "<complete-1132-byte-record-sha256>"
@@ -182,7 +199,7 @@ The attachment's root `manifest.json` uses [`sdgo.unit-native-content/1`](unit-n
 
 `member` names a file inside the attachment; `path` names a game resource. The unit project's `native_content`
 references this manifest's member name and complete file hash. Include every referenced member.
-Both the client unit record and server unit definition refer to `9901001` in `SkillNumber_1` or `SkillNumber_2`.
+Both the client unit record and server unit definition refer to `74001` in `SkillNumber_1` or `SkillNumber_2`.
 Project save/reimport retains the declarations. Single-family confirmation has separate publication checks;
 accepting an attachment does not install a runtime package.
 
@@ -212,7 +229,7 @@ skill_atlases = compile_bundle(
     sha256(final_catalog).hexdigest(),
     sha256(overlay_index).hexdigest(),
     sha256(overlay_archive).hexdigest(),
-    {9901001: skill_record},
+    {74001: skill_record},
     {
         "sprs/example_training_guard.spr": sprite_bytes,
         "txrs/example_training_guard.txr": texture_bytes,

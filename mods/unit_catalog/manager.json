@@ -24,7 +24,7 @@
     {
       "id": "form_chains",
       "key": "FormChains",
-      "label": "入口形态第三形态链（需服务端形态图授权）",
+      "label": "三阶段与入口形态模型链（需服务端形态图授权）",
       "type": "boolean",
       "default": true,
       "file": "mod.ini",
@@ -35,7 +35,12 @@
   ],
   "configuration_files": [
     "definitions.json",
-    "catalog.bin"
+    "catalog.bin",
+    "presets/catalog.bin",
+    "presets/definitions.json",
+    "presets/skill-atlases.bin",
+    "presets/stage-rules.bin",
+    "presets/resource-overlay.ini"
   ],
   "retirement": {
     "content_files": [

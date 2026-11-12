@@ -37,6 +37,8 @@ class Units(Provider):
 
     def __init__(self, workspace):
         super().__init__(workspace)
+        from .unit_presets import register
+        self.default_presets=register(self)
         # The batch job keeps its own lock: provider requests hold self.lock, and
         # progress must stay readable while the job runs in its own thread.
         self._batch_lock = threading.Lock()
@@ -67,6 +69,7 @@ class Units(Provider):
         """Run the batch apply in its own thread; return once the stopped-server gate decided."""
         from owner.units import batch_server
         ini = self._batch_server_ini()
+        with self.lock:client=self.config.get('client')
         with self._batch_lock:
             if self._batch.get('status') in ('starting', 'running'):
                 raise ValueError('批量阵容正在应用，请等待当前任务结束')
@@ -82,7 +85,11 @@ class Units(Provider):
 
         def run():
             try:
-                result = batch_server.apply(folder, ini, progress)
+                if client:
+                    from owner.units.assets import Baseline
+                    result = batch_server.apply(folder, ini, progress, baseline=Baseline(client))
+                else:
+                    result = batch_server.apply(folder, ini, progress)
             except ValueError as error:
                 outcome = {'status': 'failed', 'error': str(error)[:1200]}
             except BaseException:
@@ -298,6 +305,16 @@ class Units(Provider):
                 'changes_applied':False,'grants_units':False}
 
     def request(self, method, path, body, headers):
+        if path=='/api/units/default-presets':
+            from .unit_presets import SERVICE
+            if method=='POST':
+                if not isinstance(body,dict) or set(body)!={'enabled'} or type(body['enabled']) is not bool:
+                    raise ValueError('默认预设开关无效')
+                if body['enabled']:self.workspace.services.start(SERVICE)
+                else:self.workspace.services.stop(SERVICE)
+            elif method!='GET':raise ValueError('默认预设操作无效')
+            return {**self.default_presets.state(),'enabled':self.workspace.services.desired(SERVICE),
+                'presets':[{'name':'薪火计划·继承者','forms':3},{'name':'余烬装甲试验机','forms':2}]}
         if path == '/api/units/batch' or path.startswith('/api/units/batch/'):
             result = self._batch_request(method, path, body)
             if result is None: raise ValueError('机体操作未登记')

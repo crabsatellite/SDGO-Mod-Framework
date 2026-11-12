@@ -90,7 +90,7 @@ def _runtime_manifest(raw):
     parser.optionxform=str
     parser.read_string(raw.decode('utf-8-sig'))
     parser['mod']['enabled']='1'
-    parser['mod']['files']=','.join(('symbols.fragment.ini','catalog.bin','definitions.json',
+    parser['mod']['files']=','.join(('symbols.fragment.ini','default-presets.json','catalog.bin','definitions.json',
         'blueprint-availability.json','blueprint-availability.bin','resource-overlay.ini','resources.zdx','resources.zpk'))
     output=io.StringIO();parser.write(output,space_around_delimiters=False)
     contract=json.loads((ROOT/'mods/unit_catalog/manager.json').read_bytes())
@@ -105,7 +105,8 @@ def publish(workspace,state,selected,transaction):
     binary,mod_manifest,symbols,installer=_adapter_files(workspace)
     records=[];assets={};registrations=[];plans=[];published=[];blueprint_receipts=[]
     index_rows=workspace.baseline.unit_index()
-    next_index=0x375BE1+len(index_rows)
+    from .indexes import Allocator,installed
+    indexes=Allocator(index_rows,installed(getattr(workspace.baseline,'root',None)),getattr(workspace,'index_scope','owner'))
     def asset(name,raw):
         name=name.replace('\\','/').lower()
         if name in assets and assets[name]!=raw:raise ValueError('不同机体使用了内容不同的相同资源路径：'+name)
@@ -196,9 +197,9 @@ def publish(workspace,state,selected,transaction):
         text=model.item_text(family.get('item_text'))
         wchar(item,214,100,text['description']);wchar(item,414,100,text['usage'])
         struct.pack_into('<I',item,105,root);records.append((34,family['category_id'],bytes(item)))
-        if workspace.baseline.any_id(next_index):
+        index_id=indexes.allocate(root)
+        if workspace.baseline.any_id(index_id):
             raise ValueError('机体图鉴连续编号被其他原生记录占用，拒绝覆盖或跳号')
-        index_id=next_index;next_index+=1
         index=bytearray(614)
         struct.pack_into('<I',index,0,index_id)
         index[5]=int(state['drafts'][family['id']]['status']!='disabled')
@@ -293,6 +294,7 @@ def publish(workspace,state,selected,transaction):
         'revision':content_revision,'blueprints':availability}
     catalog_payload_fnv=struct.unpack_from('<I',catalog,24)[0]
     files={prefix+'unit_catalog.dll':binary,prefix+'mod.ini':manifest_bytes,prefix+'catalog.bin':catalog,
+        prefix+'default-presets.json':(ROOT/'mods/unit_catalog/default-presets.json').read_bytes(),
         prefix+'manager.json':(ROOT/'mods/unit_catalog/manager.json').read_bytes(),
         prefix+'symbols.fragment.ini':symbols,
         prefix+'resource-overlay.ini':overlay_config,prefix+'resources.zdx':zdx,prefix+'resources.zpk':zpk,
