@@ -26,6 +26,13 @@ constexpr uint32_t kSpawnType = 0x2E;        // mission spawn mirror (walked by 
 constexpr uint32_t kTriggerType = 0x6B;      // mission trigger objects
 constexpr uint32_t kUnitType = 0x02;         // client-only unit copy (NPC label / weapons)
 constexpr uint32_t kWeaponType = 0x0A;       // client-only weapon copy (NPC damage multiplier)
+constexpr uint32_t kSectionClearPolicy = 0x01;
+constexpr uint32_t kSectionClearMask = 0x0000FF00;
+
+inline bool ValidFlags(uint32_t kind, uint32_t flags) {
+    return flags == 0 || (kind == kGameModeType && (flags & kSectionClearPolicy) &&
+                          !(flags & ~(kSectionClearPolicy | kSectionClearMask)));
+}
 
 constexpr size_t kMapBytes = 0x34C;
 constexpr uint32_t kMapFirstId = 100001;
@@ -130,7 +137,7 @@ public:
             std::memcpy(&entry, file.data() + cursor, sizeof(entry));
             cursor += sizeof(entry);
             const size_t expected = ExpectedBytes(entry.kind);
-            if (!expected || entry.byteCount != expected || entry.flags != 0 || entry.reserved != 0 ||
+            if (!expected || entry.byteCount != expected || !ValidFlags(entry.kind, entry.flags) || entry.reserved != 0 ||
                 file.size() - cursor < entry.byteCount) {
                 return Fail(error, "unsupported map catalog record");
             }

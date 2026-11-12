@@ -216,6 +216,8 @@ class MapWorkspace:
         map_no = cursor['map_no']
         for index, entry in enumerate(enabled):
             pkg = self.package(entry)
+            mission_files = list(entry.get('missions', []))
+            pkg = dataclasses.replace(pkg, manifest={**pkg.manifest, 'missions': mission_files})
             pipeline.check_placements(pkg, baseline)
             named_blocks = [obj for obj in pkg.objects if obj.block is not None]
             block_first = cursor['block_object']
@@ -225,7 +227,6 @@ class MapWorkspace:
             block_templates = pipeline.block_templates(
                 baseline, server_ini, {obj.block.template for obj in named_blocks})
             shared: dict = {}
-            mission_files = list(entry.get('missions', []))
             first = None
             variants = []
             if pkg.modes:

@@ -134,6 +134,8 @@ manifest = {
 
 彩色贴图（模型的基础色贴图和地表层贴图）可以是 PNG 或 JPEG；高度图、地表层遮罩以及预览图、小地图、横幅和任务目录图片使用 PNG。贴图最大缩到 2048 像素；不透明贴图在游戏中以 JPEG 保存，带透明的贴图保持无损。模型是静态网格，每个材质一张基础色贴图；客户端只渲染漫反射颜色，请把环境光遮蔽等明暗烘焙进这张贴图。`.gltf` 可以把缓冲区和贴图放在包内的独立文件中，多个模型可以共用。
 
+透明物件使用 glTF 材质 `alphaMode: "BLEND"`，`baseColorFactor` 的透明度和 PNG 的透明通道共同保留；可配合 `doubleSided`。不透明材质保持原有绘制方式。模型和图片由地图包作者提供。
+
 **坐标系**与游戏世界相同：X 向东，Y 向上，Z 向北，原点在地形中心，单位为游戏单位。高度图和遮罩图覆盖整块地形，第 0 行是北边、第 0 列是西边。glTF 资源保持自身约定（右手系，-Z 朝前），编译时会转换。`rotation_y` 为俯视顺时针角度：0 朝北，90 朝东。
 
 | 字段 | 说明 |
@@ -160,13 +162,17 @@ manifest = {
 
 ![原生闸门开合](map-native-gate-demo.webp)
 
+![原生屏障开合画面对照](map-native-shield-demo.webp)
+
+两帧原生截图对照：屏障关闭与通道开放。图片和模型由服主内容包提供。
+
 短片使用原生任务镜头展示闸门：保护期间关闭，进入后续过场前开放通道。
 
 Manager 1.16.28 及更新版本会在进入阶段的过场开始前应用 `enter.blocks`，复用同一过场的各阶段分别保留自己的门状态。旧任务包需重新编译才能采用这个顺序。
 
 地图包 v2 可把一件带碰撞模型登记为命名原生物件。`id` 供脚本引用，`block.name` 用于玩家看到的名称；不要把内部代号当作显示名称。编译器生成配对的客户端定义、地形物件和服务端放置行，服主应用计划并重启 World/Battle 后生效；玩家安装内容不执行 SQL。
 
-任务 v3 的 `npcs.<key>.block_attack` 指定 `block` 名称和 `weapon`（`first`、`second`、`third`、`special`），让 NPC 通过原生攻击目标和武器控制向物件实际开火，不能与该 NPC 的 `ai` 同时声明。后续阶段的 `enter.blocks` 接受 `{ "block": "fortress_gate", "visible": false }` 隐藏门板并开放碰撞通道；`visible: true` 重新加入门板。把开门动作放在保护阶段之后，只有保护成功才会进入开门阶段。
+任务 v3 的 `npcs.<key>.block_attack` 指定 `block` 名称和 `weapon`（`first`、`second`、`third`、`special`），让 NPC 通过原生攻击目标和武器控制向物件实际开火，不能与该 NPC 的 `ai` 同时声明。后续阶段的 `enter.blocks` 接受 `{ "block": "fortress_gate", "visible": false }` 隐藏门板并开放碰撞通道；`visible: true` 重新加入门板。把开门动作放在保护阶段之后，只有保护成功才会进入开门阶段。 隐藏状态沿 `next` 阶段链持续保留，后续过场与终场按实际显隐状态检查镜头；需要恢复时再显式设为 `visible: true`。
 
 ## 任务协议（`missions/*.json`）
 
@@ -174,7 +180,7 @@ Manager 1.16.28 及更新版本会在进入阶段的过场开始前应用 `enter
 
 | 字段 | 说明 |
 | --- | --- |
-| `schema`、`schema_version` | `sdgo.map-mission`，`1`、`2` 或 `3`；机体图片横幅和立即阶段衔接需要 v2，命名物件攻击与阶段显隐需要 v3；旧编译器会拒绝而不会忽略新功能 |
+| `schema`、`schema_version` | `sdgo.map-mission`，`1`、`2`、`3` 或 `4`；机体图片横幅和立即阶段衔接需要 v2，命名物件攻击与阶段显隐需要 v3，大阶段完成横幅与地面标线选择需要 v4；旧编译器会拒绝而不会忽略新功能 |
 | `mission_key`、`name`、`description` | 任务标识、名称和说明 |
 | `transition_delay` | 阶段切换节奏：`native`（默认）保留原生普通阶段固定等待；`immediate` 只取消非最终阶段之间的这段固定等待。进入阶段的 `SceneTime` 过场仍完整播放，最终结算保持原生节奏 |
 | `briefing.zh` | 任务说明面板，最多 5 行、每行 49 字 |
@@ -186,6 +192,7 @@ Manager 1.16.28 及更新版本会在进入阶段的过场开始前应用 `enter
 | `banners` | 场景内图片特效：`image`（512×128 PNG）；与原生机体图片横幅分开 |
 | `presentation` | 可选的任务列表图片（PNG），各自替换模板任务的对应图片：`list_banner`（155×68）、`room_icon`（120×83；与原版图标一样，第 0..18 行留给标题字）、`room_poster`（250×120）、`title`（155×22，透明底白字）、`loading`（1024×1024 读取画面海报）。`loading_screen` 选择进入战斗时的读取画面：`poster` 显示 `loading` 海报（给了 `loading` 时的默认值），`random` 使用游戏自带的随机读取图 |
 | `area` | 开局活动范围：`[左 x, 上 z, 右 x, 下 z]`（北为上）。玩家被限制在范围内，与原版多区域任务使用相同的调用。范围在 `opening` 过场开始时设置，因此需要开场过场；不写时整个 `terrain.play_area` 都可活动 |
+| `boundary_markings` | v4 地面标线：`all`（默认）绘制所选任务的所有活动区；`initial` 只绘制开局 `area`，避免把后续区域的橙线提前画在关卡内部。小地图和实际活动范围仍保留全部区域 |
 | `drops` | 可选的任务掉落，与原版任务一样在结束时结算：`normal`（默认 `true`）保留该等级原版任务的掉落（等级 1–5）；`blueprints` 为 `"mission"`（默认：任务中出现的机体只要有设计图都会掉落，只在 NPC 中存在的机体按同名玩家机体计算）或机体编号列表；`blueprint_per_mille`（1–50，默认 2）为每张设计图每 1000 次通关的掉落次数（合计不超过 500）。掉落物进入玩家的掉落箱 |
 | `sectors` | 区域切换：`warp`（1..8 个传送点）、`facing`、可选 `rect`（新的活动范围，顺序同 `area`） |
 | `cutscenes` | 过场动画，见下表 |
@@ -197,9 +204,10 @@ Manager 1.16.28 及更新版本会在进入阶段的过场开始前应用 `enter
 | 字段 | 说明 |
 | --- | --- |
 | `key`、`objective` | 阶段标识；目标说明显示在任务目标栏 |
+| `section_clear` | v4 布尔值；默认显示本阶段完成时的原生 `Section Clear`。小阶段设为 `false`，一个大阶段的末段保留 `true`；任务完成与失败继续使用原生提示 |
 | `goal` | `kill`：击破指定单位若干台（可多条同时满足）；`kill_any`：击破任意敌人若干台（混编敌群共用一个计数，与原版“击破 N 台”目标相同）；或 `survive`：坚持若干秒 |
 | `fail` | `time_limit`：限时；`lose`：指定友方单位被击破即失败 |
-| `spawns` | 刷怪：`npc`、`positions`、`at`（阶段开始后秒数）、`every`（间隔）、`side`（`enemy`/`ally`）、`min_free`。`at` 从开启该阶段的过场结束时算起（第一阶段为 `opening`），过场播放时不会有单位交战；2 秒及以后的刷怪按时间出现，即使之前的敌人已全部击破也不会停刷 |
+| `spawns` | 刷怪：`npc`、`positions`、`at`（阶段开始后秒数）、`every`（本批次相邻出生点的时间差，不会循环重复这批怪）、`side`（`enemy`/`ally`）、`min_free`。`at` 从开启该阶段的过场结束时算起（第一阶段为 `opening`），过场播放时不会有单位交战；2 秒及以后的刷怪按时间出现，即使之前的敌人已全部击破也不会停刷 |
 | `slots` | 同屏单位上限 `ally` + `enemy` ≤ 10 |
 | `enter` | 进入本阶段时：`cutscene`（过场）、`lines`（对话）、`sector`（带传送的区域切换）、`area`（不传送，只改活动范围）；第一阶段请使用 `opening` 和任务的 `area` |
 | `reward` | 阶段奖励 `points`、`unit_exp` |

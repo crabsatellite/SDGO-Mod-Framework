@@ -197,6 +197,18 @@
       "title_en": "Imported mission: closed protection gate and open entry passage",
       "guide_zh": "docs/map-import.zh-CN.md",
       "guide_en": "docs/map-import.md"
+    },
+    {
+      "id": "map-native-shield",
+      "path": "docs/map-native-shield-demo.webp",
+      "since": "1.16.33",
+      "mods": [
+        "map_catalog"
+      ],
+      "title_zh": "原生屏障：关闭与开放画面对照",
+      "title_en": "Native shield: closed/open comparison",
+      "guide_zh": "docs/map-import.zh-CN.md",
+      "guide_en": "docs/map-import.md"
     }
   ]
 }

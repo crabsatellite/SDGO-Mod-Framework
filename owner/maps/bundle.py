@@ -55,14 +55,22 @@ def _fnv(raw: bytes) -> int:
     return value
 
 
-def native_catalog(rows: list[tuple[int, int, bytes]]) -> bytes:
+def native_catalog(rows: list[tuple[int, int, bytes]], flags: dict[int, int] | None = None) -> bytes:
     from .mission import SIZES
     from .block import CATALOG_KIND, RECORD_BYTES
     expected = {0x0F: 0x34C, CATALOG_KIND: RECORD_BYTES, **SIZES}
+    flags = flags or {}
+    if set(flags) - {ident for _kind, ident, _raw in rows}:
+        raise ValueError('catalog flags reference an undeclared record')
     for kind, ident, raw in rows:
         if expected.get(kind) != len(raw):
             raise ValueError(f'record {ident} kind {kind:#x} has {len(raw)} bytes, expected {expected.get(kind)}')
-    payload = b''.join(struct.pack('<6I', kind, ident, len(raw), _fnv(raw), 0, 0) + raw for kind, ident, raw in rows)
+        value = flags.get(ident, 0)
+        if type(value) is not int or value < 0 or (value and
+                (kind != 0x2A or not value & 1 or value & ~0xFF01)):
+            raise ValueError('unsupported native catalog record flags')
+    payload = b''.join(struct.pack('<6I', kind, ident, len(raw), _fnv(raw), flags.get(ident, 0), 0) + raw
+                       for kind, ident, raw in rows)
     return struct.pack('<8s6I', b'SDGOMP1\0', 1, 32, len(rows), len(payload), _fnv(payload), 0) + payload
 
 
@@ -119,7 +127,8 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
     ids = [row[1] for row in rows]
     if len(set(ids)) != len(ids):
         raise ValueError('duplicate native record id')
-    catalog = native_catalog(rows)
+    flags = {ident: value for mission in missions or [] for ident, value in mission.record_flags.items()}
+    catalog = native_catalog(rows, flags)
     zdx, zpk, _ = build_archive(resources, allowed_overlay)
     overlay = ('[runtime]\nschema=1\nindex=resources.zdx\nindex_sha256=' + hashlib.sha256(zdx).hexdigest() +
                '\narchive=resources.zpk\narchive_sha256=' + hashlib.sha256(zpk).hexdigest() + '\n').encode('ascii')

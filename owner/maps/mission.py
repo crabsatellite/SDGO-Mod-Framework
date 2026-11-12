@@ -1,4 +1,4 @@
-"""Compile a neutral mission description (`sdgo.map-mission` v1/v2/v3) into server mission rows, client mirror records
+"""Compile a neutral mission description (`sdgo.map-mission` v1/v2/v3/v4) into server mission rows, client mirror records
 and a text Lua script for cutscenes and phase events.
 
 The mission runs on a map row of the map package (normally its ``mission`` variant). Server semantics follow
@@ -124,6 +124,7 @@ class MissionBuild:
     resources: dict[str, bytes] = field(default_factory=dict)
     report: dict = field(default_factory=dict)
     weapon_copies: dict[tuple[int, float], int] = field(default_factory=dict)   # (source, factor) -> copy id
+    record_flags: dict[int, int] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- byte helpers
@@ -525,12 +526,12 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     effect named `name` (a cloned text effect bound to the PNG) or None when banners are unsupported."""
     spec = deepcopy(spec)
     version = spec.get('schema_version')
-    if spec.get('schema') != SCHEMA or type(version) is not int or version not in (1, 2, 3):
-        _fail(f'任务文件必须声明 schema={SCHEMA} 且 schema_version=1、2 或 3')
+    if spec.get('schema') != SCHEMA or type(version) is not int or version not in (1, 2, 3, 4):
+        _fail(f'任务文件必须声明 schema={SCHEMA} 且 schema_version=1、2、3 或 4')
     if version >= 3:
         allowed = {'schema', 'schema_version', 'mission_key', 'name', 'description', 'briefing', 'difficulties',
                    'bgm', 'npcs', 'area', 'presentation', 'lines', 'banners', 'sectors', 'phases', 'opening',
-                   'ending', 'cutscenes', 'transition_delay', 'drops'}
+                   'ending', 'cutscenes', 'transition_delay', 'drops', 'boundary_markings'}
         unknown = set(spec) - allowed
         if unknown:
             _fail('任务文件含未知字段：' + '、'.join(sorted(unknown)))
@@ -539,6 +540,12 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     if not LUA_NAME.fullmatch(ids.lua_prefix) or len(ids.lua_prefix) > 12:
         _fail('lua_prefix 无效')
     build = MissionBuild()
+    if 'boundary_markings' in spec and version < 4:
+        _fail('地面边界标记选择需要 schema_version=4')
+    if spec.get('boundary_markings', 'all') not in ('all', 'initial'):
+        _fail('boundary_markings 只能是 all 或 initial')
+    if spec.get('boundary_markings') == 'initial' and spec.get('area') is None:
+        _fail('boundary_markings=initial 需要声明开局 area')
     transition_delay = spec.get('transition_delay', 'native')
     if transition_delay not in ('native', 'immediate'):
         _fail('transition_delay 只能是 native 或 immediate')
@@ -588,11 +595,21 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         _fail(f'phases 需要 1..{MAX_PHASES} 个阶段')
     phase_order = {}
     phase_block_actions = {}
+    grouped_sections = any(isinstance(p, dict) and 'section_clear' in p for p in phases)
+    if grouped_sections and version < 4:
+        _fail('阶段完成横幅分组需要 schema_version=4；旧编译器必须拒绝这些新语义')
+    section_clear_flags = 1 if grouped_sections else 0
     for i, phase in enumerate(phases):
         key = phase.get('key') if isinstance(phase, dict) else None
         if not isinstance(key, str) or not re.fullmatch(r'[a-z0-9_]{1,31}', key) or key in phase_order:
             _fail(f'phases[{i}].key 无效或重复')
         phase_order[key] = i + 1
+        if grouped_sections:
+            visible = phase.get('section_clear', True)
+            if not isinstance(visible, bool):
+                _fail(f'phases[{i}].section_clear 必须是布尔值')
+            if visible:
+                section_clear_flags |= 1 << (i + 8)
         enter = phase.get('enter') or {}
         if not isinstance(enter, dict):
             _fail(f'phases[{i}].enter 必须是对象')
@@ -891,22 +908,43 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     if initial_hidden_blocks and not spec.get('opening'):
         _fail('initially_hidden 命名物件需要 opening 过场来应用初始状态')
 
+    # A hidden block stays hidden across later phases and the ending, until
+    # a subsequent action shows it again. Follow the native successor chain
+    # so a skipped phase cannot incorrectly remove a camera obstruction.
+    scene_visibility = {}
+    if spec.get('opening'):
+        scene_visibility[spec['opening']] = [frozenset(initial_hidden_blocks)]
+    index = 0
+    hidden = set(initial_hidden_blocks)
+    visited = set()
+    while index is not None:
+        state = (index, frozenset(hidden))
+        if state in visited:
+            break
+        visited.add(state)
+        phase = phases[index]
+        for name, visible in phase_block_actions[index]:
+            hidden.discard(name) if visible else hidden.add(name)
+        scene = (phase.get('enter') or {}).get('cutscene')
+        if scene:
+            scene_visibility.setdefault(scene, []).append(frozenset(hidden))
+        next_key = phase.get('next', phases[index + 1]['key'] if index + 1 < len(phases) else None)
+        if next_key is None:
+            if spec.get('ending'):
+                scene_visibility.setdefault(spec['ending'], []).append(frozenset(hidden))
+            index = None
+        elif next_key not in phase_order:
+            _fail(f'phases[{index}].next 引用未定义的阶段')
+        else:
+            index = phase_order[next_key] - 1
+
     def cutscene_occluder_sets(name: str) -> list[list]:
         if occluders is None:
             return []
         from .occlusion import ObjectOccluders
         if not isinstance(occluders, ObjectOccluders):
             return [occluders]
-        hidden_states = []
-        if name == spec.get('opening'):
-            hidden_states.append(frozenset(initial_hidden_blocks))
-        for phase_index, phase in enumerate(phases):
-            enter = phase.get('enter') or {}
-            if enter.get('cutscene') == name:
-                hidden_states.append(frozenset(block for block, visible in phase_block_actions[phase_index]
-                                                if not visible))
-        if not hidden_states:
-            hidden_states.append(frozenset())
+        hidden_states = scene_visibility.get(name) or [frozenset()]
         unique = list(dict.fromkeys(hidden_states))
         return [occluders.active(hidden) for hidden in unique]
 
@@ -1356,6 +1394,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         _u32(gm, 1054, first_spawn[2])
         _u32(gm, 1058, first_spawn.get(1, 0))
         build.rows.append((GAME_MODE_KIND, mode_id, bytes(gm)))
+        if grouped_sections:
+            build.record_flags[mode_id] = section_clear_flags
 
     # catalogue (one per mission group)
     cat = bytearray(templates.catalogue)
@@ -1383,6 +1423,9 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                                       for key, ai, block, weapon in block_attacks],
                     'block_controls': sum(len(actions) for actions in phase_block_actions.values()),
                     'lua_bytes': len(build.lua), 'records': len(build.rows)}
+    if grouped_sections:
+        build.report['section_clear_phases'] = [i + 1 for i, p in enumerate(phases)
+                                                if p.get('section_clear', True)]
     return build
 
 

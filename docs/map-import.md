@@ -138,6 +138,8 @@ A map package is a folder: one `map.json` plus the glTF 2.0 models (`.glb`/`.glt
 
 Colour textures (model base colour textures and terrain layer textures) may be PNG or JPEG; height images, layer masks and the preview, minimap, banner and catalogue images are PNG. Textures are scaled down to at most 2048 pixels; opaque textures are stored as JPEG in the game, textures with transparency stay lossless. Models are static meshes with one base colour texture per material; the client renders diffuse colour only, so bake ambient occlusion and other shading into that texture. A `.gltf` may keep its buffer and textures in separate package files, which several models can share.
 
+Translucent props use glTF material `alphaMode: "BLEND"`. The compiler retains both `baseColorFactor` opacity and the PNG alpha channel, together with optional `doubleSided`. Opaque materials retain their existing rendering. Model geometry and artwork are supplied by the map author.
+
 **Coordinates** match the game world: X east, Y up, Z north, origin at the terrain centre, game units. Height and mask images cover the whole terrain with row 0 at the north edge and column 0 at the west edge. glTF assets keep their own convention (right-handed, -Z forward) and are converted at compile time. `rotation_y` is clockwise seen from above: 0 faces north, 90 faces east.
 
 | Field | Meaning |
@@ -164,9 +166,13 @@ Colour textures (model base colour textures and terrain layer textures) may be P
 
 ![Native gate states](map-native-gate-demo.webp)
 
+![Native shield closed/open comparison](map-native-shield-demo.webp)
+
+Two captured native frames compare the closed shield and open passage. Owners provide the model and artwork through their content package.
+
 The clip uses native mission cameras to show the gate closed during protection and open before the entry cinematic.
 
-Manager 1.16.28 and newer applies `enter.blocks` before an entry cinematic starts. Reusing a cinematic keeps each phase's gate state separate. Rebuild older mission packages to adopt this ordering.
+Manager 1.16.28 and newer applies `enter.blocks` before an entry cinematic starts. Reusing a cinematic keeps each phase's gate state separate. Rebuild older mission packages to adopt this ordering. Visibility persists along the actual phase chain, including later and ending cinematics, until an explicit action shows the object again.
 
 Map package v2 can register a model with collision as a named native object. Scripts use `id`; players see `block.name`. Keep internal codes out of display names. Compilation produces paired client definitions, terrain objects and server placement rows. The owner applies the plan and restarts World/Battle; player content installation does not execute SQL.
 
@@ -178,7 +184,7 @@ Mission files live under `missions/` in the map package and are listed in `files
 
 | Field | Meaning |
 | --- | --- |
-| `schema`, `schema_version` | `sdgo.map-mission`, `1`, `2` or `3`; illustration strips and immediate transitions require v2, named-object attacks and phase visibility require v3. Older compilers reject unsupported new semantics |
+| `schema`, `schema_version` | `sdgo.map-mission`, `1`, `2`, `3` or `4`; illustration strips and immediate transitions require v2, named-object attacks and phase visibility require v3. Older compilers reject unsupported new semantics |
 | `mission_key`, `name`, `description` | Mission identifier, name and description |
 | `transition_delay` | Phase-change pacing: `native` (default) keeps the stock fixed wait between ordinary phases; `immediate` removes only that fixed wait between non-final phases. A phase's `SceneTime` cutscene still plays in full, and final settlement keeps the native timing |
 | `briefing.zh` | Briefing panel: up to 5 lines of 49 characters |
@@ -190,6 +196,7 @@ Mission files live under `missions/` in the map package and are listed in `files
 | `banners` | World-space image effects: `image` (512×128 PNG); separate from native unit illustration strips |
 | `presentation` | Optional mission list artwork in PNG, each replacing the template mission's image: `list_banner` (155×68), `room_icon` (120×83; like the shipped icons, keep rows 0..18 for the title lettering), `room_poster` (250×120), `title` (155×22, white lettering on a transparent background) and `loading` (1024×1024 loading screen poster). `loading_screen` chooses the battle loading screen: `poster` shows `loading` (the default when `loading` is given), `random` keeps the game's random loading pictures |
 | `area` | Movable area at the start: `[left x, top z, right x, bottom z]` (north is top). Players are kept inside it with the same call the shipped multi-area missions use. It is set when the `opening` cutscene starts, so it needs an opening. Without it the whole `terrain.play_area` is movable |
+| `boundary_markings` | v4 ground markings: `all` (default) draws all areas used by the selected missions; `initial` draws only the opening `area`, keeping future-area lines out of the current battlefield. Radar and movement bounds retain all areas |
 | `drops` | Optional mission drops, rolled at the end like the shipped missions: `normal` (default `true`) keeps the shipped drops of the difficulty's level (levels 1–5); `blueprints` is `"mission"` (default: every blueprint whose unit appears in the mission, including the player unit of the same name for an NPC-only unit) or a list of unit ids; `blueprint_per_mille` (1–50, default 2) is each blueprint's chance in 1000 clears (at most 500 in total). Drops arrive in the player's drop box |
 | `sectors` | Sector change: `warp` (1..8 points), `facing`, optional `rect` (the new movable area, same order as `area`) |
 | `cutscenes` | Cutscenes, see below |
@@ -201,9 +208,10 @@ Mission files live under `missions/` in the map package and are listed in `files
 | Field | Meaning |
 | --- | --- |
 | `key`, `objective` | Phase key; the objective text is shown in the objective bar |
+| `section_clear` | v4 Boolean, default `true`: show the native Section Clear banner when this phase finishes. Set intermediate phases to `false` and retain `true` at a major section boundary. Native mission completion and failure remain available |
 | `goal` | `kill`: destroy a number of given units (several entries must all be met); `kill_any`: destroy that many enemies of any kind (one counter for a mixed group, like the shipped "destroy N" goals); or `survive`: hold out for some seconds |
 | `fail` | `time_limit`: time limit; `lose`: the mission fails when a given allied unit is destroyed |
-| `spawns` | Waves: `npc`, `positions`, `at` (seconds after the phase starts), `every` (interval), `side` (`enemy`/`ally`), `min_free`. `at` counts from the end of the cutscene that opens the phase (the `opening` for the first phase), so nobody fights while a cutscene plays; waves at 2 seconds or later appear at their time even if the earlier enemies were already destroyed |
+| `spawns` | Waves: `npc`, `positions`, `at` (seconds after the phase starts), `every` (time between this finite batch's positions; it does not repeat the batch), `side` (`enemy`/`ally`), `min_free`. `at` counts from the end of the cutscene that opens the phase (the `opening` for the first phase), so nobody fights while a cutscene plays; waves at 2 seconds or later appear at their time even if the earlier enemies were already destroyed |
 | `slots` | On-screen unit limits: `ally` + `enemy` ≤ 10 |
 | `enter` | On entering the phase: `cutscene`, `lines` (dialogue), `sector` (sector change with warp), `area` (new movable area without a warp); use `opening` and the mission `area` for the first phase |
 | `reward` | Phase reward `points`, `unit_exp` |

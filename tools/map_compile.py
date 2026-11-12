@@ -11,6 +11,7 @@ reports.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import sys
@@ -45,6 +46,8 @@ def main(argv=None) -> int:
         native_exists = pipeline.native_exists_for(args.client, baseline)
 
     pkg = package.load(args.package)
+    if args.mission:
+        pkg = dataclasses.replace(pkg, manifest={**pkg.manifest, 'missions': list(args.mission)})
     if args.client:
         pipeline.check_placements(pkg, baseline)
     shared: dict = {}

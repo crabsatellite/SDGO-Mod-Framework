@@ -97,6 +97,7 @@ class MapGateProbe {
         __except (EXCEPTION_EXECUTE_HANDLER) {return {};}
     }
 public:
+    bool Enabled() const { return enabled_; }
     bool Install(const SdgoApi* api, SdgoMod* mod) {
         enabled_ = api->SettingInt(mod, "MapGateProbe", 0) != 0;
         if (!enabled_) return true;
@@ -113,8 +114,8 @@ public:
         const auto length = battle_ai::Length(to_ - from_);
         return std::isfinite(length) && length > 0 && length <= 100000;
     }
-    void Poll(const SdgoGameTestContextV1* context, uint32_t gameMode) {
-        if (!enabled_ || !gameMode) return;
+    void Poll(const SdgoGameTestContextV1* context, uint32_t gameMode, uint32_t appState) {
+        if (!enabled_ || !gameMode || appState != 22) return;
         const auto now = GetTickCount64();
         if (last_ && now-last_ < 1000) return;
         last_ = now;if (!first_) first_ = now;
@@ -123,8 +124,8 @@ public:
         phase.size=sizeof(phase);phase.version=1;
         const int phaseAvailable=phase_ ? phase_(0,&phase) : 0;
         char text[768];
-        sprintf_s(text, "native-map-gate {\"elapsed_ms\":%llu,\"game_mode\":%u,\"block\":%u,\"query_valid\":%d,\"scenes\":%d,\"found\":%d,\"ray_hits\":%d,\"hp\":%d,\"obbs\":%d,\"spheres\":%d,\"phase_observer\":%d,\"hide_count\":%llu,\"last_action\":%u,\"last_object\":%u}",
-                  static_cast<unsigned long long>(now-first_), gameMode, block_, sample.status, sample.scenes,
+        sprintf_s(text, "native-map-gate {\"elapsed_ms\":%llu,\"game_mode\":%u,\"app_state\":%u,\"block\":%u,\"query_valid\":%d,\"scenes\":%d,\"found\":%d,\"ray_hits\":%d,\"hp\":%d,\"obbs\":%d,\"spheres\":%d,\"phase_observer\":%d,\"hide_count\":%llu,\"last_action\":%u,\"last_object\":%u}",
+                  static_cast<unsigned long long>(now-first_), gameMode, appState, block_, sample.status, sample.scenes,
                   sample.found, sample.hits, sample.hp, sample.obbs, sample.spheres,phaseAvailable,
                   static_cast<unsigned long long>(phase.hide_count),phase.last_action,phase.last_object_id);
         context->Observe(text);

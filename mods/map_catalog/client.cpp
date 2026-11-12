@@ -53,6 +53,8 @@ using LuaGetTop = int(__cdecl*)(lua_State*);
 using LuaSetTop = void(__cdecl*)(lua_State*, int);
 using LuaToString = const char*(__cdecl*)(lua_State*, int);
 using MissionCall = int(__cdecl*)(const char*, void*);
+using GameApp = uint8_t*(__cdecl*)();
+using UiMessage = int(__thiscall*)(void*, const uint8_t*);
 
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
@@ -74,11 +76,49 @@ LuaGetTop g_luaGetTop = nullptr;
 LuaSetTop g_luaSetTop = nullptr;
 LuaToString g_luaToString = nullptr;
 MissionCall g_missionCall = nullptr;
+GameApp g_gameApp = nullptr;
+UiMessage g_missionMessage = nullptr;
 std::string g_missionScript;
 lua_State* g_scriptVm = nullptr;
 bool g_mapsAttempted = false;
 bool g_missionsAttempted = false;
 uint32_t g_published = 0;
+bool g_nativeLog = false;
+
+bool SectionClearVisible(uint32_t& mission, uint32_t& phase) {
+    mission = phase = 0;
+    __try {
+        uint8_t* app = g_gameApp ? g_gameApp() : nullptr;
+        uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + 0x4A4) : nullptr;
+        uint8_t* mode = service ? *reinterpret_cast<uint8_t**>(service + 0x0C) : nullptr;
+        const uint8_t* record = mode ? *reinterpret_cast<const uint8_t**>(mode + 0xE8) : nullptr;
+        if (!record) return true;
+        mission = U32(record);
+        for (const auto& entry : g_catalog.records) {
+            if (entry.kind != kGameModeType || entry.id != mission || !(entry.flags & kSectionClearPolicy)) continue;
+            const uint8_t* native = nullptr;
+            if (!g_find(g_data(), &native, mission, kGameModeType, 0) || native != record) return true;
+            phase = U32(mode + 0x620);
+            return ShowsSectionClear(entry.flags, phase);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return true;
+}
+
+int __fastcall MissionMessageDetour(void* self, void*, const uint8_t* message) {
+    // 0x4272 only starts the native section-clear presentation. Its base
+    // handler returns 1 without touching state; phase/NPC/result messages
+    // keep their original dispatch and ownership.
+    if (message && *reinterpret_cast<const uint16_t*>(message + 4) == 0x4272) {
+        uint32_t mission = 0, phase = 0;
+        const bool visible = SectionClearVisible(mission, phase);
+        g_api->Log(g_mod, SDGO_LOG_INFO, "native section clear: mission=%lu phase=%lu visible=%d",
+                   static_cast<unsigned long>(mission), static_cast<unsigned long>(phase), visible ? 1 : 0);
+        if (!visible) return 1;
+    }
+    return g_missionMessage(self, message);
+}
 
 struct Allocation {
     uint8_t* record = nullptr;
@@ -406,6 +446,11 @@ uint32_t __stdcall DecideNpcOperatorMode(uint32_t mode, const uint8_t* room, con
     if (!packet || (mode & 0xFFFF) != kListedMissionMode) return mode;
     __try {
         const uint32_t npc = U32(packet + 0x0E);
+        if (g_nativeLog && room &&
+            std::find(g_importedModes.begin(), g_importedModes.end(), U32(room + kRoomGameModeId)) != g_importedModes.end())
+            g_api->Log(g_mod, SDGO_LOG_INFO, "native imported NPC created: mission=%lu npc=%lu tick=%llu",
+                       static_cast<unsigned long>(U32(room + kRoomGameModeId)),
+                       static_cast<unsigned long>(npc), static_cast<unsigned long long>(GetTickCount64()));
         if (std::find(g_cutinNpcs.begin(), g_cutinNpcs.end(), npc) == g_cutinNpcs.end()) return mode;
         const uint32_t selected = DecideOperatorMode(mode, room);
         if (selected == kSpeechMissionMode)
@@ -534,8 +579,6 @@ __declspec(naked) void LoadingModeSite() {
 
 // Optional (setting NativeDebugLog=1): let the game write its own debug log (app_log folder),
 // which names missing records and failed script lookups while an owner tests a mission.
-bool g_nativeLog = false;
-
 void EnableNativeLog() {
     static bool done = false;
     if (!g_nativeLog || done) return;
@@ -656,6 +699,12 @@ SDGO_MOD_ENTRY {
                         reinterpret_cast<void**>(&g_missionCall)))) {
         return 0;
     }
+    bool groupedSections = false;
+    for (const auto& entry : g_catalog.records)
+        groupedSections = groupedSections || (entry.kind == kGameModeType && (entry.flags & kSectionClearPolicy));
+    if (groupedSections && (!Bind(g_gameApp, "game.app") ||
+        !api->HookCode(mod, "map_catalog.mission_message", reinterpret_cast<void*>(&MissionMessageDetour),
+                       reinterpret_cast<void**>(&g_missionMessage)))) return 0;
     g_nativeLog = api->SettingInt(mod, "NativeDebugLog", 0) != 0;
     const size_t maps = g_catalog.Count(kMapType);
     const size_t missionRecords = g_catalog.records.size() - maps;

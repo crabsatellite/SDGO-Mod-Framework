@@ -14,6 +14,14 @@ void Put(m::Entry& entry, size_t offset, uint32_t value) {
 }
 
 int main(int argc, char** argv) {
+    Check(m::ValidFlags(m::kGameModeType, 0x5401), "mission section policy is bounded to eight phases");
+    Check(!m::ValidFlags(m::kNpcTemplateType, 0x5401), "section policy cannot attach to NPC records");
+    Check(!m::ValidFlags(m::kGameModeType, 0x10001), "unknown section bits are rejected");
+    Check(m::ShowsSectionClear(0, 2), "old missions retain native section banners");
+    for (uint32_t phase = 1; phase <= 8; ++phase)
+        Check(m::ShowsSectionClear(0x5401, phase) == (phase == 3 || phase == 5 || phase == 7),
+              "only declared completed sections show a banner");
+    Check(m::ShowsSectionClear(0x5401, 0), "unknown native phase preserves original presentation");
     m::Catalog catalog;
     m::Entry npc{m::kNpcTemplateType, 8001, 0, std::vector<uint8_t>(598)};
     Put(npc, 0, npc.id);

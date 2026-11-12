@@ -72,6 +72,8 @@ def parse_gate_samples(rows: list[dict], mission_id: int) -> list[dict]:
         )
         if any(type(sample.get(key)) is not int for key in required):
             raise game_test.GameTestError("native map-gate observation has a non-integer field")
+        if 'app_state' in sample and type(sample['app_state']) is not int:
+            raise game_test.GameTestError("native map-gate app state is not an integer")
         if sample["game_mode"] == mission_id:
             sample = dict(sample)
             sample["ordinal"] = ordinal
@@ -87,6 +89,7 @@ def gate_transition(rows: list[dict], mission_id: int, expected_block: int | Non
         if closed is None:
             if (
                 sample["block"] > 0
+                and sample.get("app_state", 22) == 22
                 and sample["query_valid"] == 1
                 and sample["found"] >= 1
                 and sample["ray_hits"] > 0
@@ -99,7 +102,8 @@ def gate_transition(rows: list[dict], mission_id: int, expected_block: int | Non
             continue
         if (
             sample["query_valid"] == 1
-            and sample["scenes"] > 0
+            and sample.get("app_state", 22) == 22
+            and (sample["scenes"] > 0 or sample.get("app_state") == 22)
             and sample["found"] == 0
             and sample["ray_hits"] == 0
             and sample["obbs"] == 0
@@ -117,6 +121,22 @@ def wait_gate(actor: FriendActor, mission_id: int, baseline: int, timeout: float
             return transition
         time.sleep(0.25)
     raise game_test.GameTestError("native client did not observe the sealed gate closed then genuinely hidden")
+
+
+def capture_closed_gate(actor: FriendActor, mission_id: int, baseline: int, label: str, timeout: float) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        rows = actor.native_events()[baseline:]
+        samples = parse_gate_samples(rows, mission_id)
+        if samples:
+            latest = samples[-1]
+            if (latest.get('app_state') == 22 and latest['elapsed_ms'] >= 3000 and
+                    latest['query_valid'] == 1 and latest['found'] and latest['ray_hits']):
+                return assert_receipt(actor.command('capture', label=label, timeout=timeout)).get('capture', {})
+            if gate_transition(rows, mission_id):
+                return {}  # A short closure can finish before a stable camera frame is available.
+        time.sleep(.15)
+    raise game_test.GameTestError('native closed-gate capture did not become ready')
 
 
 def read_server_rows(path: Path) -> list[dict]:
@@ -298,10 +318,13 @@ def coordinate(host: FriendActor, peer: FriendActor, *, timeout: float, server_e
     host.wait(lambda state: state.get("state", {}).get("app") == "22", timeout)
     peer.wait(lambda state: state.get("state", {}).get("app") == "22", timeout)
     server = wait_server_phase(server_events, host_pilot, peer_pilot, timeout) if server_events else None
+    captures = {}
+    if capture:
+        captures['host_closed'] = capture_closed_gate(host, mission_id, host_gate_baseline, 'mission-gate-closed-host', timeout)
+        captures['peer_closed'] = capture_closed_gate(peer, mission_id, peer_gate_baseline, 'mission-gate-closed-peer', timeout)
     host_gate = wait_gate(host, mission_id, host_gate_baseline, timeout)
     peer_gate = wait_gate(peer, mission_id, peer_gate_baseline, timeout, host_gate["block"])
 
-    captures = {}
     if capture:
         captures["host"] = assert_receipt(host.command("capture", label="mission-gate-open-host", timeout=timeout)).get("capture", {})
         captures["peer"] = assert_receipt(peer.command("capture", label="mission-gate-open-peer", timeout=timeout)).get("capture", {})

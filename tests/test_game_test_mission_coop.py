@@ -46,6 +46,14 @@ class MissionCoopContracts(unittest.TestCase):
         unloaded = gate_row(elapsed_ms=2000, scenes=0, found=0, ray_hits=0, hp=0,
                             obbs=0, hide_count=3, last_action=1, last_object=2)
         self.assertIsNone(coop.gate_transition([rows[0], unloaded], 88072))
+        # A tall shield can be the ray's sole object. Its removal is a valid
+        # empty query only with an explicit native battle-state receipt.
+        empty_live = gate_row(elapsed_ms=2000, scenes=0, found=0, ray_hits=0, hp=0,
+                              obbs=0, app_state=22)
+        self.assertIsNotNone(coop.gate_transition([rows[0], empty_live], 88072))
+        empty_returned = gate_row(elapsed_ms=2000, scenes=0, found=0, ray_hits=0, hp=0,
+                                  obbs=0, app_state=18)
+        self.assertIsNone(coop.gate_transition([rows[0], empty_returned], 88072))
         # The peer may have no Lua-authority diagnostics. The original native
         # world query is still the direct passage/collision observation.
         peer_closed = gate_row(phase_observer=0)

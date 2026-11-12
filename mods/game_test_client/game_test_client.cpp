@@ -5308,7 +5308,7 @@ void CaptureImportedReviewFrame(const SdgoGameTestContextV1* context) {
     const uint64_t now=GetTickCount64();
     const uint32_t state=actions.OnboardingState().native_app_state;
     if(state==22 && rooms.BattleEndState().sequence==observedMissionEndBaseline)
-        mapGateProbe.Poll(context,missionGameModeId);
+        mapGateProbe.Poll(context,missionGameModeId,state);
     const bool loading=observedMissionStartedAt && state!=18 && state!=6;
     if((state!=22 && !loading) || frames>=300 || now-lastFrame<4000)return;
     const std::wstring folder=sdgo_test::directory+L"\\import-frames";
@@ -6089,7 +6089,18 @@ int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
             gateEndBaseline=rooms.BattleEndState().sequence;gateSessionArmed=true;
         }
         if(actions.AppState()==22&&gateSessionArmed&&rooms.BattleEndState().sequence==gateEndBaseline)
-            mapGateProbe.Poll(context,missionGameModeId);
+            mapGateProbe.Poll(context,missionGameModeId,actions.AppState());
+        if(mapGateProbe.Enabled()&&actions.AppState()==22) {
+            static float lastArea[4]={};static uint64_t lastAreaAt=0;
+            float position[3]={},area[4]={};uint8_t enabled=0;
+            if(nativePlayerCombat.ReadLocalArea(position,area,enabled)&&
+               (memcmp(area,lastArea,sizeof(area))||context->elapsed_ms-lastAreaAt>=10000)) {
+                memcpy(lastArea,area,sizeof(area));lastAreaAt=context->elapsed_ms;
+                char text[224];sprintf_s(text,"native mission player area x=[%.0f..%.0f] z=[%.0f..%.0f] on=%u pos=(%.0f,%.0f,%.0f)",
+                    area[0],area[1],area[3],area[2],enabled,position[0],position[1],position[2]);
+                context->Observe(text);
+            }
+        }
         return result;
     }
     const auto cohort=pvpSession.State();

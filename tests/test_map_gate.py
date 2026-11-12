@@ -1,5 +1,6 @@
 """Focused protocol tests for schema-v2 named blocks and schema-v3 mission controls."""
 import copy
+import base64
 import hashlib
 import json
 import re
@@ -9,7 +10,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from owner.maps import block as B, bundle, compiler, mission as M, occlusion, package as P, server, trn_format
+from owner.maps import block as B, bundle, compiler, mission as M, mod_format, occlusion, package as P, server, trn_format
 from tests.test_map_import import ids, mission_spec, record_templates, templates, write_package
 
 
@@ -75,6 +76,54 @@ def gate_package(root: Path, mission=None) -> P.Package:
 
 
 class NamedBlockTests(unittest.TestCase):
+    def test_initial_ground_boundary_markings_keep_future_radar_and_area_definitions(self):
+        spec = mission_spec()
+        spec['schema_version'] = 4
+        spec['area'] = [-1000, 1000, 1000, -1000]
+        spec['phases'][1]['enter']['area'] = [-1500, 1500, 1500, -1500]
+        spec['boundary_markings'] = 'initial'
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = gate_package(Path(tmp), mission=spec)
+            pkg.manifest['missions'] = ['missions/m.json']
+            self.assertEqual(compiler.mission_areas(pkg), [(-1000, 1000, 1000, -1000), (-1500, 1500, 1500, -1500)])
+            self.assertEqual(compiler.mission_areas(pkg, markings=True), [(-1000, 1000, 1000, -1000)])
+
+    def test_transparent_gltf_preserves_alpha_with_a_shared_texture(self):
+        from owner.maps import txr_format
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = gate_package(Path(tmp))
+            raw = triangle_glb()
+            size = struct.unpack_from('<I', raw, 12)[0]
+            doc = json.loads(raw[20:20 + size])
+            blob = raw[28 + size:]
+            doc['buffers'][0]['uri'] = 'data:application/octet-stream;base64,' + base64.b64encode(blob).decode()
+            doc['images'] = [{'uri': 'data:image/png;base64,' + base64.b64encode(pkg.read('terrain/ground.png')).decode()}]
+            doc['textures'] = [{'source': 0}]
+            doc['materials'] = [
+                {'alphaMode': 'OPAQUE', 'pbrMetallicRoughness': {'baseColorTexture': {'index': 0}}},
+                {'alphaMode': 'BLEND', 'doubleSided': True, 'pbrMetallicRoughness': {
+                    'baseColorTexture': {'index': 0}, 'baseColorFactor': [1, 1, 1, 0.25]}}]
+            primitive = doc['meshes'][0]['primitives'][0]
+            primitive['material'] = 0
+            doc['meshes'][0]['primitives'].append({**primitive, 'material': 1})
+            path = Path(tmp) / 'models/transparent.gltf'
+            path.write_text(json.dumps(doc), encoding='utf-8')
+            manifest_path = Path(tmp) / 'map.json'
+            manifest = json.loads(manifest_path.read_bytes())
+            manifest['files']['models/transparent.gltf'] = hashlib.sha256(path.read_bytes()).hexdigest()
+            manifest['objects'][0]['model'] = 'models/transparent.gltf'
+            manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
+            pkg = P.load(tmp)
+            built = compiler.compile_map(pkg, map_no=143, map_id=500, variant='mission',
+                                         block_templates={80577: block_template()}, block_object_first=80600)
+            model = mod_format.parse(next(raw for name, raw in built.resources.items() if name.endswith('.mod')))
+            nodes = [n for n in model.nodes if n.mesh]
+            self.assertEqual([n.flags for n in nodes], [0, mod_format.FLAG_TWO_SIDED | mod_format.FLAG_SCREEN_ALPHA])
+            slots = [n.mesh.groups[0].material for n in nodes]
+            self.assertNotEqual(*slots)
+            self.assertEqual([model.kudiz_materials[i].diffuse[3] for i in slots], [1.0, 0.25])
+            self.assertEqual(model.kudiz_materials[slots[0]].textures[0], model.kudiz_materials[slots[1]].textures[0])
+
     def test_schema_v2_is_strict_and_v1_refuses_block_semantics(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -179,6 +228,59 @@ class NamedBlockTests(unittest.TestCase):
             self.assertEqual(loaded['tables']['tbl_MapData'][0]['BlockCnt'], 0)
             self.assertEqual(loaded['runtime_policy'],
                              {'immediate_transition_missions': [ids().game_mode_first]})
+
+    def test_section_clear_grouping_is_opt_in_and_preserves_native_progress_rows(self):
+        spec = mission_spec()
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = gate_package(Path(tmp), mission=spec)
+            def compile_mission(value):
+                return M.compile_mission(pkg, value, map_no=144, terrain_path='Trns\\m143x.trn',
+                                         ids=ids(), templates=templates())
+            old = compile_mission(spec)
+            self.assertEqual(old.record_flags, {})
+            spec['schema_version'] = 3
+            spec['phases'][0]['section_clear'] = False
+            with self.assertRaisesRegex(M.MissionError, 'schema_version=4'):
+                compile_mission(spec)
+            spec['schema_version'] = 4
+            grouped = compile_mission(spec)
+            self.assertEqual(grouped.server, old.server)
+            self.assertEqual(grouped.rows, old.rows)
+            self.assertEqual(grouped.record_flags, {ids().game_mode_first: 0x201})
+            self.assertEqual(grouped.report['section_clear_phases'], [2])
+            raw = next(raw for kind, ident, raw in grouped.rows if kind == M.GAME_MODE_KIND)
+            container = bundle.native_catalog([(M.GAME_MODE_KIND, ids().game_mode_first, raw)], grouped.record_flags)
+            self.assertEqual(struct.unpack_from('<I', container, 48)[0], 0x201)
+            self.assertEqual(container[56:], raw)
+            with self.assertRaisesRegex(ValueError, 'flags'):
+                bundle.native_catalog([(M.GAME_MODE_KIND, ids().game_mode_first, raw)], {ids().game_mode_first: 0x10001})
+            spec['phases'][0]['section_clear'] = 0
+            with self.assertRaisesRegex(M.MissionError, '布尔'):
+                compile_mission(spec)
+
+    def test_hidden_native_block_persists_into_later_cinematics_and_ending(self):
+        spec = mission_spec()
+        spec['schema_version'] = 3
+        spec['phases'][1]['enter']['blocks'] = [{'block': 'odessa_gate', 'visible': False}]
+        third = copy.deepcopy(spec['phases'][1])
+        third['key'] = 'three'
+        third['enter'] = {'cutscene': 'later'}
+        spec['phases'].append(third)
+        scene = {'length': 1, 'actors': {},
+                 'camera': [{'t': 0, 'pos': [2500, 200, 2500], 'look': [2600, 200, 2500]}]}
+        spec['cutscenes']['later'] = copy.deepcopy(scene)
+        spec['cutscenes']['outro'] = copy.deepcopy(scene)
+        spec['ending'] = 'outro'
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = gate_package(Path(tmp), mission=spec)
+            groups = occlusion.object_occluders(pkg, 'mission', None)
+            M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                              templates=templates(), occluders=groups)
+            skipped_hide = copy.deepcopy(spec)
+            skipped_hide['phases'][0]['next'] = 'three'
+            with self.assertRaisesRegex(M.MissionError, 'cutscenes.later|cutscenes.outro'):
+                M.compile_mission(pkg, skipped_hide, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                  templates=templates(), occluders=groups)
 
     def test_old_server_plan_schema_refuses_named_block_tables(self):
         plan = {

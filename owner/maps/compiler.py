@@ -303,7 +303,7 @@ class _ModelCompiler:
         if not meshes:
             raise MapCompileError(f'{relative} 没有可用的三角形网格')
         materials: list[mod_format.BuildMaterial] = []
-        material_index: dict[str, int] = {}
+        material_index: dict[tuple, int] = {}
         build: list[mod_format.BuildMesh] = []
         boxes: list[mod_format.OBB] = []
         for n, mesh in enumerate(meshes):
@@ -313,8 +313,9 @@ class _ModelCompiler:
             else:
                 texture = self.solid(mesh.material.color, f'{relative} 材质颜色')
                 diffuse = (1.0, 1.0, 1.0, 1.0)
-            if texture not in material_index:
-                material_index[texture] = len(materials)
+            material_key = (texture, diffuse)
+            if material_key not in material_index:
+                material_index[material_key] = len(materials)
                 materials.append(mod_format.BuildMaterial(texture=texture, diffuse=diffuse))
             normals = mesh.normals if len(mesh.normals) == len(mesh.positions) else _flat_normals(mesh)
             uvs = mesh.uvs if len(mesh.uvs) == len(mesh.positions) else [(0.0, 0.0)] * len(mesh.positions)
@@ -323,8 +324,9 @@ class _ModelCompiler:
             build.append(mod_format.BuildMesh(
                 name=f'mesh{n:02d}', positions=positions, normals=[(x, y, -z) for x, y, z in normals],
                 uvs=uvs, faces=[(a, c, b) for a, b, c in mesh.triangles],
-                face_materials=material_index[texture],
-                flags=mod_format.FLAG_TWO_SIDED if mesh.material.double_sided else 0))
+                face_materials=material_index[material_key],
+                flags=(mod_format.FLAG_TWO_SIDED if mesh.material.double_sided else 0) |
+                      (mod_format.FLAG_SCREEN_ALPHA if mesh.material.alpha_blend else 0)))
             self.stats['triangles'] += len(mesh.triangles)
             if collision == 'auto':
                 lo = [min(p[k] for p in positions) for k in range(3)]
@@ -380,7 +382,7 @@ def radar_image(package: Package, minimap: Image.Image, areas=()) -> tuple[Image
     return image, (x0, y0, w, h)
 
 
-def mission_areas(package: Package) -> list[tuple[float, float, float, float]]:
+def mission_areas(package: Package, *, markings: bool = False) -> list[tuple[float, float, float, float]]:
     """Every movable area the package's missions use (mission `area`, sector `rect`, phase `enter.area`)."""
     found = []
     for name in package.manifest.get('missions') or []:
@@ -390,6 +392,8 @@ def mission_areas(package: Package) -> list[tuple[float, float, float, float]]:
             continue                       # the mission compiler reports a broken mission with its field
         rects = [spec.get('area')] + [s.get('rect') for s in (spec.get('sectors') or {}).values() if isinstance(s, dict)]
         rects += [(p.get('enter') or {}).get('area') for p in spec.get('phases') or [] if isinstance(p, dict)]
+        if markings and spec.get('boundary_markings') == 'initial':
+            rects = [spec.get('area')]
         for rect in rects:
             if (isinstance(rect, list) and len(rect) == 4 and all(isinstance(v, (int, float)) for v in rect)
                     and tuple(rect) not in found):
@@ -700,7 +704,7 @@ def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'p
     if package.boundary_lines:
         if native_exists is not None and not native_exists(BOUNDARY_BAND):
             raise MapCompileError(f'目标客户端中不存在边界线贴图：{BOUNDARY_BAND}')
-        rects = mission_areas(package) if variant == 'mission' else []
+        rects = mission_areas(package, markings=True) if variant == 'mission' else []
         if not rects:
             rects = [(-package.play_half_x, package.play_half_z, package.play_half_x, -package.play_half_z)]
         t.decals = boundary_decals(rects)

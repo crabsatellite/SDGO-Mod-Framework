@@ -4,6 +4,11 @@
 
 namespace sdgo::map_catalog {
 
+inline bool ShowsSectionClear(uint32_t flags, uint32_t completedPhase) {
+    if (!(flags & kSectionClearPolicy) || completedPhase < 1 || completedPhase > 8) return true;
+    return (flags & (1u << (completedPhase + 7))) != 0;
+}
+
 inline bool DeclaresSpeech(const Catalog& catalog, uint32_t id) {
     if (!id) return false;
     for (const auto& entry : catalog.records)

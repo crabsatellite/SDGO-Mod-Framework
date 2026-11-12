@@ -32,6 +32,7 @@ class Material:
     texture_png: bytes | None          # PNG bytes of baseColorTexture, if any
     color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
     double_sided: bool = False
+    alpha_blend: bool = False
 
 
 @dataclass
@@ -188,7 +189,11 @@ def load(data: bytes, read_file: Callable[[str], bytes] | None = None) -> list[M
             tex = pbr.get('baseColorTexture')
             png = d.image_png(doc['textures'][tex['index']]['source']) if tex else None
             color = tuple(float(v) for v in pbr.get('baseColorFactor', (1, 1, 1, 1)))
-            materials[index] = Material(m.get('name', 'material%d' % index), png, color, bool(m.get('doubleSided')))
+            mode = m.get('alphaMode', 'OPAQUE')
+            if mode not in ('OPAQUE', 'BLEND'):
+                raise GltfError('map materials support alphaMode OPAQUE or BLEND')
+            materials[index] = Material(m.get('name', 'material%d' % index), png, color,
+                                        bool(m.get('doubleSided')), mode == 'BLEND')
         return materials[index]
 
     meshes: list[Mesh] = []
