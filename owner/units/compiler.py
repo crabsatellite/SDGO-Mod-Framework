@@ -78,6 +78,25 @@ def _adapter_files(workspace):
     return binary,manifest,(module/'symbols.fragment.ini').read_bytes(),(ROOT/'tools/install_unit_catalog.ps1').read_bytes()
 
 
+def _runtime_manifest(raw):
+    """Finalize module fields before deriving the shared framework contract.
+
+    The source template and frozen Manager data may have no framework sections;
+    already-rendered templates must not retain stale configuration declarations.
+    Resource archives are payload, not configuration fingerprint inputs.
+    """
+    from manager.configuration import render
+    parser=configparser.ConfigParser(interpolation=None,strict=False)
+    parser.optionxform=str
+    parser.read_string(raw.decode('utf-8-sig'))
+    parser['mod']['enabled']='1'
+    parser['mod']['files']=','.join(('symbols.fragment.ini','catalog.bin','definitions.json',
+        'blueprint-availability.json','blueprint-availability.bin','resource-overlay.ini','resources.zdx','resources.zpk'))
+    output=io.StringIO();parser.write(output,space_around_delimiters=False)
+    contract=json.loads((ROOT/'mods/unit_catalog/manager.json').read_bytes())
+    return render(output.getvalue().encode('utf-8'),contract)
+
+
 def publish(workspace,state,selected,transaction):
     from .assets import sprite_binary
     from .codec import patch_weapon,patch_unit,UNIT_FIELDS
@@ -264,10 +283,7 @@ def publish(workspace,state,selected,transaction):
     overlay_config=('[runtime]\nschema=1\nindex=resources.zdx\nindex_sha256='+hashlib.sha256(zdx).hexdigest()+
                     '\narchive=resources.zpk\narchive_sha256='+hashlib.sha256(zpk).hexdigest()+'\n').encode('ascii')
     # An owner-generated publication enables only its own module, not global switches.
-    text=mod_manifest.decode('utf-8-sig')
-    import re
-    text=re.sub(r'(?m)^enabled\s*=.*$','enabled=1',text)
-    text=re.sub(r'(?m)^files\s*=.*$','files=symbols.fragment.ini,catalog.bin,definitions.json,blueprint-availability.json,blueprint-availability.bin,resource-overlay.ini,resources.zdx,resources.zpk',text)
+    manifest_bytes=_runtime_manifest(mod_manifest)
     availability={str(recipe['id']):{
         'state':1 if (recipe['enabled'] and
             state['drafts'][family['id']]['status']!='disabled') else 2,
@@ -276,7 +292,7 @@ def publish(workspace,state,selected,transaction):
     availability_document={'schema_version':1,'provider':'unit_catalog',
         'revision':content_revision,'blueprints':availability}
     catalog_payload_fnv=struct.unpack_from('<I',catalog,24)[0]
-    files={prefix+'unit_catalog.dll':binary,prefix+'mod.ini':text.encode(),prefix+'catalog.bin':catalog,
+    files={prefix+'unit_catalog.dll':binary,prefix+'mod.ini':manifest_bytes,prefix+'catalog.bin':catalog,
         prefix+'manager.json':(ROOT/'mods/unit_catalog/manager.json').read_bytes(),
         prefix+'symbols.fragment.ini':symbols,
         prefix+'resource-overlay.ini':overlay_config,prefix+'resources.zdx':zdx,prefix+'resources.zpk':zpk,

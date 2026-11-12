@@ -42,6 +42,10 @@ $RequiredModuleFiles = @(
 $AllowedModuleFiles = $RequiredModuleFiles + @(
     'sdgo\mods\unit_catalog\manager.json',
     'sdgo\mods\unit_catalog\symbols.fragment.ini',
+    # Optional availability data generated with a unit publication. Older
+    # packages without these files remain installable.
+    'sdgo\mods\unit_catalog\blueprint-availability.json',
+    'sdgo\mods\unit_catalog\blueprint-availability.bin',
     # Optional sealed sidecars: native Lua program bundle (SDGOPR1) and skill atlases (SDGOAT1).
     'sdgo\mods\unit_catalog\native-programs.bin',
     'sdgo\mods\unit_catalog\skill-atlases.bin'
