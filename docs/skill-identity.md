@@ -2,6 +2,11 @@
 
 [Back to unit family import](unit-import.md)
 
+For ordinary native data-driven custom skills, start with [records, icons and paired import](unit-skill-import.md).
+This page describes a specialized adapter for extra fixed-ID dispatch. Its supported source set is not a global
+skill whitelist, and a new skill ID alone does not require this adapter. Complete publications can supply native
+skill records, atlases/resources and explicit server definitions without adding an identity mapping.
+
 `sdgo_skill_identity` is a linkable importer component. It preserves an imported
 skill's allocated ID while selecting an audited stock branch in the server's
 supplemental enable/disable dispatchers. It carries no content or installation
@@ -9,7 +14,8 @@ configuration and is not a separately enabled Mod.
 
 The `unit_catalog_server` companion integrates this SDK with the original server
 registry. It is disabled by default and ships without content or an installation
-authority. It does not open ordinary Manager publication of new skill dependencies.
+authority. Installing it does not change the single-family editor's confirmation checks; complete-publication
+skill data and resource import use the separate route described above.
 
 ## Installed definition authority
 
