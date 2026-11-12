@@ -7,6 +7,7 @@ each view ray are tested: the camera may look *at* an object.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Callable
 
 from . import gltf, mod_format
@@ -17,6 +18,29 @@ RAY_SAMPLES = 24
 RAY_SPAN = 0.75
 CAMERA_CLEARANCE = 30.0
 OBJECT_MARGIN = 10.0
+
+
+@dataclass
+class ObjectOccluders:
+    """Collision boxes split into fixed geometry and named destroyable blocks.
+
+    Mission validation can remove a block only when that exact phase explicitly hides it. Placement checks
+    continue to use the complete closed geometry through :func:`object_boxes`.
+    """
+    fixed: tuple[Box, ...]
+    blocks: dict[str, tuple[Box, ...]]
+
+    @property
+    def boxes(self) -> list[Box]:
+        return self.active()
+
+    def active(self, hidden_blocks=()) -> list[Box]:
+        hidden = set(hidden_blocks)
+        boxes = list(self.fixed)
+        for name, grouped in self.blocks.items():
+            if name not in hidden:
+                boxes.extend(grouped)
+        return boxes
 
 
 def _rotate_y(v, angle):
@@ -51,8 +75,10 @@ def _native_boxes(mod) -> list:
     return [(tuple(c * factor for c in o.center), o.axes, tuple(s * factor / 2 for s in o.size)) for o in mod.obbs]
 
 
-def object_boxes(package: Package, variant: str, read_native: Callable[[str], bytes] | None) -> list[Box]:
-    boxes: list[Box] = []
+def object_occluders(package: Package, variant: str,
+                     read_native: Callable[[str], bytes] | None) -> ObjectOccluders:
+    fixed: list[Box] = []
+    block_boxes: dict[str, tuple[Box, ...]] = {}
     native_cache: dict[str, list] = {}
     for obj in package.objects:
         if obj.only and obj.only != variant or obj.collision == 'none':
@@ -73,12 +99,14 @@ def object_boxes(package: Package, variant: str, read_native: Callable[[str], by
         elif isinstance(obj.collision, list):
             local = [(tuple(b['center']),                    # authored in the game frame, like the compiler
                       (_rotate_y((1, 0, 0), math.radians(b.get('rotation_y', 0.0))), (0, 1, 0),
-                       _rotate_y((0, 0, 1), math.radians(b.get('rotation_y', 0.0)))), b['half_extents']) for b in obj.collision]
+                       _rotate_y((0, 0, 1), math.radians(b.get('rotation_y', 0.0)))), b['half_extents'])
+                     for b in obj.collision]
         else:
             lo, hi = gltf.bounds(gltf.load(package.read(obj.model), package.resolver(obj.model)))
             lo, hi = (lo[0], lo[1], -hi[2]), (hi[0], hi[1], -lo[2])     # glTF -Z forward -> game +Z
             local = [(tuple((lo[k] + hi[k]) / 2 for k in range(3)), ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
                       tuple((hi[k] - lo[k]) / 2 for k in range(3)))]
+        world: list[Box] = []
         for center, axes, half in local:
             scaled = tuple(center[k] * obj.scale[k] for k in range(3))
             world_center = tuple(obj.position[k] + r for k, r in enumerate(_rotate_y(scaled, angle)))
@@ -88,8 +116,16 @@ def object_boxes(package: Package, variant: str, read_native: Callable[[str], by
                 length = math.sqrt(sum(c * c for c in stretched)) or 1.0
                 world_axes.append(_rotate_y(tuple(c / length for c in stretched), angle))
                 world_half.append(h * length)
-            boxes.append((world_center, tuple(world_axes), tuple(world_half)))
-    return boxes
+            world.append((world_center, tuple(world_axes), tuple(world_half)))
+        if obj.block is not None:
+            block_boxes[obj.object_id] = tuple(world)
+        else:
+            fixed.extend(world)
+    return ObjectOccluders(tuple(fixed), block_boxes)
+
+
+def object_boxes(package: Package, variant: str, read_native: Callable[[str], bytes] | None) -> list[Box]:
+    return object_occluders(package, variant, read_native).boxes
 
 
 def _inside(point, box: Box, margin: float) -> bool:

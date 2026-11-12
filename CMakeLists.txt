@@ -346,6 +346,11 @@ sdgo_add_mod(map_catalog DESCRIPTION "imported maps and missions"
 sdgo_add_mod(map_catalog_server SERVER DESCRIPTION "imported mission pacing"
              SOURCES mods/map_catalog_server/map_catalog_server.cpp FILES symbols.fragment.ini)
 if(BUILD_TESTING)
+    add_executable(map_catalog_presentation_test tests/map_catalog_presentation_test.cpp)
+    target_link_libraries(map_catalog_presentation_test PRIVATE sdgo_api)
+    sdgo_strict(map_catalog_presentation_test)
+    add_test(NAME map_catalog_presentation COMMAND map_catalog_presentation_test)
+
     add_executable(map_catalog_server_policy_test tests/map_catalog_server_policy_test.cpp)
     target_include_directories(map_catalog_server_policy_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     sdgo_strict(map_catalog_server_policy_test)
@@ -462,7 +467,7 @@ sdgo_add_mod(agent_udp_pool SERVER DESCRIPTION "native Agent UDP port pool" SOUR
 sdgo_add_mod(agent_relay_log_fix SERVER DESCRIPTION "native Agent relay printf fix" SOURCES mods/agent_relay_log_fix/agent_relay_log_fix.cpp)
 sdgo_add_mod(agent_room_view_error_fix SERVER DESCRIPTION "native Agent room-view error forwarding fix"
              SOURCES mods/agent_room_view_error_fix/agent_room_view_error_fix.cpp FILES symbols.fragment.ini)
-sdgo_add_mod(game_test_client DESCRIPTION "isolated native GameTest client" SOURCES mods/game_test_client/game_test_client.cpp mods/game_test_client/blueprint_actions.cpp LIBS user32 ws2_32)
+sdgo_add_mod(game_test_client DESCRIPTION "isolated native GameTest client" SOURCES mods/game_test_client/game_test_client.cpp mods/game_test_client/blueprint_actions.cpp FILES symbols.fragment.ini LIBS user32 ws2_32)
 sdgo_add_mod(game_test_server SERVER DESCRIPTION "isolated native GameTest battle server" SOURCES mods/game_test_server/game_test_server.cpp)
 
 # Bounded developer recorder, outside the installed Mod/runtime trees.

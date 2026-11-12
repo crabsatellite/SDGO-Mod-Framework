@@ -25,7 +25,7 @@ from typing import Callable
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from . import gltf, mod_format, trn_format, txr_format
+from . import block as block_protocol, gltf, mod_format, trn_format, txr_format
 from .package import GRID, Package, MapPackageError, Spawn
 
 MAP_KIND = 0x0F
@@ -532,7 +532,10 @@ def flags(package: Package, variant: str) -> dict[str, int]:
 
 # --------------------------------------------------------------------------- entry point
 def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'pvp', prefix: str | None = None,
-                native_exists: Callable[[str], bool] | None = None, shared: dict | None = None) -> CompiledMap:
+                native_exists: Callable[[str], bool] | None = None, shared: dict | None = None,
+                block_templates: dict[int, block_protocol.Template] | None = None,
+                block_object_first: int | None = None,
+                native_read: Callable[[str], bytes] | None = None) -> CompiledMap:
     """Compile one map row variant. `shared` (a dict) lets a second variant reuse models/textures/images."""
     if variant not in ('pvp', 'mission'):
         raise MapCompileError('variant 只能是 pvp 或 mission')
@@ -548,6 +551,10 @@ def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'p
     resources = shared.setdefault('resources', {})
     terrain = shared.get('terrain') or shared.setdefault('terrain', _Terrain(package))
     models = shared.get('models') or shared.setdefault('models', _ModelCompiler(package, prefix, resources))
+    block_objects = [(i, obj) for i, obj in enumerate(package.objects) if obj.block is not None]
+    if block_objects and (block_templates is None or block_object_first is None):
+        raise MapCompileError('schema_version=2 的 block 物件需要目标客户端/服务端模板与编号游标')
+    block_definitions = shared.setdefault('block_definitions', {})
 
     # -- terrain layers, sky, lightmap (shared between variants)
     if 'layers' not in shared:
@@ -590,21 +597,73 @@ def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'p
 
     # -- objects
     placed = 0
+    block_rows = []
+    block_reports = []
+    block_order = {index: order for order, (index, _obj) in enumerate(block_objects)}
     for i, obj in enumerate(package.objects):
         if obj.only and obj.only != variant:
             continue
+        model_raw = None
         if obj.native_model:
             if native_exists is not None and not native_exists(obj.native_model):
                 raise MapCompileError(f'objects[{i}] 引用的原生模型在目标客户端中不存在：{obj.native_model}')
             path = obj.native_model
+            if obj.block is not None:
+                if native_read is None:
+                    raise MapCompileError(f'objects[{i}].block 需要读取目标客户端的原生模型碰撞')
+                try:
+                    model_raw = native_read(path.replace('\\', '/').lower())
+                except Exception as error:
+                    raise MapCompileError(f'objects[{i}].block 无法读取原生模型：{error}') from None
         else:
             path = models.model(obj.model, obj.collision)
+            if obj.block is not None:
+                model_raw = resources[path.replace('\\', '/').lower()]
         if len(path) > NATIVE_PATH_CHARS:
             raise MapCompileError(f'objects[{i}] 模型路径超过 {NATIVE_PATH_CHARS} 个字符')
         angle = math.radians(obj.rotation_y)
-        builder.add_static_block(path, obj.position, (math.sin(angle), 0.0, math.cos(angle)), (0.0, 1.0, 0.0),
-                                 obj.scale)
+        forward = (math.sin(angle), 0.0, math.cos(angle))
+        if obj.block is None:
+            builder.add_static_block(path, obj.position, forward, (0.0, 1.0, 0.0), obj.scale)
+        else:
+            order = block_order[i]
+            identity = block_object_first + order
+            definition = block_definitions.get(obj.object_id)
+            if definition is None:
+                template = block_templates.get(obj.block.template)
+                if template is None:
+                    raise MapCompileError(f'objects[{i}].block.template {obj.block.template} 在目标客户端/服务端不存在')
+                try:
+                    native_row, server_object = block_protocol.build_definition(
+                        template, identity=identity, name=obj.object_id, display_name=obj.block.name['zh'],
+                        model=path, hp=obj.block.hp)
+                    aabb = block_protocol.world_aabb(model_raw, obj.position, obj.rotation_y, obj.scale)
+                except block_protocol.BlockProtocolError as error:
+                    raise MapCompileError(f'objects[{i}].block：{error}') from None
+                definition = {'identity': identity, 'native': native_row, 'server': server_object,
+                              'model': path, 'aabb': aabb, 'template': obj.block.template}
+                block_definitions[obj.object_id] = definition
+            elif (definition['identity'] != identity or definition['model'] != path):
+                raise MapCompileError(f'objects[{i}].block 在地图变体间定义不一致')
+            builder.add_destroyable_block(identity, obj.object_id, obj.position, forward, (0.0, 1.0, 0.0), obj.scale)
+            block_id = block_protocol.FIRST_BLOCK_ID + order
+            block_rows.append(block_protocol.server_placement(map_id=map_id, block_id=block_id,
+                                                               object_id=identity, aabb=definition['aabb']))
+            block_reports.append({
+                'name': obj.object_id, 'display_name': obj.block.name,
+                'definition_id': identity, 'block_id': block_id,
+                'catalog_kind': block_protocol.CATALOG_KIND, 'scene_kind': 0x12,
+                'template_id': definition['template'], 'model': path, 'hp': definition['server']['HP'],
+                'initially_hidden': obj.initially_hidden,
+                'position': list(obj.position), 'rotation_y': obj.rotation_y, 'scale': list(obj.scale),
+                'aabb': {'min': list(definition['aabb'][:3]), 'max': list(definition['aabb'][3:])},
+            })
         placed += 1
+
+    if block_objects and not shared.get('block_catalog_emitted'):
+        out.rows.extend((block_protocol.CATALOG_KIND, definition['identity'], definition['native'])
+                        for definition in sorted(block_definitions.values(), key=lambda item: item['identity']))
+        shared['block_catalog_emitted'] = True
 
     # -- spawns (colour 1 = team A/red, 2 = team B/blue, 0 = shared, 3/4 = Grid respawns)
     def spawn(colour: int, index: int, s, what: str):
@@ -694,12 +753,16 @@ def compile_map(package: Package, *, map_no: int, map_id: int, variant: str = 'p
         'tbl_MapFile': [{'MapNo': map_no, 'MapName': (package.name['en'] or package.map_key)[:100], 'MapID': map_id,
                          **flag_values, 'Disable': 0}],
         'tbl_MapData': [{'Version': 0, 'MapID': map_id, 'MinX': -half, 'MinZ': half, 'MaxX': half, 'MaxZ': -half,
-                         'BlockCnt': 0, 'NumItemPatternRed': len(package.item_patterns['red']),
+                         'BlockCnt': len(block_rows), 'NumItemPatternRed': len(package.item_patterns['red']),
                          'NumItemPatternBlue': len(package.item_patterns['blue'])}],
         'tbl_MapItemPath': item_rows,
     }
+    if block_rows:
+        out.server['tbl_MapObjects'] = [dict(block_definitions[item['name']]['server']) for item in block_reports]
+        out.server['tbl_MapBlocks'] = block_rows
     out.report = {'map_key': package.map_key, 'map_no': map_no, 'map_id': map_id, 'variant': variant,
-                  'objects': placed, 'spawns': {k: len(v) for k, v in package.spawns.items()},
+                  'objects': placed, 'blocks': block_reports,
+                  'spawns': {k: len(v) for k, v in package.spawns.items()},
                   'item_patterns': {k: len(v) for k, v in package.item_patterns.items()},
                   'trn': _native(trn_name), 'trn_bytes': len(resources[trn_name]), **models.stats}
     return out

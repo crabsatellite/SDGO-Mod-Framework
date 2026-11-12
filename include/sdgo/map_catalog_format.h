@@ -13,6 +13,7 @@
 namespace sdgo::map_catalog {
 
 constexpr uint32_t kFormatVersion = 1;
+constexpr uint32_t kBlockObjectType = 0x0E;  // gdrs\0008 named destroyable object
 constexpr uint32_t kMapType = 0x0F;          // gdrs\0254 map row
 constexpr uint32_t kNpcTemplateType = 0x29;  // NPC template
 constexpr uint32_t kGameModeType = 0x2A;     // mission GameMode
@@ -73,6 +74,7 @@ static_assert(sizeof(EntryHeader) == 24);
 
 inline size_t ExpectedBytes(uint32_t kind) {
     switch (kind) {
+    case kBlockObjectType: return 513;
     case kMapType: return kMapBytes;
     case kNpcTemplateType: return 598;
     case kGameModeType: return 1090;

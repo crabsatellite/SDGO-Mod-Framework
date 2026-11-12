@@ -2,6 +2,8 @@
 
 Twin Valley Fortress is an example map for the SDGO Mod Framework map import. Terrain, rock, prop and material textures come from these CC0 assets of [Poly Haven](https://polyhaven.com) (decimated, baked and re-encoded for the game); the fortress, mine, factory and base buildings were modelled for this example. Native models, music, sounds and NPC templates are referenced by name only and come from the game client and server the map is installed on.
 
+The named gate leaf is authored box geometry with normals and UVs, fitted to the existing gate opening. It reuses the blast gate's existing CC0 material atlas; it adds no game-extracted model or new raster artwork.
+
 | Asset | License | Source |
 | --- | --- | --- |
 | Barrel_01 | CC0-1.0 | https://polyhaven.com/a/Barrel_01 |

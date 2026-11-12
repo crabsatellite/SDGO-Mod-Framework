@@ -8,6 +8,8 @@
 
 任务目录、默认房间名和任务说明保留任务文件的 `name.zh`，NPC 的标签或攻击倍率不会替换它。若旧编译结果显示了武器字段名，使用 1.16.25 或更新的 Manager 重新编译并发布客户端内容；配套服务端计划未变时，无需重新应用或重启服务端。
 
+派生 NPC 继承模板的战斗定义，登场横幅与台词则必须在本任务中明确声明。编译时会清掉原关卡专用的演出引用；读取旧包时，客户端也只为本包已声明且有效的台词启用原生机体横幅，避免无效编号进入原生界面的台词队列。
+
 ![原生机体图片横幅](map-native-cutin-demo.webp)
 
 这里使用游戏自带素材演示原生入场与退出动画；任务实际使用的图片由服主内容包提供。
@@ -47,7 +49,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| `schema`、`schema_version` | 固定为 `sdgo.map-package`、`1` |
+| `schema`、`schema_version` | `sdgo.map-package`，`1` 或 `2`；命名原生物件使用 v2，旧包继续读取 |
 | `map_key` | 地图唯一标识，3..64 个小写字母、数字、`.`、`_`、`-` |
 | `name`、`description` | `{"zh": …, "en": …}`；名称最多 48 个字符，中文说明最多 99 个 UTF-16 代码单元 |
 | `modes` | 对战模式：`normal`、`deathmatch`、`grid`、`tag`、`captain`、`ai`、`ai_battleship`（可为空，只用作任务地图） |
@@ -58,12 +60,18 @@
 | `terrain.lighting` | `sun_direction`（y 必须小于 0）、`sun_color`、`ambient`、`bake_shadows`（烘焙光照与阴影） |
 | `terrain.fog`、`terrain.sky` | 雾的颜色与起止距离；天空 `zenith`/`horizon`/`ground` 颜色 |
 | `terrain.play_area` | 可活动范围 `half_x`、`half_z` 和高度上限 `ceiling` |
-| `objects` | 最多 1024 个物件：`model`（包内 glTF）或 `native_model`（目标客户端已有的模型），`position`、`rotation_y`、`scale`、`collision`（`auto`、`none` 或碰撞盒列表）、可选 `id`、`only`（`pvp`/`mission`）、`initially_hidden` |
+| `objects` | 最多 1024 个物件：`model`（包内 glTF）或 `native_model`（目标客户端已有的模型），`position`、`rotation_y`、`scale`、`collision`（`auto`、`none` 或碰撞盒列表）、可选 `only`（`pvp`/`mission`）。v2 的 `id` 是稳定内部名称；`block` 声明原生可破坏物件，包含目标客户端/服务端都有的 `template`、显示名称 `name`（`zh` 必填，`en` 可选）和可选 `hp`；`initially_hidden` 设置初始隐藏状态 |
 | `spawns` | `team_a`、`team_b` 各 6 个，`shared` 1..12 个，`grid` 模式另需 `grid_respawn_a`/`grid_respawn_b`；每个点 `position` 与 `facing`。任务地形中的 shared 点即复活点：第 *p* 阶段阵亡的驾驶员在第 2*p*−2 或 2*p*−1 个 shared 点复活，因此编译器为每个阶段生成一对复活点——第 1 阶段为 `shared[0]`/`shared[1]`，进入区域（sector）的阶段为该区域前两个 `warp` 点，设置新 `enter.area` 的阶段移入该范围内，其余阶段沿用上一阶段 |
 | `sectors` | 任务分区出生点（`{name: {spawns: [...]}}`），供任务切换区域使用 |
 | `item_patterns` | 道具刷新组，`red` 与 `blue` 组数相同 |
 | `presentation` | `preview`（地图预览 PNG）、`minimap`（小地图 PNG，覆盖整个地形）、`bgm`（包内 MP3 或 `{"native": "BGM\\NNNN.mp3"}`）。编译器按原版地图的做法由小地图生成地图图像：活动区保持原比例放在方形贴图中，四周画出橙黄色边界线；任务行的地图图像还会框出任务用到的每个活动范围。`boundary_lines`（默认 `true`）在地面上画出边界线，使用原版对战地图的边界色带：对战地图画在活动区边缘，任务地图画在任务用到的每个活动范围边缘（任务没有活动范围时画在活动区边缘） |
 | `files` | 包内每个文件的 SHA-256 |
+
+### 命名门板与炮击目标
+
+地图包 v2 可把一件带碰撞模型登记为命名原生物件。`id` 供脚本引用，`block.name` 用于玩家看到的名称；不要把内部代号当作显示名称。编译器生成配对的客户端定义、地形物件和服务端放置行，服主应用计划并重启 World/Battle 后生效；玩家安装内容不执行 SQL。
+
+任务 v3 的 `npcs.<key>.block_attack` 指定 `block` 名称和 `weapon`（`first`、`second`、`third`、`special`），让 NPC 通过原生攻击目标和武器控制向物件实际开火，不能与该 NPC 的 `ai` 同时声明。后续阶段的 `enter.blocks` 接受 `{ "block": "fortress_gate", "visible": false }` 隐藏门板并开放碰撞通道；`visible: true` 重新加入门板。把开门动作放在保护阶段之后，只有保护成功才会进入开门阶段。
 
 ## 任务协议（`missions/*.json`）
 
@@ -71,7 +79,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| `schema`、`schema_version` | `sdgo.map-mission`、`2`；旧的 v1 任务仍可读取，机体图片横幅和立即阶段衔接必须使用 v2，旧编译器会拒绝而不会忽略功能 |
+| `schema`、`schema_version` | `sdgo.map-mission`，`1`、`2` 或 `3`；机体图片横幅和立即阶段衔接需要 v2，命名物件攻击与阶段显隐需要 v3；旧编译器会拒绝而不会忽略新功能 |
 | `mission_key`、`name`、`description` | 任务标识、名称和说明 |
 | `transition_delay` | 阶段切换节奏：`native`（默认）保留原生普通阶段固定等待；`immediate` 只取消非最终阶段之间的这段固定等待。进入阶段的 `SceneTime` 过场仍完整播放，最终结算保持原生节奏 |
 | `briefing.zh` | 任务说明面板，最多 5 行、每行 49 字 |
@@ -124,7 +132,7 @@
 
 ## 生效与兼容
 
-- 需要启用客户端 Mod `map_catalog` 和 Battle 服务端 Mod `map_catalog_server`，并在两端安装同一版本的发布物；只更新一端会出现地图或任务缺失。新编译器固定生成 `sdgo.map-import-server-plan/2`；v1 计划仍可读取，但不能声明节奏策略或配对机体/武器表。编译器把声明 `transition_delay: "immediate"` 的任务 MissionID 排序写入 `server-plan.json` 的 `runtime_policy.immediate_transition_missions`，并把策略纳入发布 revision。Manager 应用服务端计划时，只在每个已安装 `map_catalog_server` 的 BattleServer 写入该名单并保留其他配置；缺少模块时明确显示“等待部署程序”，继续使用原生等待，不会假报已激活。写入并读回配置只表示 `configured`；重启后仍需原生运行观察才能证明策略实际加载。公开框架包不携带任何服务器专用编号。
+- 需要启用客户端 Mod `map_catalog` 和 Battle 服务端 Mod `map_catalog_server`，并在两端安装同一版本的发布物；只更新一端会出现地图或任务缺失。新编译器生成 `sdgo.map-import-server-plan/3`，包含配对的命名物件定义和放置行。v1/v2 计划仍可读取；v2 继续支持节奏策略及配对机体/武器表，v1 不能声明这些内容。编译器把声明 `transition_delay: "immediate"` 的任务 MissionID 排序写入 `server-plan.json` 的 `runtime_policy.immediate_transition_missions`，并把策略纳入发布 revision。Manager 应用服务端计划时，只在每个已安装 `map_catalog_server` 的 BattleServer 写入该名单并保留其他配置；缺少模块时明确显示“等待部署程序”，继续使用原生等待，不会假报已激活。写入并读回配置只表示 `configured`；重启后仍需原生运行观察才能证明策略实际加载。公开框架包不携带任何服务器专用编号。
 - 服务端表在服务启动时读取，应用后需重启 World/Battle 服务；客户端包安装后重启客户端。
 - 导入任务在任务房间中以原生任务模式运行，人物对话使用游戏自带的人物对话框（带头像和名字）；设置了 `loading` 海报的任务在进入战斗的读取画面显示该海报。
 - NPC 注册属于任务协议：`npcs` 中的单位会成为该任务的服务端 NPC 数据和客户端 NPC 模板，不需要单独的 Mod。

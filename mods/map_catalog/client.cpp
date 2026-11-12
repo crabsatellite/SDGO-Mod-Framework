@@ -13,6 +13,7 @@
 #include <vector>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/map_catalog_format.h"
+#include "presentation.h"
 #include "../../support/native_resource_overlay/native_resource_overlay.h"
 
 namespace {
@@ -658,11 +659,15 @@ SDGO_MOD_ENTRY {
     g_nativeLog = api->SettingInt(mod, "NativeDebugLog", 0) != 0;
     const size_t maps = g_catalog.Count(kMapType);
     const size_t missionRecords = g_catalog.records.size() - maps;
+    unsigned inheritedCutins = 0;
     for (const auto& entry : g_catalog.records) {
         if (entry.kind == kGameModeType) g_importedModes.push_back(entry.id);
-        if (entry.kind == kNpcTemplateType && entry.bytes.size() == 598 &&
-            U32(entry.bytes.data() + 390) && entry.bytes[398]) g_cutinNpcs.push_back(entry.id);
+        if (DeclaresUnitCutin(g_catalog, entry)) g_cutinNpcs.push_back(entry.id);
+        else if (entry.kind == kNpcTemplateType && entry.bytes.size() == 598 &&
+                 U32(entry.bytes.data() + 390) && entry.bytes[398]) ++inheritedCutins;
     }
+    api->Log(mod, SDGO_LOG_INFO, "native unit cut-ins: %lu declared, %u inherited references excluded",
+             static_cast<unsigned long>(g_cutinNpcs.size()), inheritedCutins);
     if (!g_importedModes.empty() && api->size >= offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) && api->HookSite &&
         !api->HookSite(mod, "map_catalog.operator_mode", reinterpret_cast<void*>(&OperatorModeSite),
                        &g_operatorModeOriginal)) {

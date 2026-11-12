@@ -217,6 +217,13 @@ class MapWorkspace:
         for index, entry in enumerate(enabled):
             pkg = self.package(entry)
             pipeline.check_placements(pkg, baseline)
+            named_blocks = [obj for obj in pkg.objects if obj.block is not None]
+            block_first = cursor['block_object']
+            for offset in range(len(named_blocks)):
+                if baseline.any_id(block_first + offset):
+                    _fail(f'命名物件记录 {block_first + offset} 与客户端已有记录冲突')
+            block_templates = pipeline.block_templates(
+                baseline, server_ini, {obj.block.template for obj in named_blocks})
             shared: dict = {}
             mission_files = list(entry.get('missions', []))
             first = None
@@ -236,7 +243,9 @@ class MapWorkspace:
             for variant, number in variants:
                 build = compiler.compile_map(pkg, map_no=number, map_id=map_id, variant=variant,
                                              prefix=first.prefix if first else None,
-                                             native_exists=native_exists, shared=shared)
+                                             native_exists=native_exists, shared=shared,
+                                             block_templates=block_templates, block_object_first=block_first,
+                                             native_read=lambda path: baseline.read(path))
                 compiler.verify_trn(build.resources[build.report['trn'].replace('\\', '/').lower()])
                 builds.append(build)
                 first = first or build
@@ -262,6 +271,7 @@ class MapWorkspace:
                 missions.append(built)
                 assignment['missions'].append({'file': relative, **built.report})
             assignment.pop('occluders', None)
+            cursor['block_object'] += len(named_blocks)
             assignments.append(assignment)
             log(json.dumps({'map': entry['key'], 'map_nos': assignment['map_nos'],
                             'missions': len(assignment['missions'])}, ensure_ascii=False))

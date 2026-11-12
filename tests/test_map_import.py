@@ -369,6 +369,31 @@ def compile_spec(spec, tpl=None):
 
 
 class MissionFeatureTests(unittest.TestCase):
+    def test_derived_npcs_do_not_inherit_a_stock_missions_cutins(self):
+        tpl = templates()
+        original = bytearray(tpl.npc_templates[500])
+        struct.pack_into('<II', original, 390, 70001, 70002)
+        sprite = 'sprs\\1234.spr'.encode('utf-16-le')
+        original[398:398 + len(sprite)] = sprite
+        tpl.npc_templates[500] = bytes(original)
+        spec = mission_spec()
+        spec['npcs']['target']['hp'] = 9000
+        built = compile_spec(spec, tpl)
+        rows = [raw for kind, _, raw in built.rows if kind == M.NPC_TEMPLATE_KIND]
+        self.assertEqual(len(rows), 2)
+        for raw in rows:
+            self.assertEqual(raw[390:598], bytes(208))
+        self.assertEqual(tpl.npc_templates[500], bytes(original))
+
+        spec['schema_version'] = 2
+        spec['npcs']['target']['cutin'] = {'native_sprite': 'sprs\\5678.spr', 'line': 'l1'}
+        tpl.native_exists = lambda name: name == 'sprs\\5678.spr'
+        built = compile_spec(spec, tpl)
+        target = next(raw for kind, _, raw in built.rows
+                      if kind == M.NPC_TEMPLATE_KIND and struct.unpack_from('<I', raw, 229)[0] == 9000)
+        self.assertEqual(struct.unpack_from('<II', target, 390), (ids().speech_first, 0))
+        self.assertEqual(target[398:598].decode('utf-16-le').split('\0')[0], 'sprs\\5678.spr')
+
     def test_native_unit_cutin_is_bound_to_the_spawned_npc(self):
         spec = mission_spec()
         spec['schema_version'] = 2

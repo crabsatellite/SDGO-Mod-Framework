@@ -8,6 +8,8 @@ The feature only imports. It reads protocol data, generates the records and reso
 
 The mission catalogue, default room name and objective title retain the mission file's `name.zh`; NPC labels and attack multipliers do not replace it. If an older build displays a weapon field name, recompile and publish the client content with Manager 1.16.25 or later. An unchanged server plan needs no reapplication or server restart.
 
+Derived NPCs inherit template combat definitions; their unit illustration strips and speech must be explicitly authored for this mission. Compilation clears presentation references belonging to the original mission. For older packages, the client enables imported unit strips only when their speech is declared and valid in that package, keeping invalid IDs out of the native speech queue.
+
 ![Native unit illustration strip](map-native-cutin-demo.webp)
 
 The native entrance and exit animation uses built-in artwork here. The owner content package supplies the artwork used by each mission.
@@ -47,7 +49,7 @@ Colour textures (model base colour textures and terrain layer textures) may be P
 
 | Field | Meaning |
 | --- | --- |
-| `schema`, `schema_version` | Always `sdgo.map-package`, `1` |
+| `schema`, `schema_version` | `sdgo.map-package`, `1` or `2`; named native objects require v2. Existing packages remain readable |
 | `map_key` | Unique map identifier: 3..64 lowercase letters, digits, `.`, `_`, `-` |
 | `name`, `description` | `{"zh": …, "en": …}`; names up to 48 characters, Chinese descriptions up to 99 UTF-16 code units |
 | `modes` | PvP modes: `normal`, `deathmatch`, `grid`, `tag`, `captain`, `ai`, `ai_battleship` (may be empty for a mission-only map) |
@@ -58,12 +60,18 @@ Colour textures (model base colour textures and terrain layer textures) may be P
 | `terrain.lighting` | `sun_direction` (y must be negative), `sun_color`, `ambient`, `bake_shadows` (baked light and shadows) |
 | `terrain.fog`, `terrain.sky` | Fog colour and start/end distance; sky `zenith`/`horizon`/`ground` colours |
 | `terrain.play_area` | Playable `half_x`, `half_z` and height `ceiling` |
-| `objects` | Up to 1024 objects: `model` (a glTF in the package) or `native_model` (a model the target client already has), `position`, `rotation_y`, `scale`, `collision` (`auto`, `none` or a list of boxes), optional `id`, `only` (`pvp`/`mission`), `initially_hidden` |
+| `objects` | Up to 1024 objects: `model` (a glTF in the package) or `native_model` (an existing client model), `position`, `rotation_y`, `scale`, `collision` (`auto`, `none` or boxes), and optional `only` (`pvp`/`mission`). In v2, `id` is the stable internal name; `block` declares a native destroyable object with a client/server `template`, display `name` (required `zh`, optional `en`) and optional `hp`; `initially_hidden` sets its initial visibility |
 | `spawns` | `team_a` and `team_b` with 6 points each, `shared` with 1..12, plus `grid_respawn_a`/`grid_respawn_b` for Grid mode; each point has `position` and `facing`. In the mission terrain the shared points are the respawn points: a pilot who falls in phase *p* respawns at shared point 2*p*−2 or 2*p*−1, so the compiler gives every phase its own pair — phase 1 at `shared[0]`/`shared[1]`, a phase that enters a sector at that sector's first two `warp` points, a phase with a new `enter.area` inside that area, any other phase at the previous phase's pair |
 | `sectors` | Named mission sector spawn points (`{name: {spawns: [...]}}`) |
 | `item_patterns` | Item spawn sets; `red` and `blue` need the same number of sets |
 | `presentation` | `preview` (PNG), `minimap` (PNG, the whole terrain), `bgm` (an MP3 in the package or `{"native": "BGM\\NNNN.mp3"}`). The compiler makes the map image from the minimap like the shipped maps: the play area keeps its aspect inside the square texture and is framed by an orange-yellow boundary line; the mission row's image also outlines every movable area its missions use. `boundary_lines` (default `true`) paints the boundary on the ground with the band the shipped PvP maps use: the play area's edge on the PvP map, and the edge of every movable area on the mission map (the play area's edge when its missions have no areas) |
 | `files` | SHA-256 of every file in the package |
+
+### Named gates and bombardment targets
+
+Map package v2 can register a model with collision as a named native object. Scripts use `id`; players see `block.name`. Keep internal codes out of display names. Compilation produces paired client definitions, terrain objects and server placement rows. The owner applies the plan and restarts World/Battle; player content installation does not execute SQL.
+
+Mission v3 supports `npcs.<key>.block_attack` with the target `block` and a `weapon` (`first`, `second`, `third`, `special`). It drives the NPC's real native target and weapon controls and cannot coexist with that NPC's `ai`. A later phase's `enter.blocks` accepts `{ "block": "fortress_gate", "visible": false }` to hide the leaf and open its collision passage; `visible: true` reinserts it. Place the opening command after the protection phase so it runs only on successful progress.
 
 ## Mission protocol (`missions/*.json`)
 
@@ -71,7 +79,7 @@ Mission files live under `missions/` in the map package and are listed in `files
 
 | Field | Meaning |
 | --- | --- |
-| `schema`, `schema_version` | `sdgo.map-mission`, `2`; existing v1 missions remain readable. Native illustration strips and immediate phase transitions require v2 so older compilers reject them instead of silently omitting features |
+| `schema`, `schema_version` | `sdgo.map-mission`, `1`, `2` or `3`; illustration strips and immediate transitions require v2, named-object attacks and phase visibility require v3. Older compilers reject unsupported new semantics |
 | `mission_key`, `name`, `description` | Mission identifier, name and description |
 | `transition_delay` | Phase-change pacing: `native` (default) keeps the stock fixed wait between ordinary phases; `immediate` removes only that fixed wait between non-final phases. A phase's `SceneTime` cutscene still plays in full, and final settlement keeps the native timing |
 | `briefing.zh` | Briefing panel: up to 5 lines of 49 characters |
@@ -124,7 +132,7 @@ The compiler checks placement and camera work: spawn points, mission spawns, cut
 
 ## Activation and compatibility
 
-- Enable the client Mod `map_catalog` and the Battle server Mod `map_catalog_server`, and install the same publication on both sides; updating only one side leaves maps or missions missing. New builds always emit `sdgo.map-import-server-plan/2`; v1 plans remain readable but cannot declare pacing policy or paired unit/weapon tables. The compiler sorts the MissionIDs of missions that declare `transition_delay: "immediate"` into `server-plan.json` at `runtime_policy.immediate_transition_missions` and includes that policy in the publication revision. When Manager applies the server plan, it writes the list only to BattleServer hosts that already have `map_catalog_server`, preserving unrelated configuration. A missing programme is reported as pending deployment and retains native pacing; it is never reported as active. Writing and reading back the configuration reports only `configured`; native runtime observation after restart is still required to prove that the policy loaded. The public framework package carries no server-specific IDs.
+- Enable the client Mod `map_catalog` and the Battle server Mod `map_catalog_server`, and install the same publication on both sides; updating only one side leaves maps or missions missing. New builds emit `sdgo.map-import-server-plan/3`, including paired named-object definitions and placement rows. Existing v1/v2 plans remain readable; v2 continues to support pacing policy and paired unit/weapon tables, while v1 cannot declare them. The compiler sorts the MissionIDs of missions that declare `transition_delay: "immediate"` into `server-plan.json` at `runtime_policy.immediate_transition_missions` and includes that policy in the publication revision. When Manager applies the server plan, it writes the list only to BattleServer hosts that already have `map_catalog_server`, preserving unrelated configuration. A missing programme is reported as pending deployment and retains native pacing; it is never reported as active. Writing and reading back the configuration reports only `configured`; native runtime observation after restart is still required to prove that the policy loaded. The public framework package carries no server-specific IDs.
 - Servers read these tables at startup: restart the World/Battle services after applying, and restart the client after installing the client package.
 - Imported missions run in mission rooms as native missions; character dialogue uses the game's own character dialogue panel (portrait and name), and a mission with a `loading` poster shows it on the battle loading screen.
 - NPC registration is part of the mission protocol: `npcs` entries become the server's NPC data and the client's NPC templates for that mission; no separate Mod is needed.

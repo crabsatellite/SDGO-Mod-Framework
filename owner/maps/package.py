@@ -20,7 +20,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 SCHEMA = 'sdgo.map-package'
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_FILE_BYTES = 64 * 1024 * 1024
 MAX_PACKAGE_BYTES = 512 * 1024 * 1024
@@ -89,6 +90,13 @@ class Spawn:
     facing: tuple[float, float]
 
 
+@dataclass(frozen=True)
+class NativeBlock:
+    template: int
+    name: dict[str, str]
+    hp: int | None = None
+
+
 @dataclass
 class MapObject:
     position: tuple[float, float, float]
@@ -100,6 +108,7 @@ class MapObject:
     object_id: str = ''
     only: str = ''                       # '' | 'pvp' | 'mission'
     initially_hidden: bool = False
+    block: NativeBlock | None = None
 
 
 @dataclass
@@ -224,8 +233,10 @@ def load(root: Path | str) -> Package:
         m = json.loads(manifest_path.read_bytes().decode('utf-8-sig'))
     except (UnicodeDecodeError, ValueError) as error:
         _fail(f'map.json 不是有效的 UTF-8 JSON：{error}')
-    if not isinstance(m, dict) or m.get('schema') != SCHEMA or m.get('schema_version') != SCHEMA_VERSION:
-        _fail(f'map.json 必须声明 schema={SCHEMA} 且 schema_version={SCHEMA_VERSION}')
+    version = m.get('schema_version') if isinstance(m, dict) else None
+    if (not isinstance(m, dict) or m.get('schema') != SCHEMA or type(version) is not int
+            or version not in SUPPORTED_SCHEMA_VERSIONS):
+        _fail(f'map.json 必须声明 schema={SCHEMA} 且 schema_version=1 或 2')
     key = m.get('map_key')
     if not isinstance(key, str) or not KEY.fullmatch(key):
         _fail('map_key 必须是 3..64 个小写字母、数字、点、下划线或连字符')
@@ -314,6 +325,14 @@ def load(root: Path | str) -> Package:
         what = f'objects[{i}]'
         if not isinstance(row, dict):
             _fail(f'{what} 必须是对象')
+        common_fields = {'position', 'rotation_y', 'scale', 'model', 'native_model', 'collision', 'only'}
+        semantic_fields = {'id', 'initially_hidden', 'block'}
+        allowed_fields = common_fields | (semantic_fields if version >= 2 else set())
+        unknown = set(row) - allowed_fields
+        if unknown:
+            _fail(f'{what} 含未知字段：' + '、'.join(sorted(unknown)))
+        if version < 2 and set(row) & semantic_fields:
+            _fail(f'{what} 的命名物件语义需要 schema_version=2')
         position = _vector(row.get('position'), 3, what + '.position', half * 2)
         if abs(position[0]) > half or abs(position[2]) > half:
             _fail(f'{what} 位于地形之外')
@@ -339,7 +358,31 @@ def load(root: Path | str) -> Package:
         obj.only = row.get('only', '')
         if obj.only not in ('', 'pvp', 'mission'):
             _fail(f'{what}.only 只能是 pvp 或 mission')
-        obj.initially_hidden = bool(row.get('initially_hidden', False))
+        hidden = row.get('initially_hidden', False)
+        if not isinstance(hidden, bool):
+            _fail(f'{what}.initially_hidden 必须是布尔值')
+        obj.initially_hidden = hidden
+        block = row.get('block')
+        if block is not None:
+            if (not isinstance(block, dict) or set(block) - {'template', 'name', 'hp'}
+                    or not {'template', 'name'} <= set(block)):
+                _fail(f'{what}.block 需要 template、name 与可选 hp')
+            template = block['template']
+            display_name = _names(block['name'], what + '.block.name', 49, 49)
+            hp = block.get('hp')
+            if type(template) is not int or not 1 <= template <= 0xffffffff:
+                _fail(f'{what}.block.template 必须是 uint32 正整数')
+            if hp is not None and (type(hp) is not int or not 1 <= hp <= 0x7fffffff):
+                _fail(f'{what}.block.hp 必须是 1..2147483647')
+            if not obj.object_id:
+                _fail(f'{what}.block 需要同一物件声明唯一 id')
+            if obj.only:
+                _fail(f'{what}.block 必须同时存在于对战与任务地形，不能声明 only')
+            if obj.collision == 'none':
+                _fail(f'{what}.block 需要实际碰撞盒')
+            obj.block = NativeBlock(template=template, name=display_name, hp=hp)
+        elif obj.initially_hidden:
+            _fail(f'{what}.initially_hidden 只适用于 block 物件')
         objects.append(obj)
 
     raw_spawns = m.get('spawns')

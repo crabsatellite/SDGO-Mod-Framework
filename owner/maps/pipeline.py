@@ -35,6 +35,7 @@ def next_ids(baseline) -> dict:
     catalogue = last('gdrs/0056.gdt', 1309)
     return {
         'map_no': last('gdrs/0254.gdt', 844) - MAP_FIRST_ID + 1,
+        'block_object': last('gdrs/0008.gdt', 513) + 1,
         'game_mode': last('gdrs/0021.gdt', 1090, M.MODE5_ID_LIMIT) + 1,
         'route': last('gdrs/0057.gdt', 34) + 1,
         'objective': last('gdrs/0080.gdt', 634) + 1,
@@ -163,10 +164,41 @@ def mission_templates(baseline, server_ini) -> M.Templates:
         native_exists=lambda name: baseline.exists(name.replace('\\', '/').lower()))
 
 
+
+def block_templates(baseline, server_ini, template_ids) -> dict:
+    """Exact client/server object templates requested by schema-v2 named blocks (read-only)."""
+    from owner.units import repository
+    from . import block as B
+    requested = set(template_ids)
+    if not requested:
+        return {}
+    native = baseline._records('gdrs/0008.gdt', B.RECORD_BYTES)
+    connection = repository._connect(Path(server_ini))
+    try:
+        cursor = connection.cursor()
+        cursor.execute('SELECT ' + ','.join(B.SERVER_OBJECT_COLUMNS) + ' FROM dbo.tbl_MapObjects')
+        observed = tuple(item[0] for item in cursor.description)
+        if observed != B.SERVER_OBJECT_COLUMNS:
+            raise ValueError('tbl_MapObjects 的服务端列与命名物件协议不匹配')
+        server = {}
+        for values in cursor.fetchall():
+            row = dict(zip(B.SERVER_OBJECT_COLUMNS, values))
+            identity = int(row['ObjectID'])
+            if identity in server:
+                raise ValueError(f'tbl_MapObjects 的 ObjectID {identity} 不唯一')
+            server[identity] = row
+    finally:
+        connection.rollback()
+        connection.close()
+    missing = sorted(identity for identity in requested if identity not in native or identity not in server)
+    if missing:
+        raise ValueError('命名物件模板在目标客户端或服务端不存在：' + ','.join(map(str, missing)))
+    return {identity: B.Template(native=native[identity], server=server[identity]) for identity in requested}
+
 def occluders(package, baseline):
-    """Collision volumes of the mission variant's objects, for the cutscene camera check."""
-    from .occlusion import object_boxes
-    return object_boxes(package, 'mission', lambda path: baseline.read(path))
+    """Named collision groups of the mission variant, for state-aware cutscene checks."""
+    from .occlusion import object_occluders
+    return object_occluders(package, 'mission', lambda path: baseline.read(path))
 
 
 def check_placements(package, baseline) -> None:

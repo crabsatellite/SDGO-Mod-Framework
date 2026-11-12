@@ -24,14 +24,16 @@ from .compiler import CompiledMap
 
 MODULE = 'map_catalog'
 PREFIX = 'client/sdgo/mods/map_catalog/'
-PLAN_SCHEMA = 'sdgo.map-import-server-plan/2'
-LEGACY_PLAN_SCHEMAS = frozenset({'sdgo.map-import-server-plan/1'})
+PLAN_SCHEMA = 'sdgo.map-import-server-plan/3'
+LEGACY_PLAN_SCHEMAS = frozenset({'sdgo.map-import-server-plan/1', 'sdgo.map-import-server-plan/2'})
 OVERLAY_DOMAINS = {'trns': '.trn', 'sol': '.sol', 'mdrs': '.mod', 'anrs': '.ani', 'txrs': '.txr', 'fxrs': '.zfx',
                    'sprs': '.spr', 'sdrs': '.zsd'}
 TABLE_KEYS = {
     'tbl_MapFile': ('MapNo',),
     'tbl_MapData': ('MapID',),
     'tbl_MapItemPath': ('MapID', 'Team', 'PatternID', 'Orders'),
+    'tbl_MapObjects': ('ObjectID',),
+    'tbl_MapBlocks': ('MapID', 'BlockID'),
     'tbl_MissionMode': ('GameModeID',),
     'tbl_MissionClear': ('ClearID',),
     'tbl_MissionModeStart': ('MissionModeStartID',),
@@ -55,7 +57,8 @@ def _fnv(raw: bytes) -> int:
 
 def native_catalog(rows: list[tuple[int, int, bytes]]) -> bytes:
     from .mission import SIZES
-    expected = {0x0F: 0x34C, **SIZES}
+    from .block import CATALOG_KIND, RECORD_BYTES
+    expected = {0x0F: 0x34C, CATALOG_KIND: RECORD_BYTES, **SIZES}
     for kind, ident, raw in rows:
         if expected.get(kind) != len(raw):
             raise ValueError(f'record {ident} kind {kind:#x} has {len(raw)} bytes, expected {expected.get(kind)}')
@@ -130,10 +133,10 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
         'runtime_policy': runtime_policy,
     }, sort_keys=True).encode()).hexdigest()[:16]
     maps = [{'map_key': b.report['map_key'], 'map_no': b.map_no, 'map_id': b.map_id, 'variant': b.variant,
-             'trn': b.report['trn']} for b in builds]
+             'trn': b.report['trn'], 'blocks': b.report.get('blocks', [])} for b in builds]
     files = {PREFIX + 'catalog.bin': catalog, PREFIX + 'resource-overlay.ini': overlay,
              PREFIX + 'resources.zdx': zdx, PREFIX + 'resources.zpk': zpk,
-             PREFIX + 'definitions.json': json.dumps({'protocol': 'sdgo.map-package', 'schema_version': 1,
+             PREFIX + 'definitions.json': json.dumps({'protocol': 'sdgo.map-package', 'schema_version': 2,
                                                       'revision': revision, 'maps': maps, 'missions': mission_reports,
                                                       **(definitions or {})},
                                                      ensure_ascii=False, indent=2).encode('utf-8')}

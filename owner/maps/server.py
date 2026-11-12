@@ -15,7 +15,7 @@ from pathlib import Path
 from owner.units import repository
 
 from .bundle import LEGACY_PLAN_SCHEMAS, PLAN_SCHEMA, TABLE_KEYS
-from . import mission as mission_protocol
+from . import block as block_protocol, mission as mission_protocol
 
 LEDGER = 'sdgo_MapImportRows'
 APP_LOCK = 'sdgo.map_import'
@@ -28,6 +28,8 @@ COLUMNS = {
     'tbl_MapData': ('Version', 'MapID', 'MinX', 'MinZ', 'MaxX', 'MaxZ', 'BlockCnt', 'NumItemPatternRed',
                     'NumItemPatternBlue'),
     'tbl_MapItemPath': ('MapID', 'Team', 'PatternID', 'Orders', 'Idx', 'PosX', 'PosY', 'PosZ'),
+    'tbl_MapObjects': block_protocol.SERVER_OBJECT_COLUMNS,
+    'tbl_MapBlocks': block_protocol.SERVER_BLOCK_COLUMNS,
     'tbl_MissionMode': ('GameModeID', 'ModeName', 'ModeType', 'MissionGroupIndex', 'GameMap', 'ScriptTime', 'GameTime',
                         'GameLife', 'GameNpc', 'GameAllyNpc', 'DropConditionID', 'NeedEvent', 'Min2PlayerTime',
                         'Min3PlayerTime', 'Min4PlayerTime'),
@@ -53,7 +55,7 @@ COLUMNS = {
                                      'SumProb'),
 }
 # Insert order respects references (weapons -> units -> NPC data -> spawns); removal uses the reverse order.
-TABLE_ORDER = ('tbl_MapData', 'tbl_MapFile', 'tbl_MapItemPath', 'tbl_WeaponsRev', 'tbl_UnitNpc', 'tbl_NpcData', 'tbl_BattleResultItemDropDice',
+TABLE_ORDER = ('tbl_MapObjects', 'tbl_MapData', 'tbl_MapBlocks', 'tbl_MapFile', 'tbl_MapItemPath', 'tbl_WeaponsRev', 'tbl_UnitNpc', 'tbl_NpcData', 'tbl_BattleResultItemDropDice',
                'tbl_BattleResultItemDropSetting', 'tbl_MissionMode', 'tbl_MissionModeStart', 'tbl_MissionClear',
                'tbl_MissionNpc', 'tbl_MissionExp', 'tbl_MissionRankBossData')
 
@@ -140,6 +142,65 @@ def _validate_paired_catalog(plan: dict) -> None:
         raise ValueError('派生机体没有匹配的 NpcData：' + ','.join(map(str, missing)))
 
 
+
+def _validate_blocks(plan: dict) -> None:
+    objects = plan['tables'].get('tbl_MapObjects', [])
+    placements = plan['tables'].get('tbl_MapBlocks', [])
+    object_ids = set()
+    for row in objects:
+        identity = row['ObjectID']
+        if type(identity) is not int or not 1 <= identity <= 0x7fffffff or identity in object_ids:
+            raise ValueError('tbl_MapObjects.ObjectID 无效或重复')
+        object_ids.add(identity)
+        name = row['ObjectName']
+        if not isinstance(name, str) or not name or len(name) > 50 or '\0' in name:
+            raise ValueError('tbl_MapObjects.ObjectName 无效')
+        hp = row['HP']
+        if hp is not None and (type(hp) is not int or not 1 <= hp <= 0x7fffffff):
+            raise ValueError('tbl_MapObjects.HP 无效')
+        for field in ('CollisionDestroy', 'TeamKill'):
+            if type(row[field]) is not int or not 0 <= row[field] <= 255:
+                raise ValueError(f'tbl_MapObjects.{field} 无效')
+        for field in ('ExplosionTime', 'Damage', 'FragmentType'):
+            value = row[field]
+            if value is not None and (type(value) is not int or not -32768 <= value <= 32767):
+                raise ValueError(f'tbl_MapObjects.{field} 无效')
+        for field in ('ExplosionRadius', 'ExplosionRadiusPower'):
+            value = row[field]
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                                      or not math.isfinite(float(value))):
+                raise ValueError(f'tbl_MapObjects.{field} 无效')
+
+    by_map = {}
+    referenced = set()
+    for row in placements:
+        if type(row['MapID']) is not int or type(row['BlockID']) is not int or type(row['ObjectID']) is not int:
+            raise ValueError('tbl_MapBlocks 的编号字段无效')
+        if row['ObjectID'] not in object_ids:
+            raise ValueError(f"tbl_MapBlocks 引用了计划外的 ObjectID {row['ObjectID']}")
+        referenced.add(row['ObjectID'])
+        bounds = [row[name] for name in ('MinX', 'MinY', 'MinZ', 'MaxX', 'MaxY', 'MaxZ')]
+        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value))
+               for value in bounds):
+            raise ValueError('tbl_MapBlocks 含无效碰撞范围')
+        if not all(bounds[index] < bounds[index + 3] for index in range(3)):
+            raise ValueError('tbl_MapBlocks 的最小范围必须小于最大范围')
+        if any(type(row[name]) is not int or row[name] != 0 for name in ('Child_No_1', 'Child_No_2', 'Child_No_3')):
+            raise ValueError('导入的 tbl_MapBlocks 子物件编号必须为 0')
+        by_map.setdefault(row['MapID'], []).append(row['BlockID'])
+    if referenced != object_ids:
+        raise ValueError('tbl_MapObjects 含未被 tbl_MapBlocks 引用的定义')
+    map_rows = {row['MapID']: row for row in plan['tables'].get('tbl_MapData', [])}
+    for map_id, block_ids in by_map.items():
+        expected = list(range(block_protocol.FIRST_BLOCK_ID, block_protocol.FIRST_BLOCK_ID + len(block_ids)))
+        if sorted(block_ids) != expected:
+            raise ValueError(f'tbl_MapBlocks MapID {map_id} 的 BlockID 必须从 7001 连续编号')
+        if map_id not in map_rows or map_rows[map_id]['BlockCnt'] != len(block_ids):
+            raise ValueError(f'tbl_MapData MapID {map_id} 的 BlockCnt 与 tbl_MapBlocks 不一致')
+    for map_id, row in map_rows.items():
+        if row['BlockCnt'] != len(by_map.get(map_id, [])):
+            raise ValueError(f'tbl_MapData MapID {map_id} 的 BlockCnt 与命名物件数量不一致')
+
 def _validate_runtime_policy(plan: dict) -> list[int]:
     policy = plan.get('runtime_policy')
     if policy is None:
@@ -169,12 +230,15 @@ def load_plan(path) -> dict:
     if ((schema != PLAN_SCHEMA and schema not in LEGACY_PLAN_SCHEMAS)
             or not isinstance(plan.get('tables'), dict)):
         raise ValueError('不是地图导入服务端计划')
-    if schema in LEGACY_PLAN_SCHEMAS:
+    if schema == 'sdgo.map-import-server-plan/1':
         if plan.get('runtime_policy') not in (None, {}, {'immediate_transition_missions': []}):
             raise ValueError('旧版服务端计划不能声明 runtime_policy，请用当前协议重新编译')
         if any(table in plan['tables'] for table in ('tbl_WeaponsRev', 'tbl_UnitNpc')):
             raise ValueError('旧版服务端计划不能声明配对机体/武器表，请用当前协议重新编译')
         plan['runtime_policy'] = {'immediate_transition_missions': []}
+    if schema in LEGACY_PLAN_SCHEMAS and any(
+            table in plan['tables'] for table in ('tbl_MapObjects', 'tbl_MapBlocks')):
+        raise ValueError('旧版服务端计划不能声明命名物件表，请用当前协议重新编译')
     for table, rows in plan['tables'].items():
         if table not in COLUMNS:
             raise ValueError('服务端计划包含未支持的表：' + table)
@@ -189,6 +253,7 @@ def load_plan(path) -> dict:
                 raise ValueError(f'{table} 含重复键 {key}')
             seen.add(key)
     _validate_paired_catalog(plan)
+    _validate_blocks(plan)
     _validate_runtime_policy(plan)
     return plan
 

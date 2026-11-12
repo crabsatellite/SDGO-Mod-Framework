@@ -1,6 +1,6 @@
 {
  "schema": "sdgo.map-package",
- "schema_version": 1,
+ "schema_version": 2,
  "map_key": "sdgo-sample.twin-valley-fortress",
  "name": {
   "zh": "双谷要塞",
@@ -168,6 +168,40 @@
     }
    ],
    "model": "models/blast_gate.gltf"
+  },
+  {
+   "id": "odessa_gate_leaf",
+   "position": [
+    0.0,
+    -26.0,
+    2200.0
+   ],
+   "rotation_y": 0.0,
+   "scale": 11.0,
+   "collision": [
+    {
+     "center": [
+      0.0,
+      17.5,
+      0.0
+     ],
+     "half_extents": [
+      45.5,
+      17.5,
+      3.0
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "model": "models/odessa_gate_leaf.glb",
+   "block": {
+    "template": 80577,
+    "hp": 10000000,
+    "name": {
+     "zh": "基地闸门",
+     "en": "Fortress gate"
+    }
+   }
   },
   {
    "position": [
@@ -8714,7 +8748,7 @@
   "images/cat_title.png": "e977809842c5f9fae66dc3684843491f6d93d9db5d85ebf42fe9d325fac9601f",
   "images/minimap.png": "f4d8f890697769750ab5ff56d469b247e5ee93d2717e20acce34e661fe35f5de",
   "images/preview.png": "e44a51a86498f97d78f8fb4ac7586f241ef1a19497fe0ae3c5026015d2b32124",
-  "missions/odessa.json": "b2c0009d476a770c711196aa655465b3abf2b057375db271a9c8c072ec653d94",
+  "missions/odessa.json": "2a5478c2408ccef7d1ad1b52b34feed3ed6fd3708ffb748fc5e6eaed75dfb4d1",
   "models/barracks.gltf": "70493cba0fbb9a440ef2b92c1de8945e75da181ebb50833f5e474289788dcc95",
   "models/barrel_01.gltf": "ec7dbdb749d2b2a25ca1c672cefd3338b94fc1260bc64b0933bca92288c7afc6",
   "models/barrel_03.gltf": "d74b760fd7f93cbf08a15e2732c0863405a4295f094cfce62ec351ef60970b37",
@@ -8871,6 +8905,7 @@
   "terrain/rocky.jpg": "228308179a88ed0352a27a524bbff74c8262bb9cf872e53a827ec6d427cfde9e",
   "terrain/rocky_mask.png": "bbb7b768bc51b7bd5c6f3ad434d824894b131ed57e802a8bd68a289f42d05fb3",
   "terrain/scorch.jpg": "69ddd8dccfb46f5c3b7037cf619efe56206eac1d4eca13596410d1758158d322",
-  "terrain/scorch_mask.png": "432afd4d5ebe47de369c894f013d24d026febc1941614b68943d672933b576d6"
+  "terrain/scorch_mask.png": "432afd4d5ebe47de369c894f013d24d026febc1941614b68943d672933b576d6",
+  "models/odessa_gate_leaf.glb": "8e330c083816cfd68e187190808057073eff025b19e58a2dd5ca5dfa63d97588"
  }
 }

@@ -1,4 +1,4 @@
-"""Compile a neutral mission description (`sdgo.map-mission` v1/v2) into server mission rows, client mirror records
+"""Compile a neutral mission description (`sdgo.map-mission` v1/v2/v3) into server mission rows, client mirror records
 and a text Lua script for cutscenes and phase events.
 
 The mission runs on a map row of the map package (normally its ``mission`` variant). Server semantics follow
@@ -14,6 +14,7 @@ Mission JSON (all coordinates in the map's world frame, seconds for times)::
      "npcs": {key: {"template": id} | {"template": id, "ai": name, "hp": n, "boss": bool, "name": {...}}
                    | {"unit": unit_id, "base": template_id, "hp": n, "ai": name, "name": {...}}
                    (+ optional "label": overhead name, "attack" / "special_attack": weapon damage multipliers,
+                    "block_attack": {"block": named map block, "weapon": first|second|third|special},
                     "cutin": {"native_sprite": "sprs\\\\NNNN.spr" | "image": 1024x156 PNG,
                               "line": dialogue key})},
      "area": [left x, top z, right x, bottom z] (the map compiler paints every movable area's edge on the ground),
@@ -26,7 +27,9 @@ Mission JSON (all coordinates in the map's world frame, seconds for times)::
                  "spawns": [{"npc", "side": "enemy"|"ally", "positions": [[x,y,z]...], "at": s, "min_free": n}],
                  "goal": {"kill": [{"npc", "count"}...]} | {"survive": s},
                  "fail": [{"time_limit": s} | {"lose": {"npc", "count"}}],
-                 "enter": {"cutscene": key, "lines": [keys], "sector": key}, "reward": {"points", "unit_exp"}}],
+                 "enter": {"cutscene": key, "lines": [keys], "sector": key,
+                           "blocks": [{"block": id, "visible": bool}]},
+                 "reward": {"points", "unit_exp"}}],
      "opening": cutscene key, "ending": cutscene key,
      "cutscenes": {key: {"length": s, "actors": {name: {"npc": key, "at": [x,y,z], "facing": [dx,dz]}},
                          "camera": [{"t", "pos", "look"}...],
@@ -338,6 +341,29 @@ function SDGOMI.area(m, r)
   end
   SDGOMI.local_area(r)
 end
+function SDGOMI.block_missing(action, key, name)
+  local message = 'SDGOMI '..action..' missing block '..key..' ('..name..')'
+  SDGOMI.last_block_error = message
+  print(message)
+  return false
+end
+function SDGOMI.hide_block(key, name)
+  local id = GetBlockID(name)
+  if id == nil or id == 0 then return SDGOMI.block_missing('hide', key, name) end
+  SDGOMI.block_ids = SDGOMI.block_ids or {}
+  SDGOMI.block_ids[key] = id
+  HideObject(id)
+  return true
+end
+function SDGOMI.unhide_block(key, name)
+  local id = GetBlockID(name)
+  if (id == nil or id == 0) and SDGOMI.block_ids ~= nil then id = SDGOMI.block_ids[key] end
+  if id == nil or id == 0 then return SDGOMI.block_missing('unhide', key, name) end
+  SDGOMI.block_ids = SDGOMI.block_ids or {}
+  SDGOMI.block_ids[key] = id
+  UnHideObject(id)
+  return true
+end
 '''
 
 
@@ -476,7 +502,7 @@ def _validate_npcs(spec: dict, templates: Templates) -> dict:
             tpl = row['template']
             if tpl not in templates.npc_templates or tpl not in templates.npc_data:
                 _fail(f'npcs.{key}.template {tpl} 在目标客户端或服务端不存在')
-            derived = any(k in row for k in ('ai', 'hp', 'boss', 'name', 'label', 'attack', 'special_attack', 'cutin'))
+            derived = any(k in row for k in ('ai', 'hp', 'boss', 'name', 'label', 'attack', 'special_attack', 'cutin', 'block_attack'))
             npcs[key] = {'kind': 'derived' if derived else 'native', 'base': int(tpl), **row}
         else:
             _fail(f'npcs.{key} 需要 template 或 unit')
@@ -497,8 +523,15 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     """Compile `spec` (parsed mission JSON). `banner_effect(png, name)` returns overlay resources for a banner
     effect named `name` (a cloned text effect bound to the PNG) or None when banners are unsupported."""
     version = spec.get('schema_version')
-    if spec.get('schema') != SCHEMA or type(version) is not int or version not in (1, 2):
-        _fail(f'任务文件必须声明 schema={SCHEMA} 且 schema_version=1 或 2')
+    if spec.get('schema') != SCHEMA or type(version) is not int or version not in (1, 2, 3):
+        _fail(f'任务文件必须声明 schema={SCHEMA} 且 schema_version=1、2 或 3')
+    if version >= 3:
+        allowed = {'schema', 'schema_version', 'mission_key', 'name', 'description', 'briefing', 'difficulties',
+                   'bgm', 'npcs', 'area', 'presentation', 'lines', 'banners', 'sectors', 'phases', 'opening',
+                   'ending', 'cutscenes', 'transition_delay', 'drops'}
+        unknown = set(spec) - allowed
+        if unknown:
+            _fail('任务文件含未知字段：' + '、'.join(sorted(unknown)))
     if not 1 <= ids.group <= 255 or ids.clear_first + 1000 > CLEAR_ID_LIMIT or ids.game_mode_first > MODE5_ID_LIMIT:
         _fail('任务 ID 规划越界')
     if not LUA_NAME.fullmatch(ids.lua_prefix) or len(ids.lua_prefix) > 12:
@@ -519,6 +552,31 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     npcs = _validate_npcs(spec.get('npcs'), templates)
     if version < 2 and (transition_delay != 'native' or any(npc.get('cutin') is not None for npc in npcs.values())):
         _fail('机体图片横幅与立即阶段衔接需要 schema_version=2；旧编译器必须拒绝这些新语义')
+    block_names = {obj.object_id for obj in package.objects if obj.block is not None}
+    block_attacks = []
+    weapon_constants = {'first': 'UNIT_WEAPON_CHANGE_FIRST', 'second': 'UNIT_WEAPON_CHANGE_SECOND',
+                        'third': 'UNIT_WEAPON_CHANGE_THIRD', 'special': 'UNIT_WEAPON_CHANGE_SPECIAL'}
+    npc_allowed = {'template', 'unit', 'base', 'ai', 'hp', 'boss', 'name', 'label', 'attack',
+                   'special_attack', 'cutin', 'block_attack'}
+    for attack_index, (key, npc) in enumerate(npcs.items()):
+        if version >= 3 and set(npc) - npc_allowed - {'kind'}:
+            _fail(f'npcs.{key} 含未知字段：' + '、'.join(sorted(set(npc) - npc_allowed - {'kind'})))
+        attack = npc.get('block_attack')
+        if attack is None:
+            continue
+        if version < 3:
+            _fail('NPC 原生物件攻击需要 schema_version=3；旧编译器必须拒绝这些新语义')
+        if npc.get('ai') is not None:
+            _fail(f'npcs.{key} 不能同时声明 ai 与 block_attack')
+        if not isinstance(attack, dict) or set(attack) != {'block', 'weapon'}:
+            _fail(f'npcs.{key}.block_attack 需要 block 与 weapon')
+        if attack.get('block') not in block_names:
+            _fail(f'npcs.{key}.block_attack.block 未引用地图中的命名 block')
+        if attack.get('weapon') not in weapon_constants:
+            _fail(f'npcs.{key}.block_attack.weapon 只能是 first、second、third 或 special')
+        block_attacks.append((key, f'{ids.lua_prefix}_B{attack_index}', attack['block'],
+                              weapon_constants[attack['weapon']]))
+    block_ai_names = {key: ai for key, ai, _block, _weapon in block_attacks}
     lines = spec.get('lines') or {}
     banners = spec.get('banners') or {}
     sectors = spec.get('sectors') or {}
@@ -527,11 +585,39 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     if not isinstance(phases, list) or not 1 <= len(phases) <= MAX_PHASES:
         _fail(f'phases 需要 1..{MAX_PHASES} 个阶段')
     phase_order = {}
+    phase_block_actions = {}
     for i, phase in enumerate(phases):
         key = phase.get('key') if isinstance(phase, dict) else None
         if not isinstance(key, str) or not re.fullmatch(r'[a-z0-9_]{1,31}', key) or key in phase_order:
             _fail(f'phases[{i}].key 无效或重复')
         phase_order[key] = i + 1
+        enter = phase.get('enter') or {}
+        if not isinstance(enter, dict):
+            _fail(f'phases[{i}].enter 必须是对象')
+        if version >= 3 and set(enter) - {'cutscene', 'lines', 'sector', 'area', 'blocks'}:
+            _fail(f'phases[{i}].enter 含未知字段：' + '、'.join(sorted(set(enter) - {'cutscene', 'lines', 'sector', 'area', 'blocks'})))
+        actions = enter.get('blocks')
+        if actions is not None and version < 3:
+            _fail('阶段命名物件控制需要 schema_version=3；旧编译器必须拒绝这些新语义')
+        if actions is None:
+            phase_block_actions[i] = []
+        else:
+            if not isinstance(actions, list) or not 1 <= len(actions) <= 64:
+                _fail(f'phases[{i}].enter.blocks 需要 1..64 个控制项')
+            seen_blocks = set()
+            checked = []
+            for n, action in enumerate(actions):
+                if not isinstance(action, dict) or set(action) != {'block', 'visible'}:
+                    _fail(f'phases[{i}].enter.blocks[{n}] 需要 block 与 visible')
+                name = action.get('block')
+                if name not in block_names or name in seen_blocks or not isinstance(action.get('visible'), bool):
+                    _fail(f'phases[{i}].enter.blocks[{n}] 的 block/visible 无效或重复')
+                seen_blocks.add(name)
+                checked.append((name, action['visible']))
+            phase_block_actions[i] = checked
+
+    if version < 3 and any(obj.initially_hidden for obj in package.objects):
+        _fail('命名物件初始可见性需要 schema_version=3；旧编译器必须拒绝这些新语义')
 
     # -- NPC ids: native templates keep their id; derived/unit NPCs get new NpcData + template rows
     npc_ids: dict[str, int] = {}
@@ -553,6 +639,10 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         boss = 1 if npc.get('boss', bool(base_data['BossFlag'])) else 0
         row = bytearray(base_row)
         _u32(row, 0, ident)
+        # Template combat data is reusable; its original mission's optional
+        # dialogue and illustration references are not part of this import.
+        # Explicit cutins below install only this mission's declared speech.
+        row[390:598] = bytes(208)
         if npc.get('name'):
             _w(row, 5, 100, _zh(npc['name'], f'npcs.{key}.name', 49), f'npcs.{key}.name')
         client_unit = unit
@@ -610,8 +700,9 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                 server_unit = client_unit
             build.rows.append((UNIT_KIND, client_unit, bytes(copy)))
         _u32(row, 105, client_unit)
-        if npc.get('ai'):
-            _w(row, 109, 100, npc['ai'], f'npcs.{key}.ai')
+        ai_name = block_ai_names.get(key) or npc.get('ai')
+        if ai_name:
+            _w(row, 109, 100, ai_name, f'npcs.{key}.ai')
         _u32(row, 229, hp)
         row[259] = boss
         build.rows.append((NPC_TEMPLATE_KIND, ident, bytes(row)))
@@ -740,23 +831,68 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
 
     # -- cutscenes -> Lua tables
     lua_parts = [RUNTIME_LUA]
+    for _key, ai_name, block_name, weapon in block_attacks:
+        target = _lua_string(block_name)
+        lua_parts.append(
+            'function %s_LuaInit(npc)\n'
+            '  local target = GetBlockID(%s)\n'
+            '  if target ~= nil and target ~= 0 and CheckObejctAlive(target) then\n'
+            '    npc:SetAttackTarget(target)\n'
+            '    npc:ChangeWeapon(%s)\n'
+            '    npc:SetAttackOnOff(true)\n'
+            '  else npc:SetAttackOnOff(false) end\n'
+            '  return 123\nend\n'
+            'function %s_Update(npc)\n'
+            '  local target = GetBlockID(%s)\n'
+            '  if target ~= nil and target ~= 0 and CheckObejctAlive(target) then\n'
+            '    npc:SetAttackTarget(target)\n'
+            '    npc:ChangeWeapon(%s)\n'
+            '    npc:SetAttackOnOff(true)\n'
+            '  else npc:SetAttackOnOff(false); npc:SetAttackTarget(0) end\n'
+            '  return 123\nend\n' % (ai_name, target, weapon, ai_name, target, weapon))
+    initial_hidden_blocks = sorted(obj.object_id for obj in package.objects if obj.block is not None and obj.initially_hidden)
+    if initial_hidden_blocks and not spec.get('opening'):
+        _fail('initially_hidden 命名物件需要 opening 过场来应用初始状态')
+
+    def cutscene_occluder_sets(name: str) -> list[list]:
+        if occluders is None:
+            return []
+        from .occlusion import ObjectOccluders
+        if not isinstance(occluders, ObjectOccluders):
+            return [occluders]
+        hidden_states = []
+        if name == spec.get('opening'):
+            hidden_states.append(frozenset(initial_hidden_blocks))
+        for phase_index, phase in enumerate(phases):
+            enter = phase.get('enter') or {}
+            if enter.get('cutscene') == name:
+                hidden_states.append(frozenset(block for block, visible in phase_block_actions[phase_index]
+                                                if not visible))
+        if not hidden_states:
+            hidden_states.append(frozenset())
+        unique = list(dict.fromkeys(hidden_states))
+        return [occluders.active(hidden) for hidden in unique]
+
+    all_occluders = occluders.active() if hasattr(occluders, 'active') else occluders
     cutscene_names: dict[str, tuple[str, float]] = {}
     for n, (key, cut) in enumerate(sorted(cutscenes.items())):
         fn = f'{ids.lua_prefix}_C{n}'
         length = float(cut.get('length', 0))
         if not 1.0 <= length <= 60.0:
             _fail(f'cutscenes.{key}.length 需要 1..60 秒')
+        active_occluder_sets = cutscene_occluder_sets(key)
         actors = {}
         actor_pos = {}
         for actor, a in (cut.get('actors') or {}).items():
             if not re.fullmatch(r'[a-z][a-z0-9_]{0,15}', actor) or a.get('npc') not in npc_ids:
                 _fail(f'cutscenes.{key}.actors.{actor} 无效')
             fx, fz = _vec(a.get('facing', [0, 1]), f'cutscenes.{key}.actors.{actor}.facing', 2)
-            if occluders is not None:
+            actor_at = _vec(a.get('at'), 'actor.at')
+            if active_occluder_sets:
                 from .occlusion import blocked
-                if blocked(occluders, _vec(a.get('at'), 'actor.at')):
+                if any(blocked(boxes, actor_at) for boxes in active_occluder_sets):
                     _fail(f'cutscenes.{key}.actors.{actor} 位于物件内部')
-            actor_pos[actor] = _vec(a.get('at'), 'actor.at')
+            actor_pos[actor] = actor_at
             # hold: keep the actor at `at` every frame (units fall to the ground after CreateNpc; a hovering
             # ship such as a mothership would otherwise drop and sink its hull into the terrain)
             hold = a.get('hold', False)
@@ -775,12 +911,13 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         if not keys or keys[0][0] != 0.0 or any(b[0] <= a[0] for a, b in zip(keys, keys[1:])):
             _fail(f'cutscenes.{key}.camera 需要从 t=0 开始、时间递增的关键帧')
         samples = _catmull(keys, 0.25)
-        if occluders is not None:
+        if active_occluder_sets:
             from .occlusion import shot_problem
-            for t, pos, look in samples:
-                problem = shot_problem(lambda p: package_ground(package, p), occluders, pos, look)
-                if problem:
-                    _fail(f'cutscenes.{key} 在 t={t:.2f}s：{problem}（镜头 {_v3(pos)}，看向 {_v3(look)}）')
+            for boxes in active_occluder_sets:
+                for t, pos, look in samples:
+                    problem = shot_problem(lambda p: package_ground(package, p), boxes, pos, look)
+                    if problem:
+                        _fail(f'cutscenes.{key} 在 t={t:.2f}s：{problem}（镜头 {_v3(pos)}，看向 {_v3(look)}）')
         events = []
         # the camera follows a dense path set every frame (as the shipped cutscenes do with SetCameraPos):
         # chained timed moves restart from the last set position and make the shot jump back
@@ -812,12 +949,13 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                 # a target on the ground pulls the unit's body down to it: keep it a unit's height above, like spawns
                 if target[1] < package_ground(package, target) + MOVE_TARGET_LIFT:
                     _fail(f'cutscenes.{key} 在 t={t:.2f}s：演员 {e["actor"]} 的移动目标离地不足 {MOVE_TARGET_LIFT:.0f}')
-                if occluders is not None:
+                if active_occluder_sets:
                     from .occlusion import blocked
                     start = actor_pos[e['actor']]
                     for i in range(1, 25):
                         q = tuple(start[k] + (target[k] - start[k]) * i / 24 for k in range(3))
-                        if blocked(occluders, q) or blocked(occluders, (q[0], q[1] + 120, q[2])):
+                        if any(blocked(boxes, q) or blocked(boxes, (q[0], q[1] + 120, q[2]))
+                               for boxes in active_occluder_sets):
                             _fail(f'cutscenes.{key} 在 t={t:.2f}s：演员 {e["actor"]} 的移动路径穿过物件')
                 actor_pos[e['actor']] = target
                 events.append((t, "actor='%s',move=%s" % (e['actor'], _v3(target))))
@@ -836,11 +974,12 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                 right = (d[2], 0.0, -d[0])
                 norm = math.hypot(right[0], right[2]) or 1.0
                 at = e.get('at') or [pos[k] + d[k] * distance + right[k] / norm * BANNER_CENTERING for k in range(3)]
-                if occluders is not None:
+                if active_occluder_sets:
                     from .occlusion import shot_problem
-                    problem = shot_problem(lambda p: package_ground(package, p), occluders, pos, at)
-                    if problem:
-                        _fail(f'cutscenes.{key} 横幅 {e["banner"]} 在 t={t:.2f}s 不可见：{problem}')
+                    for boxes in active_occluder_sets:
+                        problem = shot_problem(lambda p: package_ground(package, p), boxes, pos, at)
+                        if problem:
+                            _fail(f'cutscenes.{key} 横幅 {e["banner"]} 在 t={t:.2f}s 不可见：{problem}')
                 facing = [-x for x in d]
                 events.append((t, 'fx=%s,at=%s,scale=%s,dir=%s,up=vector3(0,1,0)' % (
                     _lua_string(banner_fx[e['banner']]), _v3(at), _v3((1.0, 1.0, 1.0)), _v3(facing))))
@@ -872,9 +1011,18 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             fn, _lua_string(fn), int(round(length * FPS)), len(events), 1 if hide else 0, area, _v3(p0), _v3(l0),
             path_lua, ','.join(actors.values()),
             ',\n  '.join('{f=%d,%s}' % (max(1, int(round(t * FPS))), body) for t, body in events)))
-        lua_parts.append('function %s_LuaInit(m) return SDGOMI.init(m, %s) end\n'
-                         'function %s_Update(m) return SDGOMI.update(m, %s) end\n'
-                         'function %s_Skip(m) return SDGOMI.skip(m, %s) end\n' % (fn, fn, fn, fn, fn, fn))
+        init_commands = []
+        if key == spec.get('opening'):
+            init_commands = ["  SDGOMI.hide_block(%s, %s)" %
+                             (_lua_string(f'{ids.lua_prefix}:{name}'), _lua_string(name))
+                             for name in initial_hidden_blocks]
+        if init_commands:
+            lua_parts.append('function %s_LuaInit(m)\n%s\n  return SDGOMI.init(m, %s)\nend\n' %
+                             (fn, '\n'.join(init_commands), fn))
+        else:
+            lua_parts.append('function %s_LuaInit(m) return SDGOMI.init(m, %s) end\n' % (fn, fn))
+        lua_parts.append('function %s_Update(m) return SDGOMI.update(m, %s) end\n'
+                         'function %s_Skip(m) return SDGOMI.skip(m, %s) end\n' % (fn, fn, fn, fn))
         cutscene_names[key] = (fn, length)
 
     # -- sector warps + phase-entry events
@@ -883,7 +1031,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         points = [_vec(p, f'sectors.{key}.warp') for p in sector.get('warp') or []]
         if occluders is not None:
             from .occlusion import blocked
-            if any(blocked(occluders, p) for p in points):
+            if any(blocked(all_occluders, p) for p in points):
                 _fail(f'sectors.{key}.warp 有传送点位于物件内部')
         if not 1 <= len(points) <= 8:
             _fail(f'sectors.{key}.warp 需要 1..8 个点')
@@ -895,6 +1043,10 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
 
     def event_function(phase_index: int, enter: dict) -> str:
         body = []
+        for name, visible in phase_block_actions[phase_index]:
+            method = 'unhide_block' if visible else 'hide_block'
+            body.append('  SDGOMI.%s(%s, %s)' %
+                        (method, _lua_string(f'{ids.lua_prefix}:{name}'), _lua_string(name)))
         for line in enter.get('lines') or []:
             if line not in speech_ids:
                 _fail(f'phases[{phase_index}].enter.lines 引用未定义的台词 {line}')
@@ -1012,7 +1164,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             # cutscene ends. Spawn times are therefore relative to active play; adding the scene length here
             # would make every authored delay run twice.
             event_fn = event_function(p_index, enter) if d_index == 0 else f'{ids.lua_prefix}_E{p_index}' \
-                if any((enter.get('lines'), enter.get('sector'), enter.get('area') is not None)) else ''
+                if any((enter.get('lines'), enter.get('sector'), enter.get('area') is not None,
+                        phase_block_actions[p_index])) else ''
             reward = phase.get('reward') or {}
             objective_text = _zh(phase.get('objective'), f'phases[{p_index}].objective', 49)
 
@@ -1114,7 +1267,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                     pos = _vec(position, f'phases[{p_index}].spawns[{s_index}].positions[{k}]')
                     if occluders is not None:
                         from .occlusion import blocked
-                        if blocked(occluders, pos):
+                        if blocked(all_occluders, pos):
                             _fail(f'phases[{p_index}].spawns[{s_index}].positions[{k}] 位于物件内部')
                     ground = package_ground(package, pos)
                     if pos[1] < ground + 20:
@@ -1185,6 +1338,9 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                     'phases': len(phases), 'clear_rows': clear_id - ids.clear_first,
                     'spawn_rows': spawn_id - ids.spawn_first, 'npc_rows': next_npc - ids.npc_first,
                     'speech_rows': len(speech_ids), 'cutscenes': {k: v[0] for k, v in cutscene_names.items()},
+                    'block_attacks': [{'npc': key, 'ai': ai, 'block': block, 'weapon': weapon}
+                                      for key, ai, block, weapon in block_attacks],
+                    'block_controls': sum(len(actions) for actions in phase_block_actions.values()),
                     'lua_bytes': len(build.lua), 'records': len(build.rows)}
     return build
 

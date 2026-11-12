@@ -1,6 +1,6 @@
 {
  "schema": "sdgo.map-mission",
- "schema_version": 2,
+ "schema_version": 3,
  "mission_key": "sdgo-sample.twin-valley-fortress.odessa",
  "name": {
   "zh": "奥德萨作战",
@@ -64,7 +64,11 @@
     "zh": "钢坦克（隼人）",
     "en": "Guntank"
    },
-   "hp": 12000
+   "hp": 12000,
+   "block_attack": {
+    "block": "odessa_gate_leaf",
+    "weapon": "second"
+   }
   },
   "gm_ally": {
    "template": 85500,
@@ -919,7 +923,13 @@
    },
    "enter": {
     "cutscene": "tristars",
-    "lines": []
+    "lines": [],
+    "blocks": [
+     {
+      "block": "odessa_gate_leaf",
+      "visible": false
+     }
+    ]
    },
    "spawns": [
     {
