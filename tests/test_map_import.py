@@ -200,10 +200,14 @@ class CompileTests(unittest.TestCase):
             self.assertRegex(lua, r"SDGOM1_C\d+ = \{id='SDGOM1_C\d+', frames=\d+, n=\d+, hide=1, area=\{-2000,1500,2000,-1500\}")
             self.assertIn('if c.area ~= nil then SDGOMI.area(m, c.area) end', lua)
             self.assertIn('function SDGOM1_E1(m)\n  SDGOMI.area(m, {-1000,2000,1000,500})', lua)
-            self.assertIn('unit:SetTerrainRect(r[1], r[2], r[3], r[4])', lua)
+            self.assertNotIn('GetPlayer(i)', lua)
             # the client's own player is reached through the document, as native single-player scripts do
-            self.assertIn('local me = CastingUnit(p)', lua)
+            self.assertIn('return CastingUnit(p)', lua)
             self.assertIn('me:SetTerrainRect(r[1], r[2], r[3], r[4]); me:SetTerrainRectOnOff(true)', lua)
+            self.assertIn('local k = SDGO_MapCatalogLocalHumanSlot()', lua)
+            self.assertIn('PlayerWarp(me:GetID(), p, w.dir)', lua)
+            self.assertNotIn('PlayerWarp(i - 1', lua)
+            self.assertNotIn('local n = GetNumPlayer()', lua)
             self.assertIn('if w.rect ~= nil then SDGOMI.local_area(w.rect) end', lua)
             for bad in ([2000, 1500, -2000, -1500], [-2000, -1500, 2000, 1500], [-5000, 1500, 2000, -1500]):
                 spec['area'] = bad
@@ -213,6 +217,56 @@ class CompileTests(unittest.TestCase):
             spec.pop('opening')
             with self.assertRaisesRegex(M.MissionError, 'opening'):
                 compile_lua()
+
+    def test_v4_boundary_warning_damage_and_clear_compile_to_canonical_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = mission_spec()
+            spec['schema_version'] = 4
+            spec['area'] = [-2000, 1500, 2000, -1500]
+            spec['boundary_warning'] = 'l1'
+            spec['boundary_damage'] = {'phases': ['one'], 'edge': 'top', 'permille': 50, 'cooldown': 2}
+            spec['phases'][1]['enter'].update({'area': False, 'boundary_warning': False})
+            spec['difficulties'].append({'level': 3, 'required_rank': 5, 'time_limit': 480, 'lives': 2})
+            pkg = P.load(write_package(Path(tmp), mission=spec))
+            mission_templates = templates()
+            mission_templates.routes[3] = mission_templates.routes[1]
+            build = M.compile_mission(pkg, spec, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                      templates=mission_templates)
+            self.assertEqual(build.report['boundaries'], [
+                {'mission_id': 88072, 'phase': 1, 'flags': 7, 'warning_speech_id': 3229324,
+                 'rect': [-2000.0, 1500.0, 2000.0, -1500.0], 'damage_edge_mask': 2,
+                 'damage_permille': 50, 'damage_cooldown_ms': 2000},
+                {'mission_id': 88072, 'phase': 2, 'flags': 0, 'warning_speech_id': 0,
+                 'rect': [0.0, 0.0, 0.0, 0.0], 'damage_edge_mask': 0,
+                 'damage_permille': 0, 'damage_cooldown_ms': 0},
+                {'mission_id': 88073, 'phase': 1, 'flags': 7, 'warning_speech_id': 3229324,
+                 'rect': [-2000.0, 1500.0, 2000.0, -1500.0], 'damage_edge_mask': 2,
+                 'damage_permille': 50, 'damage_cooldown_ms': 2000},
+                {'mission_id': 88073, 'phase': 2, 'flags': 0, 'warning_speech_id': 0,
+                 'rect': [0.0, 0.0, 0.0, 0.0], 'damage_edge_mask': 0,
+                 'damage_permille': 0, 'damage_cooldown_ms': 0},
+            ])
+            lua = build.lua.decode('utf-8') if isinstance(build.lua, bytes) else build.lua
+            self.assertIn('function SDGOMI_BW_88072_1(m)\n  PutOperatorSpeech(3229324)', lua)
+            self.assertIn('function SDGOMI_BW_88073_1(m)\n  PutOperatorSpeech(3229324)', lua)
+            self.assertNotIn('SDGOMI_BW_88072_2', lua)
+            self.assertIn('SDGOMI.area(m, nil)', lua)
+
+            invalid = json.loads(json.dumps(spec))
+            invalid['schema_version'] = 3
+            with self.assertRaisesRegex(M.MissionError, 'schema_version=4'):
+                M.compile_mission(pkg, invalid, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                  templates=mission_templates)
+            invalid = json.loads(json.dumps(spec))
+            invalid['boundary_warning'] = 'missing'
+            with self.assertRaisesRegex(M.MissionError, 'lines'):
+                M.compile_mission(pkg, invalid, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                  templates=mission_templates)
+            invalid = json.loads(json.dumps(spec))
+            invalid['boundary_damage']['phases'] = ['two']
+            with self.assertRaisesRegex(M.MissionError, '没有活动范围'):
+                M.compile_mission(pkg, invalid, map_no=144, terrain_path='Trns\\m143x.trn', ids=ids(),
+                                  templates=mission_templates)
 
     def test_jpeg_layer_and_model_textures_compile(self):
         def jpeg(colour):
@@ -745,6 +799,97 @@ class CheckTests(unittest.TestCase):
 
 
 class InstallTests(unittest.TestCase):
+    @staticmethod
+    def boundary_client_package(*, programme_version=None, corrupt_boundary=False):
+        boundary = deployment.boundary_format.encode([{
+            'mission_id': 88072, 'phase': 1, 'flags': 7, 'warning_speech_id': 3229324,
+            'rect': [-1000.0, 2000.0, 1000.0, 500.0], 'damage_edge_mask': 2,
+            'damage_permille': 50, 'damage_cooldown_ms': 2000,
+        }])
+        if corrupt_boundary:
+            boundary = boundary[:-1] + bytes([boundary[-1] ^ 1])
+        prefix = 'client/sdgo/mods/map_catalog/'
+        files = {
+            prefix + 'catalog.bin': b'new-catalog',
+            prefix + 'definitions.json': b'{}',
+            prefix + 'resource-overlay.ini': b'[runtime]\n',
+            prefix + 'resources.zdx': b'zdx',
+            prefix + 'resources.zpk': b'zpk',
+            prefix + 'boundaries.bin': boundary,
+        }
+        if programme_version is not None:
+            files[prefix + 'mod.ini'] = (
+                '[mod]\nid=map_catalog\nversion=' + programme_version + '\n'
+            ).encode('ascii')
+        manifest = {
+            'module': 'map_catalog', 'schema_version': 1, 'revision': 'boundary-test', 'maps': [],
+            'files': {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()},
+        }
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
+            for name, raw in files.items():
+                archive.writestr(name, raw)
+            archive.writestr('manifest.json', json.dumps(manifest).encode('utf-8'))
+        return output.getvalue()
+
+    @staticmethod
+    def client(root: Path, version: str):
+        (root / 'sdgo/mods/map_catalog').mkdir(parents=True)
+        (root / 'GOnline.exe').write_bytes(b'MZ')
+        (root / 'sdgo/mods/map_catalog/mod.ini').write_text(
+            f'[mod]\nid=map_catalog\nversion={version}\n', encoding='utf-8')
+        return root
+
+    def test_boundary_package_requires_compatible_installed_programme_before_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = self.client(Path(tmp) / 'client', '0.5.9')
+            mod = client / 'sdgo/mods/map_catalog'
+            (mod / 'catalog.bin').write_bytes(b'accepted-catalog')
+            (mod / 'missions.lua').write_bytes(b'accepted-mission')
+            receipt = {'files': {'sdgo/mods/map_catalog/missions.lua': 'old'}}
+            (mod / 'install-receipt.json').write_text(json.dumps(receipt), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, r'0\.6\.0.*未写入任何文件'):
+                deployment.install_package(client, self.boundary_client_package())
+            self.assertEqual((mod / 'catalog.bin').read_bytes(), b'accepted-catalog')
+            self.assertEqual((mod / 'missions.lua').read_bytes(), b'accepted-mission')
+            self.assertEqual(json.loads((mod / 'install-receipt.json').read_text(encoding='utf-8')), receipt)
+            self.assertFalse((mod / 'boundaries.bin').exists())
+            self.assertFalse(any(mod.glob('*.sdgo-new')))
+
+    def test_boundary_package_accepts_compatible_installed_programme(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = self.client(Path(tmp) / 'client', '0.6.0')
+            result = deployment.install_package(client, self.boundary_client_package())
+            mod = client / 'sdgo/mods/map_catalog'
+            self.assertEqual((mod / 'catalog.bin').read_bytes(), b'new-catalog')
+            self.assertEqual(deployment.boundary_format.decode((mod / 'boundaries.bin').read_bytes())[0]['phase'], 1)
+            self.assertEqual(result['written'], 6)
+
+    def test_boundary_checksum_is_validated_before_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = self.client(Path(tmp) / 'client', '0.6.0')
+            mod = client / 'sdgo/mods/map_catalog'
+            (mod / 'catalog.bin').write_bytes(b'accepted-catalog')
+            with self.assertRaisesRegex(ValueError, 'checksum'):
+                deployment.install_package(client, self.boundary_client_package(corrupt_boundary=True))
+            self.assertEqual((mod / 'catalog.bin').read_bytes(), b'accepted-catalog')
+            self.assertFalse((mod / 'boundaries.bin').exists())
+            self.assertFalse(any(mod.glob('*.sdgo-new')))
+
+    def test_pending_programme_manifest_takes_precedence_for_boundary_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            installed_new = self.client(tmp / 'installed-new', '0.6.0')
+            with self.assertRaisesRegex(ValueError, r'0\.6\.0.*未写入任何文件'):
+                deployment.install_package(installed_new, self.boundary_client_package(programme_version='0.5.9'))
+            self.assertEqual((installed_new / 'sdgo/mods/map_catalog/mod.ini').read_text(encoding='utf-8'),
+                             '[mod]\nid=map_catalog\nversion=0.6.0\n')
+            installed_old = self.client(tmp / 'installed-old', '0.5.9')
+            deployment.install_package(installed_old, self.boundary_client_package(programme_version='0.6.0'))
+            self.assertIn('version=0.6.0',
+                          (installed_old / 'sdgo/mods/map_catalog/mod.ini').read_text(encoding='utf-8'))
+            self.assertTrue((installed_old / 'sdgo/mods/map_catalog/boundaries.bin').is_file())
+
     def test_install_writes_content_and_removes_stale_mission_script(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)

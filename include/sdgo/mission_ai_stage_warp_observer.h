@@ -39,7 +39,7 @@ struct SdgoMissionAiStageWarpSnapshotV1 {
     uint32_t mode_object;
     uint32_t room_mode;
     uint32_t warp_count;
-    uint32_t last_player_index; // mission Lua index, one based
+    uint32_t last_player_index; // room human-record position, one based
     uint32_t last_player_slot;  // native unit-manager slot, zero based
     uint32_t last_warp_tick;
     uint32_t human_object_id;

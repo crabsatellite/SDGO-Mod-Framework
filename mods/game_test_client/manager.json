@@ -744,6 +744,17 @@
       "section": "settings",
       "audience": "developer",
       "activation": "restart_required"
+    },
+    {
+      "id": "boundary_contact_review",
+      "key": "BoundaryContactReview",
+      "label": "导入任务双客户端边界原生输入验收",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
     }
   ],
   "presentation": "configurable",

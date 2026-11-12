@@ -43,6 +43,9 @@ function CheckObejctAlive(id) local o = W.objects[id] return o ~= nil and o.aliv
 function SDGO_Now() return W.now end
 function SDGO_Wingmen() return unpack(W.wingmen) end
 function SDGO_LocalWingmen() return unpack(W.localWingmen or W.wingmen) end
+function SDGO_MissionAI_HumanRecordSlot(runtimeId)
+  return W.humanSlots and W.humanSlots[runtimeId] or nil
+end
 function SDGO_MissionAI_ObserveStageWarp(player)
   W.stageWarpObservations=(W.stageWarpObservations or 0)+1
   W.lastStageWarpPlayer=player
@@ -85,7 +88,7 @@ function SearchLockOnlyPlayer(id)
 end
 
 local function NewWorld(wingmen)
-  W = { now = 1000, player = 1, wingmen = wingmen, objects = {
+  W = { now = 1000, player = 1, wingmen = wingmen, humanSlots = { [401] = 1, [902] = 2 }, objects = {
     [1] = { pos = vector3(0, 0, 0), alive = true, hp = 9000, target = 0 },
     [20] = { pos = vector3(2000, 0, 0), alive = true, hp = 3000, target = 0, enemy = true },
   } }
@@ -205,7 +208,7 @@ W.objects[1001].target=20
 SDGO_MissionAI_Tick(mode,W.now,11)
 local p=vector3(5000,300,-2000)
 local d=vector3(0,0,-1)
-Check(PlayerWarp(1,p,d)==97,'native PlayerWarp result is preserved')
+Check(PlayerWarp(401,p,d)==97,'native PlayerWarp receives and preserves the actual runtime id')
 Check(W.objects[1001].pos==p and W.objects[1001].direction==d,
   'wingman uses the exact rule-script destination and direction')
 Check(W.objects[1001].target==0 and W.objects[1001].attack==false and
@@ -223,7 +226,7 @@ NewWorld({1001,1002,1003})
 W.humans=2
 SDGO_MissionAI_Tick(mode,W.now,12)
 local p2=vector3(5200,300,-2000)
-PlayerWarp(1,p,d);PlayerWarp(2,p2,d)
+PlayerWarp(401,p,d);PlayerWarp(902,p2,d)
 Check(W.objects[1001].pos==p and W.objects[1002].pos==p2 and W.objects[1003].pos==p,
   'wingmen follow assigned human slots without changing GetNumPlayer')
 Check(W.objects[1001].warps==1 and W.objects[1002].warps==1 and W.objects[1003].warps==1,

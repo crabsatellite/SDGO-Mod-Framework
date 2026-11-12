@@ -199,14 +199,15 @@
       "guide_en": "docs/map-import.md"
     },
     {
-      "id": "map-native-shield",
-      "path": "docs/map-native-shield-demo.webp",
-      "since": "1.16.33",
+      "id": "map-native-boundary",
+      "path": "docs/map-native-boundary-demo.webp",
+      "since": "1.16.35",
       "mods": [
-        "map_catalog"
+        "map_catalog",
+        "map_catalog_server"
       ],
-      "title_zh": "原生屏障：关闭与开放画面对照",
-      "title_en": "Native shield: closed/open comparison",
+      "title_zh": "原生触边反馈：短暂网格、光圈与同步HP",
+      "title_en": "Native boundary contact: brief grid, ring and synchronized HP",
       "guide_zh": "docs/map-import.zh-CN.md",
       "guide_en": "docs/map-import.md"
     }

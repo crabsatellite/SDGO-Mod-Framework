@@ -2,23 +2,31 @@
   "schema_version": 1,
   "distribution": "public",
   "id": "map_catalog_server",
-  "title": "导入任务节奏（服务端）",
-  "description": "仅对服主内容包声明的导入任务取消普通阶段之间的固定等待。原版任务、任务结算和过场动画 SceneTime 保持原生流程。公开包不预置任何任务编号。",
-  "mechanism": "在服务端已发出原生阶段成功与清场事件、写入原生下一阶段状态时，只把受校验任务名单的固定 now+2 截止时间改为已到期；最终阶段与 EventNext 仍由原生代码判断。",
-  "hosts": ["battle"],
+  "title": "导入任务运行策略（服务端）",
+  "description": "仅对内容包声明的导入任务调整阶段衔接和边界接触反馈。接触扣血由服务端确认，保持至少1点HP，不消耗生命或生成击破奖励；公开包默认没有任何任务编号或伤害规则。",
+  "mechanism": "阶段衔接保留原生结算；边界反馈使用配对的固定长度协议扩展，校验当前任务、阶段、真实参与者、主控NPC和冷却后同步非致命HP。普通坠落、死亡和原版任务保留原生流程。",
+  "hosts": [
+    "battle"
+  ],
   "category": "gameplay",
   "provider": "maps",
   "presentation": "configurable",
-  "settings": [{
-    "id": "immediate_transition_mission_ids",
-    "key": "ImmediateTransitionMissionIds",
-    "label": "导入任务 MissionID（由内容包维护）",
-    "type": "integer_list",
-    "default": "",
-    "max_length": 2046,
-    "file": "config.ini",
-    "section": "settings",
-    "audience": "developer",
-    "activation": "restart_required"
-  }]
+  "settings": [
+    {
+      "id": "immediate_transition_mission_ids",
+      "key": "ImmediateTransitionMissionIds",
+      "label": "导入任务 MissionID（由内容包维护）",
+      "type": "integer_list",
+      "default": "",
+      "max_length": 2046,
+      "file": "config.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    }
+  ],
+  "configuration_files": [
+    "config.ini",
+    "boundaries.bin"
+  ]
 }

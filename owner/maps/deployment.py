@@ -6,6 +6,7 @@ replaced atomically. No script from the package is executed.
 """
 from __future__ import annotations
 
+import configparser
 import hashlib
 import io
 import json
@@ -13,12 +14,30 @@ import re
 import zipfile
 from pathlib import Path
 
+from . import boundary_format
+
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 MAX_FILE_BYTES = 128 * 1024 * 1024
-MOD_FILES = {'catalog.bin', 'definitions.json', 'resource-overlay.ini', 'resources.zdx', 'resources.zpk', 'missions.lua',
+MOD_FILES = {'catalog.bin', 'definitions.json', 'resource-overlay.ini', 'resources.zdx', 'resources.zpk', 'missions.lua', 'boundaries.bin',
              'map_catalog.dll', 'mod.ini', 'manager.json', 'symbols.fragment.ini'}
 PROGRAM_FILES = {'map_catalog.dll', 'mod.ini', 'manager.json', 'symbols.fragment.ini'}
 REQUIRED = {'catalog.bin', 'definitions.json', 'resource-overlay.ini', 'resources.zdx', 'resources.zpk'}
+BOUNDARY_PROGRAMME_VERSION = (0, 6, 0)
+
+
+def _programme_version(raw: bytes) -> tuple[int, int, int]:
+    try:
+        parser = configparser.ConfigParser(interpolation=None, strict=True)
+        parser.read_string(raw.decode('utf-8-sig'))
+        if parser.get('mod', 'id') != 'map_catalog':
+            raise ValueError
+        value = parser.get('mod', 'version')
+    except (UnicodeError, configparser.Error, KeyError, ValueError):
+        raise ValueError('地图导入模块元数据无效') from None
+    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', value.strip())
+    if not match:
+        raise ValueError('地图导入模块版本格式无效')
+    return tuple(int(part) for part in match.groups())
 
 
 def _target(name: str) -> str:
@@ -72,6 +91,17 @@ def install_package(client, raw: bytes) -> dict:
     mod_dir = client / 'sdgo/mods/map_catalog'
     if 'mod.ini' not in leaves and not (mod_dir / 'mod.ini').is_file():
         raise ValueError('客户端尚未安装地图导入模块（map_catalog）')
+    boundary_path = 'sdgo/mods/map_catalog/boundaries.bin'
+    if boundary_path in pending:
+        boundary_format.decode(pending[boundary_path])
+        programme_manifest = pending.get('sdgo/mods/map_catalog/mod.ini')
+        if programme_manifest is None:
+            try:
+                programme_manifest = (mod_dir / 'mod.ini').read_bytes()
+            except OSError:
+                raise ValueError('客户端尚未安装地图导入模块（map_catalog）') from None
+        if _programme_version(programme_manifest) < BOUNDARY_PROGRAMME_VERSION:
+            raise ValueError('任务活动范围需要 map_catalog 0.6.0 或更高版本，未写入任何文件')
 
     # Content files a previous package installed (per its receipt) and this one no longer ships are removed,
     # so e.g. an old missions.lua cannot outlive its catalog. Program files stay (the Manager owns them).

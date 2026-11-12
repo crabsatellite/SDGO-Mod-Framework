@@ -250,15 +250,12 @@ function SDGOMI.init(m, c)
   if c.area ~= nil then SDGOMI.area(m, c.area) end
   if c.hide == 1 then
     s.hidden = {n = 0}
-    local count = GetNumPlayer()
-    for i = 0, count - 1 do
-      local p = GetPlayer(i)
-      if p ~= nil then
-        local id = p:GetID()
-        HideObject(id)
-        s.hidden.n = s.hidden.n + 1
-        s.hidden[s.hidden.n] = id
-      end
+    local unit = SDGOMI.local_unit()
+    if unit ~= nil then
+      local id = unit:GetID()
+      HideObject(id)
+      s.hidden.n = 1
+      s.hidden[1] = id
     end
   end
   for name, a in pairs(c.actors) do
@@ -317,32 +314,29 @@ function SDGOMI.update(m, c)
 end
 function SDGOMI.skip(m, c) SDGOMI.cleanup(m, c); return 456 end
 function SDGOMI.warp(m, w)
-  local n = GetNumPlayer()
-  for i = 1, n do
-    local k = i
-    if k > w.n then k = w.n end
-    local p = w.points[k]
-    PlayerWarp(i - 1, p, w.dir)
-    local unit = GetPlayer(i - 1)
-    if unit ~= nil and w.rect ~= nil then unit:SetTerrainRect(w.rect[1], w.rect[2], w.rect[3], w.rect[4]) end
-  end
+  local me = SDGOMI.local_unit()
+  if me == nil or SDGO_MapCatalogLocalHumanSlot == nil then return end
+  local k = SDGO_MapCatalogLocalHumanSlot()
+  if k == nil or k < 1 then return end
+  if k > w.n then k = w.n end
+  local p = w.points[k]
+  PlayerWarp(me:GetID(), p, w.dir)
   if w.rect ~= nil then SDGOMI.local_area(w.rect) end
 end
-function SDGOMI.local_area(r)
+function SDGOMI.local_unit()
   local doc = GetDocument()
-  if doc == nil then return end
+  if doc == nil then return nil end
   local p = doc:GetLocalPlayer()
-  if p == nil then return end
-  local me = CastingUnit(p)
-  if me ~= nil then me:SetTerrainRect(r[1], r[2], r[3], r[4]); me:SetTerrainRectOnOff(true) end
+  if p == nil then return nil end
+  return CastingUnit(p)
 end
-function SDGOMI.area(m, r)
-  for i = 1, GetNumPlayer() do
-    local unit = GetPlayer(i - 1)
-    if unit ~= nil then unit:SetTerrainRect(r[1], r[2], r[3], r[4]) end
-  end
-  SDGOMI.local_area(r)
+function SDGOMI.local_area(r)
+  local me = SDGOMI.local_unit()
+  if me == nil then return end
+  if r == nil then me:SetTerrainRectOnOff(false)
+  else me:SetTerrainRect(r[1], r[2], r[3], r[4]); me:SetTerrainRectOnOff(true) end
 end
+function SDGOMI.area(m, r) SDGOMI.local_area(r) end
 function SDGOMI.block_missing(action, key, name)
   local message = 'SDGOMI '..action..' missing block '..key..' ('..name..')'
   SDGOMI.last_block_error = message
@@ -531,7 +525,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     if version >= 3:
         allowed = {'schema', 'schema_version', 'mission_key', 'name', 'description', 'briefing', 'difficulties',
                    'bgm', 'npcs', 'area', 'presentation', 'lines', 'banners', 'sectors', 'phases', 'opening',
-                   'ending', 'cutscenes', 'transition_delay', 'drops', 'boundary_markings'}
+                   'ending', 'cutscenes', 'transition_delay', 'drops', 'boundary_markings',
+                   'boundary_warning', 'boundary_damage'}
         unknown = set(spec) - allowed
         if unknown:
             _fail('任务文件含未知字段：' + '、'.join(sorted(unknown)))
@@ -542,6 +537,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     build = MissionBuild()
     if 'boundary_markings' in spec and version < 4:
         _fail('地面边界标记选择需要 schema_version=4')
+    if ('boundary_warning' in spec or 'boundary_damage' in spec) and version < 4:
+        _fail('边界提示与接触伤害需要 schema_version=4')
     if spec.get('boundary_markings', 'all') not in ('all', 'initial'):
         _fail('boundary_markings 只能是 all 或 initial')
     if spec.get('boundary_markings') == 'initial' and spec.get('area') is None:
@@ -613,8 +610,13 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         enter = phase.get('enter') or {}
         if not isinstance(enter, dict):
             _fail(f'phases[{i}].enter 必须是对象')
-        if version >= 3 and set(enter) - {'cutscene', 'lines', 'sector', 'area', 'blocks'}:
-            _fail(f'phases[{i}].enter 含未知字段：' + '、'.join(sorted(set(enter) - {'cutscene', 'lines', 'sector', 'area', 'blocks'})))
+        enter_fields = {'cutscene', 'lines', 'sector', 'area', 'blocks', 'boundary_warning'}
+        if version >= 3 and set(enter) - enter_fields:
+            _fail(f'phases[{i}].enter 含未知字段：' + '、'.join(sorted(set(enter) - enter_fields)))
+        if 'boundary_warning' in enter and version < 4:
+            _fail('阶段边界提示需要 schema_version=4')
+        if enter.get('area') is False and version < 4:
+            _fail('阶段清除活动范围需要 schema_version=4')
         actions = enter.get('blocks')
         if actions is not None and version < 3:
             _fail('阶段命名物件控制需要 schema_version=3；旧编译器必须拒绝这些新语义')
@@ -873,9 +875,74 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         rect = (sectors.get(enter.get('sector')) or {}).get('rect') if enter.get('sector') else None
         if rect is not None:
             active = tuple(_vec(rect, f'sectors.{enter["sector"]}.rect', 4))
-        if enter.get('area') is not None:
-            active = tuple(_vec(enter['area'], f'phases[{p_index}].enter.area', 4))
+        if 'area' in enter:
+            if enter['area'] is False:
+                active = None
+            elif enter['area'] is None:
+                _fail(f'phases[{p_index}].enter.area 需要范围数组或 false')
+            else:
+                active = tuple(_vec(enter['area'], f'phases[{p_index}].enter.area', 4))
         phase_areas.append(active)
+
+    def warning_line(value, what: str):
+        if value is None or value is False:
+            return None
+        if not isinstance(value, str) or value not in speech_ids:
+            _fail(f'{what} 需要引用 lines 中已定义的台词，或用 false 清除')
+        return value
+
+    phase_warnings = []
+    active_warning = warning_line(spec.get('boundary_warning'), 'boundary_warning')
+    for p_index, phase in enumerate(phases):
+        enter = phase.get('enter') or {}
+        if 'boundary_warning' in enter:
+            active_warning = warning_line(enter['boundary_warning'],
+                                          f'phases[{p_index}].enter.boundary_warning')
+        if active_warning is not None and phase_areas[p_index] is None:
+            _fail(f'phases[{p_index}] 启用了 boundary_warning 却没有活动范围')
+        phase_warnings.append(active_warning)
+
+    phase_damage = [None] * len(phases)
+    damage = spec.get('boundary_damage')
+    if damage is not None:
+        fields = {'phases', 'edge', 'permille', 'cooldown'}
+        if not isinstance(damage, dict) or set(damage) != fields:
+            _fail('boundary_damage 需要 phases、edge、permille 与 cooldown')
+        selected = damage.get('phases')
+        if (not isinstance(selected, list) or not selected or
+                any(not isinstance(key, str) for key in selected) or len(set(selected)) != len(selected)):
+            _fail('boundary_damage.phases 需要非空且不重复的阶段 key 列表')
+        edge_masks = {'left': 1, 'top': 2, 'right': 4, 'bottom': 8}
+        edge = damage.get('edge')
+        if edge not in edge_masks:
+            _fail('boundary_damage.edge 只能是 left、top、right 或 bottom')
+        permille = damage.get('permille')
+        cooldown = damage.get('cooldown')
+        if type(permille) is not int or not 1 <= permille < 1000:
+            _fail('boundary_damage.permille 需要 1..999 的整数')
+        if isinstance(cooldown, bool) or not isinstance(cooldown, (int, float)) or not 0.25 <= float(cooldown) <= 60:
+            _fail('boundary_damage.cooldown 需要 0.25..60 秒')
+        policy = {'edge': edge, 'edge_mask': edge_masks[edge], 'permille': permille,
+                  'cooldown_ms': int(round(float(cooldown) * 1000))}
+        for key in selected:
+            if key not in phase_order:
+                _fail(f'boundary_damage.phases 引用未定义的阶段 {key}')
+            index = phase_order[key] - 1
+            if phase_areas[index] is None:
+                _fail(f'boundary_damage.phases 阶段 {key} 没有活动范围')
+            phase_damage[index] = dict(policy)
+
+    boundary_rows = []
+    if any(area is not None for area in phase_areas) or any(phase_warnings) or any(phase_damage):
+        for index, phase in enumerate(phases):
+            boundary_rows.append({
+                'phase': index + 1,
+                'phase_key': phase['key'],
+                'area': list(phase_areas[index]) if phase_areas[index] is not None else None,
+                'warning': phase_warnings[index],
+                'warning_speech_id': speech_ids.get(phase_warnings[index], 0),
+                'damage': phase_damage[index],
+            })
 
     start_area = 'nil'
     if spec.get('area') is not None:
@@ -1134,8 +1201,10 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             if enter['sector'] not in warp_tables:
                 _fail(f'phases[{phase_index}].enter.sector 未定义')
             body.append('  SDGOMI.warp(m, %s)' % warp_tables[enter['sector']])
-        if enter.get('area') is not None:
-            body.append('  SDGOMI.area(m, %s)' % area_lua(enter['area'], f'phases[{phase_index}].enter.area'))
+        if 'area' in enter:
+            area_value = 'nil' if enter['area'] is False else area_lua(
+                enter['area'], f'phases[{phase_index}].enter.area')
+            body.append('  SDGOMI.area(m, %s)' % area_value)
         if not body:
             return ''
         fn = f'{ids.lua_prefix}_E{phase_index}'
@@ -1243,7 +1312,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             # cutscene ends. Spawn times are therefore relative to active play; adding the scene length here
             # would make every authored delay run twice.
             event_fn = event_function(p_index, enter) if d_index == 0 else f'{ids.lua_prefix}_E{p_index}' \
-                if any((enter.get('lines'), enter.get('sector'), enter.get('area') is not None,
+                if any((enter.get('lines'), enter.get('sector'), 'area' in enter,
                         phase_block_actions[p_index] and p_index not in cinematic_block_phases)) else ''
             reward = phase.get('reward') or {}
             objective_text = _zh(phase.get('objective'), f'phases[{p_index}].objective', 49)
@@ -1410,6 +1479,13 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     for kind, ident, raw in build.rows:
         if len(raw) != SIZES[kind]:
             _fail(f'内部错误：记录 {ident} (kind {kind:#x}) 长度 {len(raw)} != {SIZES[kind]}')
+    for mode_id in (ids.game_mode_first + index for index in range(len(difficulties))):
+        for row in boundary_rows:
+            if row['warning'] is None:
+                continue
+            lua_parts.append('function SDGOMI_BW_%d_%d(m)\n  PutOperatorSpeech(%d)\n  return 0\nend\n' %
+                             (mode_id, row['phase'], row['warning_speech_id']))
+
     build.lua = ''.join(lua_parts)
     if not all(ord(c) < 128 for c in build.lua):
         _fail('生成的 Lua 含非 ASCII 字符')
@@ -1426,6 +1502,23 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     if grouped_sections:
         build.report['section_clear_phases'] = [i + 1 for i, p in enumerate(phases)
                                                 if p.get('section_clear', True)]
+    if boundary_rows:
+        build.report['boundaries'] = []
+        for mode_id in build.report['game_modes']:
+            for row in boundary_rows:
+                damage = row['damage'] or {}
+                flags = (1 if row['area'] is not None else 0) | (2 if row['warning'] is not None else 0) | \
+                        (4 if row['damage'] is not None else 0)
+                build.report['boundaries'].append({
+                    'mission_id': mode_id,
+                    'phase': row['phase'],
+                    'flags': flags,
+                    'warning_speech_id': row['warning_speech_id'],
+                    'rect': row['area'] if row['area'] is not None else [0.0, 0.0, 0.0, 0.0],
+                    'damage_edge_mask': damage.get('edge_mask', 0),
+                    'damage_permille': damage.get('permille', 0),
+                    'damage_cooldown_ms': damage.get('cooldown_ms', 0),
+                })
     return build
 
 

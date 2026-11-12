@@ -7,6 +7,7 @@
 #include "sdgo/mod_settings.h"
 #include "sdgo/sdgo_api.h"
 #include "policy.h"
+#include "boundary_contact.h"
 
 #if !defined(_M_IX86)
 #error map_catalog_server requires the 32-bit BattleServer ABI
@@ -25,6 +26,7 @@ constexpr std::ptrdiff_t kEventNextFromClearRow = 0x2c;
 const DWORD kDefaultMxcsr = 0x1f80;
 
 MissionAllowlist g_allowlist{};
+sdgo::map_catalog_server::BoundaryContact g_boundaryContact;
 void* g_deadlineOriginal = nullptr;
 volatile LONG g_accelerated = 0;
 
@@ -137,9 +139,11 @@ SDGO_MOD_ENTRY {
                  "invalid ImmediateTransitionMissionIds; pacing hook was not installed");
         return 0;
     }
+    if (!g_boundaryContact.Install(api, mod)) return 0;
     if (g_allowlist.count == 0) {
         api->Log(mod, SDGO_LOG_INFO,
-                 "no imported mission IDs declared; native mission pacing retained");
+                 "no imported pacing IDs declared; native mission pacing retained; boundary contact=%u",
+                 g_boundaryContact.Enabled() ? 1u : 0u);
         return 1;
     }
     if (!api->HookSite(mod, "map_catalog_server.phase_success_deadline",

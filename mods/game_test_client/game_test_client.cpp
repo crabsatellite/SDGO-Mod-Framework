@@ -264,6 +264,7 @@ bool verifyDirectNetwork = false;
 bool verifyRoutedNetwork = false;
 bool verifyQuietRuntime = false;
 bool reviewFootage = false;
+bool boundaryContactReview = false;
 bool rosterClosedForReview = false;
 ReviewCamera reviewCamera;
 bool quietLoopback = false;
@@ -6083,6 +6084,15 @@ int __cdecl FriendFlow(const SdgoGameTestContextV1* context) {
     }
     const auto result=friendSession.Poll(context);
     if(missionMode) {
+        if(boundaryContactReview) {
+            SdgoMissionAiClientSnapshotV1 snapshot{};
+            const auto player=actions.OnboardingState();
+            if(MissionSnapshot(snapshot) && snapshot.active && player.native_app_state==22) {
+                if(!nativePlayerCombat.PollBoundaryContact(context,snapshot,
+                        player.native_app_state,player.profile_pilot_id,scoreboardInput))
+                    return SDGO_GAME_TEST_FAIL;
+            }
+        }
         static bool gateSessionArmed=false;
         static uint32_t gateEndBaseline=0;
         if(!gateSessionArmed&&friendSession.Ready()) {
@@ -6577,6 +6587,10 @@ SDGO_MOD_ENTRY {
     sdgo_test::nativeShutdownAfterSuccess=!nativeRecordLifecycleIds.empty();
     if (!nativeDeathProbe.Install(api,mod)) return 0;
     if (!nativeAiLives.Install(api,mod)) return 0;
+    const int boundaryReviewSetting=api->SettingInt(mod,"BoundaryContactReview",0);
+    if(boundaryReviewSetting<0 || boundaryReviewSetting>1) return 0;
+    boundaryContactReview=boundaryReviewSetting!=0;
+    if(boundaryContactReview && api->SettingInt(mod,"BattlePlayerCombat",0)!=1) return 0;
     if (!nativePlayerCombat.Install(api,mod) || !mapGateProbe.Install(api,mod)) return 0;
     nativePlayerCombat.SetSpecialEventSource(&ReadOcSpecialEvents);
     reviewCamera.Install(api,mod);

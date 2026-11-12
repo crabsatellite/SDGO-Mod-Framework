@@ -141,12 +141,16 @@ end
 if not SDGO_Original_PlayerWarp then SDGO_Original_PlayerWarp=PlayerWarp end
 function PlayerWarp(player, position, direction)
   local result=SDGO_Original_PlayerWarp(player,position,direction)
-  if MissionLive() then
-    local ok,err=ProtectedCall(WarpWingmen,player,position,direction)
-    if not ok then Log('wingman stage warp failed: %s',tostring(err)) end
-    if SDGO_MissionAI_ObserveStageWarp then
-      local observed,observeErr=ProtectedCall(SDGO_MissionAI_ObserveStageWarp,player)
-      if not observed then Log('wingman stage warp observation failed: %s',tostring(observeErr)) end
+  if MissionLive() and SDGO_MissionAI_HumanRecordSlot then
+    local resolved,slot=ProtectedCall(SDGO_MissionAI_HumanRecordSlot,player)
+    if not resolved then Log('human stage-warp slot lookup failed: %s',tostring(slot))
+    elseif slot then
+      local ok,err=ProtectedCall(WarpWingmen,slot,position,direction)
+      if not ok then Log('wingman stage warp failed: %s',tostring(err)) end
+      if SDGO_MissionAI_ObserveStageWarp then
+        local observed,observeErr=ProtectedCall(SDGO_MissionAI_ObserveStageWarp,slot)
+        if not observed then Log('wingman stage warp observation failed: %s',tostring(observeErr)) end
+      end
     end
   end
   return result

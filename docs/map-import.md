@@ -19,7 +19,7 @@ The native entrance and exit animation uses built-in artwork here. The owner con
 | Part | Role |
 | --- | --- |
 | Client Mod `map_catalog` | Registers imported map rows and mission records at startup, serves terrain/model/texture resources, loads mission scripts (cutscenes, phase events) and enables the character dialogue panel for imported missions |
-| Battle server Mod `map_catalog_server` | Applies the imported-mission pacing policy only to MissionIDs declared by the server owner content package; stock missions, final settlement and native cutscene timing remain unchanged |
+| Battle server Mod `map_catalog_server` | Applies declared phase pacing and nonlethal boundary feedback; validates mission, phase, real participants and cooldown before synchronizing HP |
 | Manager page "地图与任务导入" (map and mission import) | Register map packages, edit names/modes/servers, compile, install the client package, check and apply the server rows |
 | Map package protocol | `map.json` describes a map; `missions/*.json` describe missions. See below |
 
@@ -166,9 +166,9 @@ Translucent props use glTF material `alphaMode: "BLEND"`. The compiler retains b
 
 ![Native gate states](map-native-gate-demo.webp)
 
-![Native shield closed/open comparison](map-native-shield-demo.webp)
+![Native boundary grid and ring](map-native-boundary-demo.webp)
 
-Two captured native frames compare the closed shield and open passage. Owners provide the model and artwork through their content package.
+Actual two-client captures: contact briefly reveals native grid/ring effects and server-confirmed HP. An idle shield can use zero-opacity material.
 
 The clip uses native mission cameras to show the gate closed during protection and open before the entry cinematic.
 
@@ -195,13 +195,17 @@ Mission files live under `missions/` in the map package and are listed in `files
 | `npcs.<key>.cutin` | Native unit illustration strip: `native_sprite` references an existing unit SPR in the target client; `line` references mission dialogue. NPC arrival uses the game's own illustration strip, animation and resolution scaling. It does not generate a text effect. Do not substitute another unit's artwork when the requested unit has no illustration |
 | `banners` | World-space image effects: `image` (512×128 PNG); separate from native unit illustration strips |
 | `presentation` | Optional mission list artwork in PNG, each replacing the template mission's image: `list_banner` (155×68), `room_icon` (120×83; like the shipped icons, keep rows 0..18 for the title lettering), `room_poster` (250×120), `title` (155×22, white lettering on a transparent background) and `loading` (1024×1024 loading screen poster). `loading_screen` chooses the battle loading screen: `poster` shows `loading` (the default when `loading` is given), `random` keeps the game's random loading pictures |
-| `area` | Movable area at the start: `[left x, top z, right x, bottom z]` (north is top). Players are kept inside it with the same call the shipped multi-area missions use. It is set when the `opening` cutscene starts, so it needs an opening. Without it the whole `terrain.play_area` is movable |
+| `area` | Movable area at the start: `[left x, top z, right x, bottom z]` (north is top). Players are kept inside it with the same call the shipped multi-area missions use. It is set when the `opening` cutscene starts, so it needs an opening. During combat it also constrains friendly and enemy NPCs, including new spawns, respawns and rebuilt forms; cinematic actors are released during demos. Without it the whole `terrain.play_area` is movable |
+| `boundary_warning` | v4: reference a `lines` key for native character dialogue on human contact, with a 12-second cooldown per line. `enter.boundary_warning` overrides it; `false` clears it. With contact damage configured, warnings use the same selected edge |
+| `boundary_damage` | v4, optional and off by default: `phases` (phase keys), `edge` (`left`, `top`, `right`, `bottom`), `permille` (1..999 of maximum HP per thousand), and `cooldown` (0.25..60 seconds). The server applies contact cost to real players and host-controlled NPCs, retaining at least 1 HP without spending lives or granting kills/rewards |
 | `boundary_markings` | v4 ground markings: `all` (default) draws all areas used by the selected missions; `initial` draws only the opening `area`, keeping future-area lines out of the current battlefield. Radar and movement bounds retain all areas |
 | `drops` | Optional mission drops, rolled at the end like the shipped missions: `normal` (default `true`) keeps the shipped drops of the difficulty's level (levels 1–5); `blueprints` is `"mission"` (default: every blueprint whose unit appears in the mission, including the player unit of the same name for an NPC-only unit) or a list of unit ids; `blueprint_per_mille` (1–50, default 2) is each blueprint's chance in 1000 clears (at most 500 in total). Drops arrive in the player's drop box |
-| `sectors` | Sector change: `warp` (1..8 points), `facing`, optional `rect` (the new movable area, same order as `area`) |
+| `sectors` | Sector change: `warp` (1..8 points), `facing`, optional `rect` (the new movable area, same order as `area`). Each client selects its authored point by room human-record position and calls native warp with its real runtime object ID |
 | `cutscenes` | Cutscenes, see below |
 | `phases` | 1..8 phases played in order, see below |
 | `opening`, `ending` | Cutscene played at the start and on success |
+
+Contact feedback requires paired client `map_catalog >= 0.6.0` and server `map_catalog_server >= 0.2.0`. Manager validates the declaration and client programme version before installing content, and applies the matching policy to the target Battle services; restart to activate. Zero-opacity materials retain physical collision. `HideObject` removes both rendering and collision, so hide the object when opening the passage. Spawn protected-phase reinforcements outside the shield.
 
 **Phases** (`phases[]`):
 

@@ -123,6 +123,10 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
         for mode_id in report['game_modes']
     })
     runtime_policy = {'immediate_transition_missions': immediate_transition_missions}
+    from . import boundary_format
+    boundaries = boundary_format.normalize([row for report in mission_reports for row in report.get('boundaries', [])])
+    if boundaries:
+        runtime_policy['boundaries'] = boundaries
     rows.sort(key=lambda row: (row[0] != 0x0F, row[0], row[1]))
     ids = [row[1] for row in rows]
     if len(set(ids)) != len(ids):
@@ -151,6 +155,8 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
                                                      ensure_ascii=False, indent=2).encode('utf-8')}
     if lua:
         files[PREFIX + 'missions.lua'] = lua.encode('ascii')
+    if boundaries:
+        files[PREFIX + 'boundaries.bin'] = boundary_format.encode(boundaries)
     for name, raw in (program or {}).items():
         if name not in ('map_catalog.dll', 'mod.ini', 'manager.json', 'symbols.fragment.ini'):
             raise ValueError(f'unexpected program file {name}')

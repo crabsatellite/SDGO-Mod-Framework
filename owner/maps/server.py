@@ -205,7 +205,7 @@ def _validate_runtime_policy(plan: dict) -> list[int]:
     policy = plan.get('runtime_policy')
     if policy is None:
         policy = {}
-    if not isinstance(policy, dict) or set(policy) - {'immediate_transition_missions'}:
+    if not isinstance(policy, dict) or set(policy) - {'immediate_transition_missions', 'boundaries'}:
         raise ValueError('服务端计划的 runtime_policy 无效')
     mission_ids = policy.get('immediate_transition_missions', [])
     if (not isinstance(mission_ids, list)
@@ -220,8 +220,23 @@ def _validate_runtime_policy(plan: dict) -> list[int]:
     missing = [value for value in mission_ids if value not in planned_modes]
     if missing:
         raise ValueError('服务端节奏策略引用了计划外的 MissionModeID：' + ','.join(map(str, missing)))
+    from . import boundary_format
+    boundaries = boundary_format.normalize(policy.get('boundaries', []))
+    phases = {(row.get('MissionID'), row.get('MissionPart'))
+              for row in plan.get('tables', {}).get('tbl_MissionModeStart', []) if isinstance(row, dict)}
+    if any(row['mission_id'] not in planned_modes or (row['mission_id'], row['phase']) not in phases
+           for row in boundaries):
+        raise ValueError('服务端边界策略引用了计划外的任务或阶段')
     plan['runtime_policy'] = {'immediate_transition_missions': mission_ids}
+    if boundaries:
+        plan['runtime_policy']['boundaries'] = boundaries
     return mission_ids
+
+
+def _boundary_runtime_policy(plan):
+    from . import boundary_format
+    rows = plan.get('runtime_policy', {}).get('boundaries', [])
+    return boundary_format.encode(rows), any(row['flags'] & 4 for row in rows)
 
 
 def load_plan(path) -> dict:
@@ -288,10 +303,11 @@ def _battle_policy_hosts(server_ini) -> list[dict]:
         mod_ini = mod / 'mod.ini'
         symbols = mod / 'symbols.fragment.ini'
         config = mod / 'config.ini'
+        boundary = mod / 'boundaries.bin'
         problem = ''
         values = None
         if (mod.is_symlink() or dll.is_symlink() or mod_ini.is_symlink() or symbols.is_symlink()
-                or config.is_symlink()):
+                or config.is_symlink() or boundary.is_symlink()):
             problem = '模块目录或程序文件不能是目录链接'
         elif not dll.is_file() or not mod_ini.is_file() or not symbols.is_file():
             problem = '缺少 DLL、mod.ini 或 symbols.fragment.ini'
@@ -319,53 +335,65 @@ def _battle_policy_hosts(server_ini) -> list[dict]:
                 global_enabled = False
                 problem = 'sdgo.ini 无法读取'
         configured = _configured_mission_ids(config.read_bytes()) if installed and config.is_file() else []
+        version = values.get('mod', 'version', fallback='0').split('-', 1)[0] if values else '0'
+        parts = version.split('.')
+        contact_supported = len(parts) == 3 and all(part.isdecimal() for part in parts) and \
+            tuple(map(int, parts)) >= (0, 2, 0)
+        boundary_raw = boundary.read_bytes() if installed and boundary.is_file() and boundary.stat().st_size <= 800000 else None
         result.append({'host': host.name, 'path': host, 'mod': mod, 'installed': installed,
                        'enabled': enabled, 'global_enabled': global_enabled, 'configured_ids': configured,
-                       'problem': problem})
+                       'problem': problem, 'contact_supported': contact_supported, 'boundary_raw': boundary_raw})
     return result
 
 
 def runtime_policy_state(plan: dict, server_ini) -> dict:
     mission_ids = _validate_runtime_policy(plan)
+    expected_boundary, contact_required = _boundary_runtime_policy(plan)
+    required = bool(mission_ids) or contact_required
     try:
         hosts = _battle_policy_hosts(server_ini)
         topology_error = ''
     except ValueError as error:
         hosts = []
         topology_error = str(error)
-    missing = [row['host'] for row in hosts if not row['installed']] if mission_ids else []
+    missing = [row['host'] for row in hosts if not row['installed'] or
+               (contact_required and not row['contact_supported'])] if required else []
     if topology_error:
         missing = []
-    elif mission_ids and not hosts:
+    elif required and not hosts:
         missing = ['BattleServer']
     expected = mission_ids
     public_hosts = []
     for row in hosts:
-        configured = row['configured_ids'] == expected
+        boundary_configured = row['boundary_raw'] == expected_boundary or \
+            (not plan['runtime_policy'].get('boundaries') and row['boundary_raw'] is None)
+        configured = row['configured_ids'] == expected and boundary_configured
+        row['policy_configured'] = configured
         public_hosts.append({'host': row['host'], 'installed': row['installed'], 'configured': configured,
                              'enabled': row['enabled'], 'global_enabled': row['global_enabled'],
-                             'problem': row['problem']})
+                             'problem': row['problem'], 'contact_supported': row['contact_supported'],
+                             'boundary_configured': boundary_configured})
     if topology_error:
         status = 'topology_error'
-    elif mission_ids and missing:
+    elif required and missing:
         status = 'pending_programme_deployment'
-    elif any(row['installed'] and row['configured_ids'] != expected for row in hosts):
+    elif any(row['installed'] and not row['policy_configured'] for row in hosts):
         status = 'configuration_required'
-    elif mission_ids and any(not row['enabled'] or not row['global_enabled'] for row in hosts):
+    elif required and any(not row['enabled'] or not row['global_enabled'] for row in hosts):
         status = 'activation_required'
-    elif mission_ids:
+    elif required:
         # Disk configuration alone cannot prove that a running BattleServer has loaded the hook.
         status = 'configured'
     else:
         status = 'native'
     configured_hosts = [row['host'] for row in hosts
-                        if row['installed'] and row['configured_ids'] == expected]
+                        if row['installed'] and row['policy_configured']]
     ready_hosts = [row['host'] for row in hosts if row['installed'] and row['enabled'] and
-                   row['global_enabled'] and row['configured_ids'] == expected]
+                   row['global_enabled'] and row['policy_configured']]
     return {'status': status, 'required_module': SERVER_POLICY_MOD, 'mission_ids': mission_ids,
             'hosts': public_hosts, 'missing_hosts': missing, 'configured_hosts': configured_hosts,
             'ready_hosts': ready_hosts, 'topology_error': topology_error,
-            'policy_active': False, 'runtime_verified': False,
+            'policy_active': False, 'runtime_verified': False, 'boundary_contact_required': contact_required,
             'restart_required': status in ('configuration_required', 'activation_required', 'configured')}
 
 
@@ -377,14 +405,16 @@ def apply_runtime_policy(plan: dict, server_ini) -> dict:
     """
     from manager import storage
     mission_ids = _validate_runtime_policy(plan)
+    expected_boundary, contact_required = _boundary_runtime_policy(plan)
     before = runtime_policy_state(plan, server_ini)
-    if before['topology_error'] or (mission_ids and before['status'] == 'pending_programme_deployment'):
+    if before['topology_error'] or ((mission_ids or contact_required) and before['status'] == 'pending_programme_deployment'):
         return before
     hosts = [row for row in _battle_policy_hosts(server_ini) if row['installed']]
     if not hosts:
         return before
     desired = ','.join(map(str, mission_ids))
     prepared = []
+    boundary_prepared = []
     for row in hosts:
         config = row['mod'] / 'config.ini'
         config_raw = config.read_bytes() if config.is_file() else b'[settings]\n'
@@ -396,6 +426,10 @@ def apply_runtime_policy(plan: dict, server_ini) -> dict:
             raise ValueError('节奏策略配置生成后读回不一致：' + row['host'])
         prepared.append((row['host'], config, config_raw if config.is_file() else None, config_new,
                          mod_ini, mod_raw, mod_new))
+        boundary = row['mod'] / 'boundaries.bin'
+        if plan['runtime_policy'].get('boundaries') or boundary.exists():
+            original = boundary.read_bytes() if boundary.is_file() else None
+            boundary_prepared.append((boundary, original, expected_boundary))
     written = []
     try:
         # Configure every host before enabling any host, so no BattleServer can load a half-written allowlist.
@@ -405,6 +439,12 @@ def apply_runtime_policy(plan: dict, server_ini) -> dict:
                 written.append((config, original))
             if config.read_bytes() != data:
                 raise ValueError('配置写入后读回不一致')
+        for boundary, original, data in boundary_prepared:
+            if original != data:
+                storage.atomic(boundary, data)
+                written.append((boundary, original))
+            if boundary.read_bytes() != data:
+                raise ValueError('边界策略写入后读回不一致')
         for _, _, _, _, mod_ini, original, data in prepared:
             if data != original:
                 storage.atomic(mod_ini, data)
@@ -428,7 +468,8 @@ def apply_runtime_policy(plan: dict, server_ini) -> dict:
         raise ValueError('服务端节奏策略写入失败，已恢复原配置：' + reason) from None
     result = runtime_policy_state(plan, server_ini)
     changed = any(original != data or mod_original != mod_data
-                  for _, _, original, data, _, mod_original, mod_data in prepared)
+                  for _, _, original, data, _, mod_original, mod_data in prepared) or \
+        any(original != data for _, original, data in boundary_prepared)
     result['configured_hosts'] = [row[0] for row in prepared]
     result['configuration_changed'] = changed
     result['restart_required'] = changed

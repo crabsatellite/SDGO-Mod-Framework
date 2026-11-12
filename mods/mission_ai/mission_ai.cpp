@@ -1301,6 +1301,36 @@ namespace
         return true;
     }
 
+    uint32_t HumanRecordSlot(uint32_t runtimeId)
+    {
+        if (!runtimeId || !g_game.unitManager || !g_game.findObject)
+            return 0;
+        void* unitManager = *g_game.unitManager;
+        uint8_t* mode = g_observedMode;
+        if (!unitManager || !mode || !ActiveMission(unitManager))
+            return 0;
+        uint8_t* room = *reinterpret_cast<uint8_t**>(mode + kModeRoom);
+        const RecordSpan humans =
+            ReadRecordSpan(room, kRoomHumansBegin, kRoomHumansEnd);
+        if (!humans.valid || !humans.count)
+            return 0;
+        const uint8_t* unit = static_cast<const uint8_t*>(
+            g_game.findObject(unitManager, runtimeId));
+        if (!unit ||
+            *reinterpret_cast<const uint32_t*>(unit + kUnitObjectId) != runtimeId)
+            return 0;
+        const uint32_t pilot =
+            *reinterpret_cast<const uint32_t*>(unit + kUnitServerId);
+        if (!pilot)
+            return 0;
+        for (uint32_t index = 0; index < humans.count; ++index) {
+            const uint8_t* record = humans.first + index * kRecordSize;
+            if (*reinterpret_cast<const uint32_t*>(record + kRecordServerId) == pilot)
+                return index + 1;
+        }
+        return 0;
+    }
+
     bool RecordStageWarp(uint32_t playerIndex)
     {
         if (playerIndex < 1 ||
@@ -1681,9 +1711,31 @@ namespace
         return static_cast<int>(g_localWingmen.size());
     }
 
+    // PlayerWarp takes a runtime object id. Resolve it back to the human's
+    // one-based position in the authoritative room record vector so Lua can
+    // assign local wingmen to the same authored destination.
+    int __cdecl Lua_HumanRecordSlot(lua_State* L)
+    {
+        const double raw = g_lua.tonumber(L, 1);
+        if (!std::isfinite(raw) || raw < 1.0 || raw > 4294967295.0 ||
+            std::floor(raw) != raw)
+            return 0;
+        uint32_t slot = 0;
+        __try {
+            slot = HumanRecordSlot(static_cast<uint32_t>(raw));
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            RecordNativeException(GetExceptionCode());
+            return 0;
+        }
+        if (!slot)
+            return 0;
+        g_lua.pushnumber(L, static_cast<double>(slot));
+        return 1;
+    }
+
     // Called after the original mission PlayerWarp and the existing wingman
-    // mirror. Lua passes only the one-based player index; native code reads
-    // every published pose from the original player slot and unit nodes.
+    // mirror. Lua passes only the resolved one-based room-record position;
+    // native code reads every published pose from the matching player slot.
     int __cdecl Lua_ObserveStageWarp(lua_State* L)
     {
         const double raw = g_lua.tonumber(L, 1);
@@ -1796,6 +1848,10 @@ namespace
         SetGlobalFunction(L, "SDGO_Now", Lua_Now);
         SetGlobalFunction(L, "SDGO_Wingmen", Lua_Wingmen);
         SetGlobalFunction(L, "SDGO_LocalWingmen", Lua_LocalWingmen);
+        SetGlobalFunction(
+            L,
+            "SDGO_MissionAI_HumanRecordSlot",
+            Lua_HumanRecordSlot);
         SetGlobalFunction(
             L,
             "SDGO_MissionAI_ObserveStageWarp",

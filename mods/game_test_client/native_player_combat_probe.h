@@ -40,7 +40,7 @@ public:
     // observer's special_events). False when the source is unavailable.
     using SpecialEventsFn = bool(__cdecl*)(uint32_t* events);
 
-private:
+ private:
     using ObjectIdFromPilotFn =
         uint32_t(__thiscall*)(void*, uint32_t);
     using FindObjectFn =
@@ -653,6 +653,43 @@ public:
             released,
             "mission",
             input);
+    }
+
+    // Scoped boundary review keeps forward input active after authored sector
+    // warps. The ordinary combat probe only walks during its initial burst.
+    // This path uses the original mapped movement consumer and never writes
+    // positions, HP, control flags or movement FSM state.
+    bool PollBoundaryContact(const SdgoGameTestContextV1* context,
+        const SdgoMissionAiClientSnapshotV1& snapshot, uint32_t nativeAppState,
+        uint32_t profilePilotId, ScoreboardActions& input)
+    {
+        using namespace battle_ai::native::detail;
+        if (!enabled_ || !context || nativeAppState != 22 || !snapshot.active ||
+            snapshot.size != sizeof(snapshot) || snapshot.version != SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION ||
+            !snapshot.mode_object || !snapshot.room_object || !profilePilotId) {
+            Release(input); return true;
+        }
+        auto* mode = reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(snapshot.mode_object));
+        uint8_t demo = 1, controlled = 0;
+        uint8_t* manager = unitManager_ ? static_cast<uint8_t*>(*unitManager_) : nullptr;
+        uint8_t* unit = nullptr;
+        int32_t hp = 0;
+        uint32_t pilot = 0;
+        void* nativeInput = input.NativeInput();
+        if (!manager || !nativeInput || !Read(mode, 0x104, demo) || demo ||
+            !ReadPointer(manager, kManagerLocalPlayer, unit) || !Read(unit, 0x31E9, controlled) || !controlled ||
+            !Read(unit, 0x38, hp) || hp <= 0 || !Read(unit, 0x2B68, pilot) || pilot != profilePilotId) {
+            Release(input); return true;
+        }
+        input.HoldGameplay(kPrimaryAction, false);
+        input.HoldGameplay(kForwardAction, true);
+        forwardHeld_ = true; primaryHeld_ = false;
+        const auto before = input.GameplayQueries(kForwardAction);
+        moveInput_(unit, nativeInput);
+        const auto after = input.GameplayQueries(kForwardAction);
+        if (after > before && context->tick % 300 == 0)
+            context->Observe("native boundary review consumed mapped forward input through the original movement business");
+        return true;
     }
 
 private:
