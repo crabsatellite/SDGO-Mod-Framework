@@ -38,6 +38,7 @@ def main() -> int:
             "nonce": "T7x",
             "expected_host_pilot_id": 9229,
             "mode": 3,
+            "mission_game_mode_id": 0,
             "minimum_ai": 2,
             "require_end": True,
             "battle_ai_deaths": enabled,
