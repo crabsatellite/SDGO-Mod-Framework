@@ -346,7 +346,11 @@ does not reserve IDs; complete the paired transaction and sidecar steps below be
 
 If the old ID may be referenced elsewhere, retain its record, server row, ledger and atlas as a compatibility
 alias. Clone the ordinary linked graph without rewriting the old graph. Regenerate the catalog, programme and
-atlas bindings, and blueprint availability. In one stopped-server transaction, insert the paired owned skill
+atlas bindings, blueprint availability, and any installed directed-form candidate and independent host authority.
+Form-graph validation pins full unit records, SQL rows, family revisions and inventory-entry ownership; changing
+skill fields requires rebuilding those witnesses too. Keep unchanged graph nodes and root item revisions coherent,
+without changing their values or adopting unrelated families.
+In one stopped-server transaction, insert the paired owned skill
 definitions, update the intended owned unit references and ownership hashes, and read back all changes. Reject
 unowned IDs or changed preimages, roll back on failure, and install the matching client content before restarting.
 Do not rewrite player loadouts or numerically replace arbitrary Lua constants. Any fixed-ID effect additionally
