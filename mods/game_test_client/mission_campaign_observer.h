@@ -22,7 +22,7 @@
 // enumerates canonical UnitManager lists, observes original 0570 death packets
 // through NativeDeathProbe, and passively wraps the original 0905 mission-clear
 // handler. Its only input is an optional one-shot raw Escape pulse returned to
-// the source-verified phase-cinematic consumer at return address 00AD0060. It
+// the source-verified phase-cinematic consumer at verified return site AD5343. It
 // never writes HP, position, target, visibility, controller, FSM, inventory,
 // packets, results, phase state, or Lua state.
 class MissionCampaignObserver {
@@ -73,7 +73,7 @@ private:
     };
 
     inline static MissionCampaignObserver* active_ = nullptr;
-    static constexpr uintptr_t kPartySkipCaller = 0x00AD0060u;
+    uintptr_t partySkipCaller_ = 0;
 
     Mode mode_ = kOff;
     uint32_t targetNpc_ = 0;
@@ -91,6 +91,7 @@ private:
 
     uint32_t mission_ = 0;
     uint32_t phase_ = 0;
+    bool combatPhaseObserved_ = false;
     bool demo_ = false;
     volatile LONG hookPhase_ = 0;
     volatile LONG hookDemo_ = 0;
@@ -593,7 +594,7 @@ private:
         const uint32_t phase = static_cast<uint32_t>(
             InterlockedCompareExchange(&owner->hookPhase_, 0, 0));
         const bool demo = InterlockedCompareExchange(&owner->hookDemo_, 0, 0) != 0;
-        if (scan == 1 && caller == kPartySkipCaller &&
+        if (scan == 1 && caller == owner->partySkipCaller_ &&
             phase == owner->partyPhase_ && demo &&
             InterlockedCompareExchange(&owner->skipPulse_, 0, 1) == 1) {
             InterlockedIncrement(&owner->skipConsumedCount_);
@@ -700,8 +701,16 @@ public:
             return false;
         }
         if (!mapOwnsSuccessHook) mapSuccessGetter_ = nullptr;
+        if (skipEnabled_) {
+            partySkipCaller_ = reinterpret_cast<uintptr_t>(
+                api->Symbol(mod, "test.mission_skip_key_result"));
+            if (!partySkipCaller_) {
+                active_ = nullptr;
+                return false;
+            }
+        }
         if (skipEnabled_ &&
-            (!api->HookCode(mod, "title_test.key_pressed",
+            (!api->HookCode(mod, "test.mission_skip_key_pressed",
                             reinterpret_cast<void*>(&RawKeyPressed),
                             reinterpret_cast<void**>(&keyPressedOriginal_)) ||
              !keyPressedOriginal_)) {
@@ -745,11 +754,19 @@ public:
             Read(record, 0, mission) && mission != 0;
         const bool phaseRead = Read(mode, 0x620, phase);
         const bool demoRead = Read(mode, 0x104, demo);
-        // The opening script runs before EventOrder 1. Native DemoPlay can
-        // therefore legitimately retain phase 0 until the opening finishes.
-        // Keep validating the complete lists during that opening as well.
+        ObserveSkipConsumption(context);
+        // The original ACBDF0 Escape request temporarily stores EventOrder=-1
+        // to prevent a duplicate 0721. Retain the already observed party phase
+        // for passive actor/cleanup correlation until the next real phase; do
+        // not reject that native request state or write a replacement value.
+        if (phaseRead && phase == UINT32_MAX && skipConsumed_ && partyObserved_ &&
+            phase_ == partyPhase_) phase = partyPhase_;
+        // EventOrder remains zero through the opening and the genuine server
+        // response that starts phase one. DemoEnd can precede that response;
+        // it is not evidence of invalid actor lists. Zero is invalid only if
+        // the campaign has already entered a nonzero combat phase.
         const bool phaseValid = phaseRead && demoRead && phase <= 8 &&
-            (phase != 0 || demo != 0);
+            (phase != 0 || !combatPhaseObserved_);
         const bool listsRead = modeRead && phaseValid && Collect(manager, actors_);
         if (!modeRead || !phaseValid || !listsRead) {
             ++actorReadFailures_;
@@ -789,6 +806,7 @@ public:
                                    (!partyObserved_ || phase_ != phase || !demo_);
         mission_ = mission;
         phase_ = phase;
+        if (phase) combatPhaseObserved_ = true;
         if (enteringParty) BeginParty(context, snapshot, manager, now, phase);
         if (partyObserved_ && phase == partyPhase_ && demo)
             ObserveParty(context, now);
