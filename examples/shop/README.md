@@ -1,4 +1,4 @@
-# Shop import templates: four item classes, five authoring examples
+# Optional developer exchange templates: four item classes, five authoring examples
 
 Ordinary installation uses the [built-in defaults](../../docs/shop-catalog.md#installed-default-presets):
 first binding an empty workspace lists five editable presets. This directory retains an optional developer

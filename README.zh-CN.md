@@ -15,7 +15,7 @@
 | [机体导入](docs/unit-import.zh-CN.md) | [商城商品管理](docs/shop-catalog.zh-CN.md) |
 |:---:|:---:|
 | [![机体导入](docs/unit-import-demo.webp)](docs/unit-import.zh-CN.md) | [![商城商品管理](docs/shop-catalog-demo.webp)](docs/shop-catalog.zh-CN.md) |
-| 解析机体制作包，核对形态与依赖，预览商城和扭蛋图标。 | 从原生物品创建商品，调整售价与销售选项，保存草稿。 |
+| 解析机体制作包，核对形态与依赖，预览商城和扭蛋图标。 | 内置五个可编辑商品预设，首次绑定空工作区自动上架；也可新增商品。 |
 
 | [对战 AI](docs/pvp-ai.zh-CN.md) | [任务 AI 僚机](docs/coop-wingmen.zh-CN.md) |
 |:---:|:---:|

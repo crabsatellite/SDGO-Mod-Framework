@@ -15,7 +15,7 @@ Unofficial fan project; no game files are included. [简体中文](README.zh-CN.
 | [Unit import](docs/unit-import.md) | [Shop catalog management](docs/shop-catalog.md) |
 |:---:|:---:|
 | [![Unit import](docs/unit-import-demo.webp)](docs/unit-import.md) | [![Shop catalog management](docs/shop-catalog-demo.webp)](docs/shop-catalog.md) |
-| Parse authoring packages, check forms and dependencies, and review shop and capsule icons. | Create offers from native items, adjust prices and sale options, and save drafts. |
+| Parse authoring packages, check forms and dependencies, and review shop and capsule icons. | Five built-in editable offer presets, listed on first binding an empty workspace; add further offers in Manager. |
 
 | [PvP AI](docs/pvp-ai.md) | [Mission AI wingmen](docs/coop-wingmen.md) |
 |:---:|:---:|

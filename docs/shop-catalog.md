@@ -4,6 +4,7 @@
 
 ![Shop catalog: create an offer, adjust its price and save the draft](shop-catalog-demo.webp)
 
+Five editable offer presets are built in and listed on first binding an empty workspace.
 Owners manage their own native shop offers in the **商城商品** (shop) panel of SDGO Mod Manager:
 add, search, edit, list/unlist, retire and restore. Players keep buying in the native in-game shop.
 Chinese option names and rental labels come from the separate [shop labels fix](shop-labels.md).
@@ -19,6 +20,17 @@ exact price, GB/MB and validity/quantity, retaining that offer's own native elig
 no private owner assets or IDs ship in the defaults. A missing valid source rejects the complete initialization
 before product SQL is applied.
 
+| Built-in offer name | Source selected in the destination shop |
+| --- | --- |
+| 预设·永久机体 (permanent unit) | An existing permanent-unit offer, retaining price, currency and permanent validity |
+| 预设·租赁机体 (rental unit) | An existing rental-unit offer, retaining price, currency and rental days |
+| 预设·副官 (operator) | An existing operator offer, retaining price, currency and quantity/validity |
+| 预设·设计图 (blueprint) | An existing blueprint offer, retaining price, currency and quantity/validity |
+| 预设·消耗品 (consumable) | An existing ETC offer, retaining price, currency and quantity/validity |
+
+The module bundles these selection rules and initialization, rather than five fixed content assets.
+Actual items and prices depend on each owner's existing stock; no maintainer-private content is required.
+
 Edit, unlist or retire these offers in the ordinary shop panel, then save and apply. The catalog retains its
 initialization version, so updates and later bindings preserve those changes. Existing nonempty catalogs are
 preserved to avoid implicitly publishing author drafts. A failed initial application retains assigned identities
@@ -26,6 +38,40 @@ and reviewable drafts; use the ordinary Apply action after inspection. A configu
 display and acquisition data through the normal owner update workflow.
 Players use the original shop UI. ETC items such as coins can require the original additional quantity/extension
 confirmation before the purchase is committed.
+
+### Follow a preset to edit or add an offer
+
+1. Install the server shop component. In Manager's **商城商品** panel, choose an empty shop workspace and
+   the `WorldServer` folder, then click **保存位置设置** (save locations). The connection comes from your own
+   `WorldServer.ini`; after successful initialization, all five presets appear as listed.
+   An optional selected client must already have the shop labels and shop localization Mods installed.
+2. Select a preset and inspect its actual item, price, currency and quantity/validity. Edit this offer,
+   click **保存商品** (save offer), then **应用到游戏** (apply to game).
+3. To sell a different item, select the already-registered target in the native item dropdown, enter a
+   Chinese offer name and click **新增商品** (add offer). Follow the same type's preset for the sale options;
+   review price, currency, validity and listing before saving and applying. The tool allocates identities.
+4. Distribute matching display resources through the server owner's client package or update.
+   Updated players reopen the original shop to view and purchase the offer on those terms.
+
+These steps require no script or example ZIP. A nonempty catalog does not receive extra presets;
+use step 3 to add offers there. If a source type is missing, check that server's item registrations
+and native single-item templates first.
+
+### First server component installation
+
+When using the standalone server shop package, close the target WorldServer and run from the extracted
+package root. This command uses its included empty catalog example:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -Target "D:\Server\WorldServer" -ConfigFile .\payload\shop_catalog\catalog.example.ini
+```
+
+The installer writes it to the target's `catalog.ini`; first binding in Manager generates the defaults.
+For a first installation while WorldServer is running, add `-DeferActivation`: it only adds a previously
+absent catalog directory, leaving loaded modules untouched. DLL activation waits for the next normal restart;
+the helper can apply offers immediately.
+
+## Everyday management
 
 Set the existing shop workspace, the `WorldServer` folder and optionally a local client folder (for
 display labels). Pick a native item and click **新增商品** (add); edit name, option label, price, GB/MB
@@ -37,10 +83,9 @@ After a successful apply, the selected client receives acquisition data for actu
 
 ## Example: sell an already registered Training Unit
 
-For target-resolved examples, use [four item classes and five authoring templates](../examples/shop/README.md):
-permanent/rental units, operators, blueprints and consumables. Recipes carry no server data. Generation inherits
-visible target terms, preserves existing offers and leaves every example disabled. Draft import, explicit listing
-and player display installation are separate operations.
+The example below uses Manager directly. Developers who need exchangeable JSON drafts can use the optional
+[four item classes and five authoring templates](../examples/shop/README.md). That tool generates unlisted drafts;
+it is separate from the automatically listed built-in presets and is not required for ordinary installation.
 
 Assume the fictional unit and its permanent item category are already applied to the same database, with matching
 client models/icons. Refresh the item catalog, select that category, create “训练机使用权” with label “永久”,
