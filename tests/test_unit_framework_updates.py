@@ -46,7 +46,7 @@ class UnitFrameworkUpdates(unittest.TestCase):
     def save_receipt(self):
         storage.atomic(self.host/ownership.RECEIPT,storage.json_bytes(self.receipt))
 
-    def framework(self,version,legacy=False,fragment=False):
+    def framework(self,version,legacy=False,fragment=False,presets=False):
         raw,_,_=bundle('beta',version)
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:catalog=json.loads(archive.read('client/sdgo/catalog.json'))
         mod={'id':'unit_catalog','feature':'unit-import','target':'client','category':'gameplay',
@@ -54,6 +54,7 @@ class UnitFrameworkUpdates(unittest.TestCase):
              'config_files':[],'runtime_files':[]}
         if not legacy:mod['distribution']='public'
         if fragment:mod['files'].append('symbols.fragment.ini')
+        if presets:mod['files'].append('default-presets.json')
         catalog['mods'].append(mod);catalog['features']['unit-import']={'category':'gameplay','mods':['unit_catalog']}
         scope=b'' if legacy else b'distribution=public\n'
         ini=b'[mod]\nid=unit_catalog\nversion=0.4.0\n'+scope+b'enabled=0\n[settings]\nEnabled=1\nNewOption=7\n'
@@ -64,6 +65,7 @@ class UnitFrameworkUpdates(unittest.TestCase):
             'client/'+ownership.BASE+'mod.ini':ini,
             'client/'+ownership.BASE+'manager.json':storage.json_bytes(manager)}
         if fragment:payload['client/'+ownership.BASE+'symbols.fragment.ini']=b'[unit.signature]\nrva=42\n'
+        if presets:payload['client/'+ownership.BASE+'default-presets.json']=b'{"fixture_version":2}'
         raw,asset,_=bundle('beta',version,extra=payload)
         path=self.root/('framework-'+version);manifest=u.unpack(raw,asset,path)
         return path,manifest
@@ -104,6 +106,9 @@ class UnitFrameworkUpdates(unittest.TestCase):
 
     def test_optional_sealed_content_and_archive_parts_stay_unchanged_through_an_update(self):
         extra={'native-programs.bin':b'sealed programs','skill-atlases.bin':b'sealed atlases',
+               'blueprint-availability.json':b'{"fixture_availability":1}',
+               'blueprint-availability.bin':b'fixture catalog-bound blueprint availability',
+               'stage-rules.bin':b'fixture catalog-bound stage rules',
                'resources.1.zpk':b'second archive part','resources.2.zpk':b'third archive part'}
         for name,data in extra.items():
             (self.mod/name).write_bytes(data)
@@ -127,6 +132,18 @@ class UnitFrameworkUpdates(unittest.TestCase):
         receipt=self.check_receipt();self.assertFalse(receipt['files'][-1]['owned'])
         self.assertEqual((source/'client'/ownership.BASE/'symbols.fragment.ini').read_bytes(),fragment.read_bytes())
         fragment.write_bytes(fragment.read_bytes()+b'external change');before=self.all_bytes()
+        with self.assertRaises(ValueError):u.install_host(self.record,source,manifest,self.cache,lambda _:False)
+        self.assertEqual(before,self.all_bytes())
+
+    def test_framework_updates_its_preset_descriptor_and_rejects_unrecorded_edits(self):
+        descriptor=self.mod/'default-presets.json';descriptor.write_bytes(b'{"fixture_version":1}')
+        self.receipt['files'].append({'path':ownership.BASE+'default-presets.json',
+            'installed_sha256':u.digest(descriptor.read_bytes()),'owned':False});self.save_receipt()
+        source,manifest=self.framework('1.3.3-beta.1',presets=True)
+        self.assertEqual('installed',u.install_host(self.record,source,manifest,self.cache,lambda _:False)['status'])
+        receipt=self.check_receipt();self.assertFalse(receipt['files'][-1]['owned'])
+        self.assertEqual(b'{"fixture_version":2}',descriptor.read_bytes())
+        descriptor.write_bytes(b'{"fixture_version":99}');before=self.all_bytes()
         with self.assertRaises(ValueError):u.install_host(self.record,source,manifest,self.cache,lambda _:False)
         self.assertEqual(before,self.all_bytes())
 

@@ -20,12 +20,13 @@ from . import storage
 BASE = 'sdgo/mods/unit_catalog/'
 RECEIPT = BASE + 'install-receipt.json'
 PROGRAMS = frozenset(BASE + name for name in ('unit_catalog.dll', 'mod.ini', 'manager.json'))
-OPTIONAL_PROGRAMS = frozenset({BASE+'symbols.fragment.ini'})
+OPTIONAL_PROGRAMS = frozenset(BASE+name for name in ('symbols.fragment.ini','default-presets.json'))
 CONTENT = frozenset(BASE + name for name in (
     'catalog.bin', 'definitions.json', 'resource-overlay.ini', 'resources.zdx', 'resources.zpk'))
 # Optional sealed content a package may add: native Lua programs, skill atlases and the
 # further parts of a split overlay archive. Like CONTENT they are never changed here.
-OPTIONAL_CONTENT = frozenset({BASE + 'native-programs.bin', BASE + 'skill-atlases.bin'} |
+OPTIONAL_CONTENT = frozenset({BASE + name for name in ('native-programs.bin','skill-atlases.bin',
+                             'blueprint-availability.json','blueprint-availability.bin','stage-rules.bin')} |
                              {BASE + f'resources.{part}.zpk' for part in range(1, 32)})
 RESOURCE_ROOTS = {'anrs', 'fxrs', 'mdrs', 'scp', 'sdrs', 'sol', 'sprs', 'trns', 'txrs', 'uirs'}
 BLOCKED = {'.bat', '.cmd', '.com', '.dll', '.exe', '.js', '.lnk', '.msi', '.ps1', '.scr', '.vbs'}
