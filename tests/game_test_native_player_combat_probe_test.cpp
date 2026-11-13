@@ -635,6 +635,53 @@ namespace
         g_missingSymbol = nullptr;
     }
 
+    void SharedMovementInputTests()
+    {
+        ResetNativeWorld();
+        g_setting = 1;
+        g_continuousSetting = 0;
+        g_missionAdvanceSetting = 0;
+        g_missionAdvanceDurationSetting = 0;
+        g_secondarySetting = 0;
+        g_weaponSlotSetting = -1;
+        auto api = Api();
+        ScoreboardActions input;
+        CHECK(input.Install(&api, nullptr));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 31) == 0);
+        NativePlayerCombatProbe probe;
+        CHECK(probe.Install(&api, nullptr));
+        for (uint32_t action=1;action<4;++action) input.HoldGameplay(action,true);
+        auto snapshot = Snapshot();
+        auto status = StartStatus();
+        auto context = Context(1000);
+        CHECK(probe.Poll(&context,snapshot,status,input));
+        for (uint32_t action=1;action<4;++action)
+            CHECK(g_heldDetour(g_nativeInput,nullptr,action) == 1);
+        context.elapsed_ms = 2000;
+        CHECK(probe.Poll(&context,snapshot,status,input));
+        probe.Stop(input);
+        for (uint32_t action=1;action<4;++action) {
+            CHECK(g_heldDetour(g_nativeInput,nullptr,action) == 1);
+            input.HoldGameplay(action,false);
+        }
+        CHECK(g_heldDetour(g_nativeInput,nullptr,0) == 0);
+
+        // Even a configured mission advance is inactive in a PvP snapshot.
+        // It must not acquire or clear another caller's directional keys.
+        g_missionAdvanceSetting = 1;
+        g_missionAdvanceDurationSetting = 5000;
+        NativePlayerCombatProbe pvpWithMissionSetting;
+        CHECK(pvpWithMissionSetting.Install(&api,nullptr));
+        input.HoldGameplay(2,true);
+        CHECK(pvpWithMissionSetting.Poll(&context,snapshot,status,input));
+        CHECK(g_heldDetour(g_nativeInput,nullptr,2) == 1);
+        pvpWithMissionSetting.Stop(input);
+        CHECK(g_heldDetour(g_nativeInput,nullptr,2) == 1);
+        input.HoldGameplay(2,false);
+        g_missionAdvanceSetting = 0;
+        g_missionAdvanceDurationSetting = 0;
+    }
+
     void GatingAndAbiTests()
     {
         ResetNativeWorld();
@@ -1135,6 +1182,23 @@ namespace
         CHECK(Get<int32_t>(g_unit, 0x38) == routeHp);
         returnToField.Stop(input);
 
+        // The same probe starts a new mission battle at the first route leg.
+        // A completed return/centering state from the prior battle must not leak.
+        ++returnMission.battle_generation;
+        Put(g_node,0x88,0.0f);
+        Put(g_node,0x90,0.0f);
+        returnContext.elapsed_ms = 9000;
+        CHECK(returnToField.PollMission(&returnContext,returnMission,
+            returnMission.battle_generation,returnMission.room_object,22,kPilotId,input));
+        CHECK(g_heldDetour(g_nativeInput,nullptr,3) == 1);
+        Put(g_node,0x90,5000.0f);
+        returnContext.elapsed_ms = 15000;
+        CHECK(returnToField.PollMission(&returnContext,returnMission,
+            returnMission.battle_generation,returnMission.room_object,22,kPilotId,input));
+        CHECK(g_heldDetour(g_nativeInput,nullptr,2) == 1);
+        CHECK(!g_fireHeld && !g_lockHeld);
+        returnToField.Stop(input);
+
         ResetNativeWorld();
         NativePlayerCombatProbe pvpAdvanceDisabled;
         CHECK(pvpAdvanceDisabled.Install(&api, nullptr));
@@ -1385,6 +1449,7 @@ int main()
 {
     InstallTests();
     GatingAndAbiTests();
+    SharedMovementInputTests();
     MissionLeaseTests();
     RangedWeaponAcknowledgementTests();
     SpecialModeTests();

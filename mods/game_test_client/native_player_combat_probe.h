@@ -119,6 +119,7 @@ public:
     bool enabled_ = false;
     bool continuousPrimary_ = false;
     bool missionAdvance_ = false;
+    bool directionalInputsOwned_ = false;
     uint32_t missionAdvanceDurationMs_ = 0;
     bool lockOn_ = false;
     int requestedWeaponSlot_ = -1;
@@ -189,7 +190,11 @@ public:
 
     void Release(ScoreboardActions& input)
     {
-        for (uint32_t action=0;action<4;++action) input.HoldGameplay(action,false);
+        if (directionalInputsOwned_)
+            for (uint32_t action=0;action<4;++action) input.HoldGameplay(action,false);
+        else
+            input.HoldGameplay(kForwardAction, false);
+        directionalInputsOwned_ = false;
         input.HoldGameplay(kPrimaryAction, false);
         input.HoldGameplay(kLockAction, false);
         if (requestedWeaponSlot_ >= 0)
@@ -225,6 +230,8 @@ public:
         dispatches_ = 0;
         missionAdvanceStarted_ = false;
         missionAdvanceStartedAt_ = 0;
+        missionReturned_ = false;
+        missionCentered_ = false;
         specialPhase_ = SpecialPhase::Charge;
         specialPhaseAt_ = 0;
         specialAttempts_ = 0;
@@ -973,7 +980,10 @@ private:
         // after that input lease expires. No pose or FSM state is authored.
         const bool approaching = missionControl && missionAdvance_ && missionAdvanceActive;
         float facingX=0.0f, facingZ=0.0f;
-        const bool facingValid = battle_ai::native::detail::Read(node,0x6C,facingX) &&
+        const bool advanceControl = missionControl && missionAdvance_;
+        directionalInputsOwned_ = directionalInputsOwned_ || advanceControl;
+        const bool facingValid = advanceControl &&
+            battle_ai::native::detail::Read(node,0x6C,facingX) &&
             battle_ai::native::detail::Read(node,0x74,facingZ) &&
             std::isfinite(facingX) && std::isfinite(facingZ) &&
             facingX*facingX+facingZ*facingZ>0.01f;
@@ -1035,8 +1045,9 @@ private:
         }
         // Keep the selected key held rather than manufacturing a fresh down
         // edge every frame (which the native consumer treats as double-tap).
-        for (uint32_t action=0;action<4;++action)
-            if (action!=movementAction) input.HoldGameplay(action,false);
+        if (advanceControl)
+            for (uint32_t action=0;action<4;++action)
+                if (action!=movementAction) input.HoldGameplay(action,false);
         input.HoldGameplay(movementAction, forward);
         input.HoldGameplay(kPrimaryAction, primary);
         // Supply the mapped secondary action to its original consumer.
@@ -1051,14 +1062,16 @@ private:
         forwardHeld_ = forward;
         primaryHeld_ = primary;
 
-        uint32_t moveBefore = 0;
-        for (uint32_t action=0;action<4;++action) moveBefore+=input.GameplayQueries(action);
+        uint32_t moveBefore = input.GameplayQueries(kForwardAction);
+        if (advanceControl)
+            for (uint32_t action=1;action<4;++action) moveBefore+=input.GameplayQueries(action);
         const uint32_t fireBefore =
             input.GameplayQueries(kPrimaryAction);
         moveInput_(unit, nativeInput);
         fireInput_(unit, nativeInput);
-        uint32_t moveAfter = 0;
-        for (uint32_t action=0;action<4;++action) moveAfter+=input.GameplayQueries(action);
+        uint32_t moveAfter = input.GameplayQueries(kForwardAction);
+        if (advanceControl)
+            for (uint32_t action=1;action<4;++action) moveAfter+=input.GameplayQueries(action);
         const uint32_t fireAfter =
             input.GameplayQueries(kPrimaryAction);
         consumedMoveQueries_ += moveAfter - moveBefore;
