@@ -56,6 +56,36 @@ Its final equipment has a slower, shorter-range rifle and lower base mobility th
 ν Gundam's full Psychoframe bonuses. A/AS/AR share the target client's A-tier cost group. Every form retains the
 same AR classification and four-point cost. These are starting balance values for owner playtesting.
 
+### Making your own units from the presets
+
+Both units are public authoring examples included with the Mod. The source,
+[`mods/unit_catalog/default-presets.json`](../mods/unit_catalog/default-presets.json), declares forms, compatible
+original templates and hashes, new skill and weapon field edits, names, descriptions and stage rules. Manager
+currently provides the default-registration switch, without a “clone preset as a new unit” button. New author
+projects use the import, preview and publication workflow on this page.
+
+Single, two-form and three-stage families share the same import protocol:
+
+| Design | `behavior_profile` | Complete records and transform targets |
+| --- | --- | --- |
+| Single form | `native-single-form-v1` | A → 0 |
+| Reciprocal two-form unit | `native-linked-forms-v1` | A → B, B → A |
+| One-way two-form unit / armor purge | `native-one-way-forms-v1` | A → B, B → 0; see Ember |
+| Three-stage growth | `native-three-stage-forms-v1` | A → B, B → C, C → 0; see Kindling |
+
+A/B/C name forms, not unit ranks. Each form needs a complete unit record, weapons, skill references and
+model/animation dependencies; compatible native resources may be reused. `root_unit_id` chooses the inventory
+entry; alternate forms do not each need an inventory item. Reciprocal transformation retains native R-key
+eligibility. Automatic purge or progression also needs rules matched to real skills; selecting a profile alone
+does not enable automatic progression.
+
+Keep the bundled examples and edit your own author project or recipe. Use separate project/family identities
+and unused unit, skill, weapon and item IDs, updating every reference. Changing an original template requires
+its correct hash. Review names, skill descriptions, balance and images together. Generate a complete paired
+publication, then validate dependencies, register both sides and verify actual combat. Developer entry points
+and rule fields are in the [protocol guide](unit-import-protocol.zh-CN.md#公开预设配方与自动阶段规则);
+see the [complete generic skill and icon example](unit-skill-import.md).
+
 | part | runs on | does |
 |---|---|---|
 | Manager **机体导入** (Unit import) panel | owner's PC | parse, complete, generate images, confirm and publish |
@@ -147,7 +177,8 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
 - **原生行为配置** (native behavior profile) offers: single form (`native-single-form-v1`), reciprocal two-form links
   (`native-linked-forms-v1`), one-way links whose final form cannot transform back (`native-one-way-forms-v1`), a
   single self-referencing record (`native-self-transform-v1`), and entry forms that transform into one
-  form of an already published reciprocal pair (`native-entry-forms-v1`).
+  form of an already published reciprocal pair (`native-entry-forms-v1`), plus exactly three complete records
+  in a three-stage chain (`native-three-stage-forms-v1`).
 - For two independently switchable states, supply two complete reciprocal records and matching native transform
   animations. They may share a model. A self-reference by itself can be a native no-op and is not proof of two states.
 - An entry form enters the hangar as its own unit, and its first transform enters the reciprocal pair. Moving back

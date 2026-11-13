@@ -235,8 +235,9 @@ SQL `BattleMode` 与客户端末尾调度字段是独立输入，不按相同名
 
 - `root_unit_id`：明确选择进入机库的根形态，必须属于该包。
 - `behavior_profile`：`native-single-form-v1`、`native-linked-forms-v1`、`native-one-way-forms-v1`、
-  `native-entry-forms-v1`（入口形态，变入已发布双向形态之一；第二跳需要原生形态图运行时）或
-  `native-self-transform-v1`（单条记录，变形目标为自身）。
+  `native-entry-forms-v1`（入口形态，变入已发布双向形态之一；第二跳需要原生形态图运行时）、
+  `native-self-transform-v1`（单条记录，变形目标为自身）或 `native-three-stage-forms-v1`
+  （同一机体族内恰好三条完整记录，根 → 中间态 → 终态 → 0）。
 - `item_template_id`：客户端和服务端都存在的永久机体物品类别模板。
 - `item_text`：可选，`{"description": "...", "usage": "..."}`。编译时写入新物品类别（kind 34，614字节）
   的 `+0xD6` 和 `+0x19E`，即商城详情与扭蛋结果里的「性能」「使用」栏。两个原生字段各容纳100个 UTF-16 单元
@@ -251,6 +252,8 @@ SQL `BattleMode` 与客户端末尾调度字段是独立输入，不按相同名
 
 单形态要求变形目标为零。双向 profile 要求完整、互相匹配的两条关系；单向 profile 要求终态的变形目标为零；
 自变形要求单条记录指向自身；入口形态要求单条记录指向已发布双向形态之一。
+三阶段要求三条记录从选定根依次可达，无外部目标或环，终态目标为零，并通过批量应用安装服务端形态图。
+自引用不能证明第二状态或可用的 R 键动作；独立双状态应使用完整互指记录及配套动作。
 超出这些适配器范围的有向图需要匹配的 profile，不会删掉多余形态后当作兼容。
 Manager 的 `form_graph` 报告使用 `sdgo.unit-transform-graph/1`，从完整4976字节记录
 的 `+316` 四字节字段读取目标，逐条绑定记录 SHA-256。报告单列弱连通分组、有向环、
@@ -261,6 +264,47 @@ Manager 的 `form_graph` 报告使用 `sdgo.unit-transform-graph/1`，从完整4
 技能依赖必须由目标已有目录或完整协议包提供。只有已验证可同步编码的技能 1/2 支持服主逐项明确移除，效果会丢失并记录来源；
 不凭编号编造技能，不自动清空未知技能或脚本。目标已有原生消费者的新增数据按完整发布物导入；
 未知布局、目标缺少的行为或额外固定编号分支才需要相应适配器。
+
+## 公开预设配方与自动阶段规则
+
+[`mods/unit_catalog/default-presets.json`](../mods/unit_catalog/default-presets.json) 是随 Mod 提供的公开示例，
+schema 为 `sdgo.unit-default-presets/1`，从兼容目标客户端的完整原生模板组合新记录，不携带原版模型包。
+它与编辑器的 definitions JSON 不同：配方条目使用 `profile`，生成的机体族定义使用 `behavior_profile`；
+两者的 profile 值相同，配方文件不能直接当 definitions 上传。
+
+制作新配方时保留完整结构，修改 `owner`、各条目的 `key`／`family_key`、新编号、全部引用、文字和字段修改。
+`templates` 逐项绑定原版记录的 kind、ID 与 SHA-256；更换模板须更新摘要。当前配方生成器要求每个预设引用
+两个已声明的普通技能，并校验其原生编号类别。制作单形态可保留这两个技能、令唯一形态的 `target` 为 0，
+并移除该形态的阶段规则；双形态和三阶段按上节关系提供完整记录。不能用补零占位代替记录或资源。
+
+开发者入口：
+
+- [`preset_recipe.load(path)`](../owner/units/preset_recipe.py) 读取并校验作者配方；
+  `compose(recipe, baseline, catalog)` 核对目标原版摘要及服务端定义并生成两端数据。
+- [`preset_publication.build(output, baseline, repository, module_binary, recipe=recipe)`](../owner/units/preset_publication.py)
+  生成新候选目录并返回 `publication` 路径。`baseline` 使用目标客户端的 `assets.Baseline`，
+  `repository` 使用配置到 WorldServer INI 的 `repository.Repository`，`module_binary` 指向已安装的
+  `unit_catalog.dll`；参数来自服主自己的配置。生成本身不应用 SQL、不安装客户端。
+- 输出包含 `server-plan.json`、`form-graph-requests.json`、登记资料和 `package` 客户端安装目录；
+  在 Manager 走既有[批量应用](unit-import.zh-CN.md#把批量阵容应用到服务端)并安装对应客户端内容。
+  新作者内容单独发布；默认自动登记只负责内置配方，不手改受管 `presets` 安装目录或伪造回执。
+
+自动阶段与形态数分开声明。配方的 `stage_rules` 为以下对象的列表；这是结构片段，不是可独立安装的包：
+
+```json
+[
+  {"unit_id": 29001, "target_unit_id": 29002, "skill_id": 74001, "max_hp_percent": 85},
+  {"unit_id": 29002, "target_unit_id": 29003, "skill_id": 74002, "max_hp_percent": 45}
+]
+```
+
+这些虚构编号仍须检查目标占用。每个起点最多一条规则，目标必须等于其完整机体记录的原生变形目标。
+技能必须在起点的技能 1／2 槽，并以完整 kind 13 记录包含在同一目录中；`Activate=2`、`ActivateValue` 与
+`max_hp_percent` 一致，客户端调度字节为 0，起点与目标使用标准变形条件。阈值为 1–99 的整数。
+[`stages.encode(rules, catalog, records)`](../owner/units/stages.py) 核对这些条件，生成绑定完整目录摘要的
+`stage-rules.bin`，随同版客户端内容交付；只增加一段未编译的 JSON 不会开启行为。
+运行时等待实际原生技能生效与耐久条件满足后发送原版变形请求，保留原生资格检查，不恢复耐久。
+没有规则的普通单／双形态按原生行为运行；profile 本身不产生自动升级、额外模型或新动作。
 
 ## 客户端内容与展示
 
