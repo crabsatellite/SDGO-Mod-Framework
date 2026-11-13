@@ -250,13 +250,16 @@ void* __cdecl NativeWfopen(const wchar_t*, const wchar_t*) {
     return nullptr;
 }
 
-void Log(SdgoMod*, int, const char* format, ...) {
-    if (g_diagnosticPath.empty()) return;
+void Log(SdgoMod*, int level, const char* format, ...) {
     char text[2048]{};
     va_list arguments;
     va_start(arguments, format);
     _vsnprintf_s(text, sizeof(text), _TRUNCATE, format, arguments);
     va_end(arguments);
+    if(g_diagnosticPath.empty()) {
+        if(level>=SDGO_LOG_ERROR)std::fprintf(stderr,"unit_catalog: %s\n",text);
+        return;
+    }
     const HANDLE stream = CreateFileW(g_diagnosticPath.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
                                       nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (stream == INVALID_HANDLE_VALUE) return;
@@ -450,17 +453,21 @@ std::vector<uint8_t> MakeNativeFixture(const std::string& scenario) {
     if(scenario=="funnel_reference_missing")Put32(weapon.bytes.data()+kWeaponFunnelOffset,999998);
     if(scenario=="special_feature_reference_missing")
         Put32(weapon.bytes.data()+kWeaponSpecialFeatureOffset,999998);
-    if(scenario=="dependency_records_success" || scenario=="linked_skill_reference_missing") {
+    if(scenario=="dependency_records_success" || scenario=="linked_skill_reference_missing" || scenario=="skill_parameter_reference_missing") {
         Entry skill=MakeRecord(kSkillType,9000001);
         Entry linkedSkill=MakeRecord(kSkillType,9000002);
         Entry funnel=MakeRecord(kFunnelType,198131);
         Entry feature=MakeRecord(kSpecialFeatureType,59051);
+        Entry parameters=MakeRecord(kSkillParameterType,8000789);
         Put32(first.bytes.data()+kUnitSkillOffsets[0],skill.id);
         Put32(weapon.bytes.data()+kWeaponFunnelOffset,funnel.id);
         Put32(weapon.bytes.data()+kWeaponSpecialFeatureOffset,feature.id);
         Put32(skill.bytes.data()+kSkillLinkedSkillOffset,linkedSkill.id);
+        Put32(skill.bytes.data()+kSkillParameterReferenceOffset,parameters.id);
         std::vector<Entry> entries={first,second,feature,weapon,funnel,blueprint,category,blueprintCategory,index,skill};
-        if(scenario=="dependency_records_success")entries.push_back(linkedSkill);
+        if(scenario!="linked_skill_reference_missing")entries.push_back(linkedSkill);
+        if(scenario=="dependency_records_success")entries.push_back(parameters);
+        std::sort(entries.begin(),entries.end(),[](const Entry& a,const Entry& b){return a.id<b.id;});
         return Encode(entries);
     }
     Put32(first.bytes.data() + kUnitTransformOffset, second.id);
@@ -495,6 +502,7 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
           scenario=="funnel_reference_missing" || scenario=="dependency_records_success" ||
           scenario=="special_feature_reference_missing" ||
           scenario=="linked_skill_reference_missing" ||
+          scenario=="skill_parameter_reference_missing" ||
           scenario=="blueprint_material_missing" ||
           scenario=="blueprint_item_reference_missing" ||
           scenario=="index_blueprint_reference_missing" ||
@@ -646,7 +654,7 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
     reinterpret_cast<Detour>(g_loadDetour)(g_grid, nullptr, L"gdrs\\0280.gdt", 0x0d);
     Check(g_loadCalls == 2, "original native table loader called before both detours");
     if (scenario == "success" || scenario=="dependency_records_success" || scenario=="large_catalog") {
-        const size_t expected=scenario=="dependency_records_success" ? 11u:
+        const size_t expected=scenario=="dependency_records_success" ? 12u:
                               scenario=="large_catalog" ? static_cast<size_t>(kMaxRecords) : 7u;
         Check(g_nodes.size() == expected && static_cast<size_t>(g_integrityRecords) == expected,
                "all unit, weapon, blueprint, item-category and encyclopedia records entered the native tree");
@@ -899,6 +907,13 @@ int ParserFixture() {
         Check(!catalog.Parse(Encode({unnamed}),error),"special feature without a name rejected");
         feature.bytes.pop_back();
         Check(!catalog.Parse(Encode({feature}),error),"incomplete special feature rejected");
+        Entry parameters=MakeRecord(kSkillParameterType,8000789);
+        Check(catalog.Parse(Encode({parameters}),error)&&catalog.Contains(parameters.id,kSkillParameterType),
+              "primitive 89-byte skill parameters parsed and typed");
+        Put32(parameters.bytes.data()+65,0x7fc00000u);
+        Check(!catalog.Parse(Encode({parameters}),error),"non-finite parameter rate rejected");
+        parameters.bytes.pop_back();
+        Check(!catalog.Parse(Encode({parameters}),error),"incomplete skill parameter record rejected");
     }
     {
         const Entry validBlueprint = MakeRecord(kBlueprintType, 200001);

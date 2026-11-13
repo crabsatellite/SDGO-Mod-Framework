@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -15,6 +16,7 @@ constexpr uint32_t kWeaponType = 10;
 constexpr uint32_t kFunnelType = 11;
 constexpr uint32_t kSpecialFeatureType = 12;
 constexpr uint32_t kSkillType = 13;
+constexpr uint32_t kSkillParameterType = 79;
 constexpr uint32_t kAffiliationType = 20;
 constexpr uint32_t kBlueprintType = 0x21;
 constexpr uint32_t kItemCategoryType = 0x22;
@@ -24,6 +26,8 @@ constexpr size_t kWeaponBytes = 1871;
 constexpr size_t kFunnelBytes = 732;
 constexpr size_t kSpecialFeatureBytes = 1559;
 constexpr size_t kSkillBytes = 1132;
+constexpr size_t kSkillParameterBytes = 89;
+constexpr size_t kSkillParameterReferenceOffset = 284;
 constexpr size_t kAffiliationBytes = 106;
 constexpr uint32_t kAffiliationFirstKey = 125501;
 constexpr size_t kBlueprintBytes = 1197;
@@ -93,7 +97,7 @@ struct Header {
 };
 
 struct EntryHeader {
-    uint32_t kind;                  // 2 unit, 10 weapon, 11 funnel, 12 special feature, 13 skill, 0x21 blueprint, 0x22 item, 0x55 index
+    uint32_t kind;                  // 2 unit, 10 weapon, 11 funnel, 12 special feature, 13 skill, 0x21 blueprint, 0x22 item, 79 skill parameters, 0x55 index
     uint32_t id;
     uint32_t byteCount;
     uint32_t recordHash;            // FNV-1a over the following native record
@@ -112,6 +116,7 @@ inline size_t ExpectedBytes(uint32_t kind) {
     case kFunnelType: return kFunnelBytes;
     case kSpecialFeatureType: return kSpecialFeatureBytes;
     case kSkillType: return kSkillBytes;
+    case kSkillParameterType: return kSkillParameterBytes;
     case kAffiliationType: return kAffiliationBytes;
     case kBlueprintType: return kBlueprintBytes;
     case kItemCategoryType: return kItemCategoryBytes;
@@ -306,6 +311,11 @@ private:
                 !std::all_of(entry.bytes.begin()+931,entry.bytes.begin()+1131,
                              [](uint8_t value){return value==0;}))
                 return Fail(error,"skill record does not match native-type13-1132-v1");
+        } else if (entry.kind == kSkillParameterType) {
+            for(const size_t offset:{size_t(65),size_t(69),size_t(73),size_t(77),size_t(81),size_t(85)}) {
+                float value=0;std::memcpy(&value,entry.bytes.data()+offset,sizeof(value));
+                if(!std::isfinite(value))return Fail(error,"skill parameter rate is not finite");
+            }
         } else if (entry.kind == kSpecialFeatureType) {
             // Special-feature rows share the native gdrs\0265.gdt/0064.gdt layout:
             // key, a zero publication byte and a UTF-16 name before the effect data.

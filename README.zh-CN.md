@@ -99,7 +99,7 @@
 |---|---|
 | [商城商品管理](docs/shop-catalog.zh-CN.md) <!-- catalog: `shop_catalog` --> | 首次绑定空目录自动上架五类可编辑预设，在 Manager 中改价、下架或新增商品（WorldServer） |
 | [扭蛋机编辑器](docs/capsule-catalog.zh-CN.md) <!-- catalog: `capsule_catalog` --> | 自带 35 台可编辑默认奖池；配套安装两端，管理机台、价格、概率和获取途径 |
-| [机体族导入](docs/unit-import.zh-CN.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 导入单形态、双形态与三阶段协议机体包，组合[自定义技能和图标](docs/unit-skill-import.zh-CN.md)，在服务端应用前检查武器回调资源，安装配套原生数据与预览；随附可复用的公开AR成长机、BR爆甲演示预设 |
+| [机体族导入](docs/unit-import.zh-CN.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | 导入单形态、双形态与三阶段协议机体包，组合[自定义技能、图标及配套效果参数](docs/unit-skill-import.zh-CN.md)，在服务端应用前检查技能参数与武器回调资源，安装配套原生数据与预览；随附可复用的公开AR成长机、BR爆甲演示预设 |
 | [地图与任务导入](docs/map-import.zh-CN.md) <!-- catalog: `map_catalog`, `map_catalog_server` --> | 在 Manager 导入地图与分阶段任务：原生队伍行进过场、机体横幅和指挥官提醒，守卫保护目标与友军成功撤离，敌友一致的活动范围、触边受击与非致命 HP 同步，门板碰撞开合、NPC 炮击、地面标线、加载海报与掉落；保留任务原名并生成配对的客户端内容与服务端定义；默认附 OPEN 示例地图与 8 阶段任务源码，可查看输入文件及生成脚本 |
 | [副官与能力管理](docs/operator-assistant.zh-CN.md) <!-- catalog: `operator_catalog`、`operator_catalog_server` --> | 在 Manager 编辑副官外观、能力、补给掉落和商城草稿，导入分享包并发布配套内容 |
 | [AI 机体目录（可选）](docs/ai-catalog.zh-CN.md) <!-- catalog: `ai_catalog` --> | 把服务器可出击的机体加入 AI 机体池 |

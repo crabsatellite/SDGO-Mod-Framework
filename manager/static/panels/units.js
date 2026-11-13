@@ -286,7 +286,7 @@ function renderNativeContent(){
   for(const [index,group] of groups.entries()){
     const box=document.createElement("details");box.className="panel";box.style.padding="12px";box.style.marginTop="10px";
     const title=document.createElement("summary");const s=group.summary||{};
-    title.textContent="资料组 "+(index+1)+" · 技能 "+(s.skills||0)+" · 浮游 "+(s.funnels||0)+" · 武器特殊效果 "+(s.special_features||0)+" · 资源 "+(s.resources||0)+(s.unsupported_records?" · 待适配 "+s.unsupported_records:"");
+    title.textContent="资料组 "+(index+1)+" · 技能 "+(s.skills||0)+" · 技能效果参数 "+(s.skill_parameters||0)+" · 浮游 "+(s.funnels||0)+" · 武器特殊效果 "+(s.special_features||0)+" · 资源 "+(s.resources||0)+(s.unsupported_records?" · 待适配 "+s.unsupported_records:"");
     box.append(title);
     const supplied=document.createElement("p");const parts=[];
     if(s.skills)parts.push("服务端技能定义"+(s.server_skills?"已携带":"待补充"),"技能图集"+(s.skill_atlases?"已携带":"待补充"));

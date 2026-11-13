@@ -16,6 +16,7 @@ DEPENDENCY_KINDS = frozenset(
         "skill-icon-sprite-texture",
         "effect-zfx-texture",
         "linked-skill",
+        "skill-parameter-record",
         "feature-dispatch",
         "unit-skill-slot",
         "server-skill-fields",
@@ -163,6 +164,8 @@ def validate_manifest(value: Any) -> dict[str, Any]:
                 raise ValueError(
                     f"resolved file dependency {edge_id} needs SHA-256"
                 )
+        if kind=='skill-parameter-record' and state=='resolved' and artifact_hash is None:
+            raise ValueError(f"resolved skill parameter dependency {edge_id} needs record SHA-256")
         if state == "resolved" and proof_hash is None:
             raise ValueError(
                 f"resolved dependency {edge_id} needs proof SHA-256"

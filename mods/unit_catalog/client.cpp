@@ -164,6 +164,14 @@ bool ValidateReferences(void* grid) {
                     static_cast<unsigned long>(entry.id),static_cast<unsigned long>(linked));
                 return false;
             }
+            // CUnit's original 006CF330 consumes the kind-79 record selected
+            // by skill+284. An unresolved lookup is dereferenced at +5.
+            const uint32_t parameters=U32(entry.bytes.data()+kSkillParameterReferenceOffset);
+            if(parameters&&!ReferenceExists(grid,parameters,kSkillParameterType)) {
+                g_api->Log(g_mod,SDGO_LOG_ERROR,"skill %lu parameter record %lu (kind 79) is unavailable",
+                    static_cast<unsigned long>(entry.id),static_cast<unsigned long>(parameters));
+                return false;
+            }
         } else if (entry.kind == kItemCategoryType) {
             const uint32_t reference = U32(entry.bytes.data() + kItemCategoryRefOffset);
             const bool blueprint =

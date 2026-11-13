@@ -122,6 +122,40 @@ class DefaultService(unittest.TestCase):
         self.assertEqual('installed', controller.state()['status'])
         self.assertEqual('r1', controller.state()['revision'])
 
+    def test_default_preset_preflight_reuses_the_selected_clients_parameter_record(self):
+        from owner.units import skill_parameters
+        module=self.root/'sdgo/mods/unit_catalog';module.mkdir(parents=True)
+        (module/'mod.ini').write_text('[mod]\nversion=0.6.2\n')
+        (module/'unit_catalog.dll').write_bytes(b'fixture programme')
+        (self.root/'GOnline.exe').write_bytes(b'fixture compatible host')
+        self.provider.config={'client':str(self.root),'server_ini':str(self.root/'world.ini')}
+        self.provider._units_root=lambda:self.root/'workspace'
+        recipe=copy.deepcopy(preset_recipe.load());recipe['host_sha256']=hashlib.sha256((self.root/'GOnline.exe').read_bytes()).hexdigest()
+        raw=bytearray(1132);struct.pack_into('<I',raw,0,74020);struct.pack_into('<I',raw,284,8000789)
+        parameter=bytearray(89);struct.pack_into('<I',parameter,0,8000789)
+        selected=SimpleNamespace(record=Mock(return_value=bytes(parameter)))
+        publication=SimpleNamespace(revision='r-parameters',records={13:{74020:bytes(raw)}})
+        def build(prepared,*args):(prepared/'publication').mkdir(parents=True)
+        def preflight(folder,ini,*,baseline=None):
+            result=skill_parameters.validate_publication(publication,baseline)
+            return {'ready':result['complete'],'problems':[]}
+        with patch('owner.units.preset_recipe.load',return_value=recipe), \
+             patch('owner.units.preset_install.verify',return_value=None), \
+             patch('owner.units.assets.Baseline',return_value=selected), \
+             patch('owner.units.repository.Repository',return_value=object()), \
+             patch('owner.units.batch_server.running_services',return_value=[]), \
+             patch('owner.units.preset_publication.build',side_effect=build), \
+             patch('owner.units.batch_server.load_publication',return_value=publication), \
+             patch('owner.units.batch_server.preflight',side_effect=preflight)as checked, \
+             patch('owner.units.batch_server.apply')as applied, \
+             patch('owner.units.preset_install.install'), \
+             patch('owner.units.batch_registry.register'):
+            controller=DefaultPresets(self.provider);controller._ensure()
+        self.assertEqual('installed',controller.state()['status'])
+        self.assertIs(checked.call_args.kwargs['baseline'],selected)
+        self.assertIs(applied.call_args.kwargs['baseline'],selected)
+        selected.record.assert_called_once_with('skill_parameter',8000789)
+
 
 class ScopedPresetInstall(unittest.TestCase):
     def setUp(self):
