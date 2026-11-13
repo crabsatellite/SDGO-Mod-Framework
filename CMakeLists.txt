@@ -173,6 +173,20 @@ endfunction()
 
 sdgo_add_mod(mission_ai DESCRIPTION "co-op mission wingmen (client)"
              SOURCES mods/mission_ai/mission_ai.cpp FILES mission_ai.lua symbols.fragment.ini)
+sdgo_add_mod(pve_ai_scoreboard
+             DESCRIPTION "PvE AI teammate native TAB roster"
+             SOURCES mods/pve_ai_scoreboard/pve_ai_scoreboard.cpp
+             FILES symbols.fragment.ini)
+if(BUILD_TESTING)
+    add_executable(pve_ai_scoreboard_dll_test
+        tests/pve_ai_scoreboard_dll_test.cpp)
+    target_link_libraries(pve_ai_scoreboard_dll_test PRIVATE sdgo_api)
+    sdgo_strict(pve_ai_scoreboard_dll_test)
+    add_dependencies(pve_ai_scoreboard_dll_test pve_ai_scoreboard)
+    add_test(NAME pve_ai_scoreboard_actual_dll
+        COMMAND pve_ai_scoreboard_dll_test
+            "$<TARGET_FILE:pve_ai_scoreboard>")
+endif()
 sdgo_add_mod(newcomer_protection SERVER DESCRIPTION "server-owned newcomer HP and ordinary attack multipliers"
              SOURCES mods/newcomer_protection/newcomer_protection.cpp FILES symbols.fragment.ini)
 if(BUILD_TESTING)
@@ -351,11 +365,26 @@ if(BUILD_TESTING)
     target_link_libraries(map_catalog_presentation_test PRIVATE sdgo_api)
     sdgo_strict(map_catalog_presentation_test)
     add_test(NAME map_catalog_presentation COMMAND map_catalog_presentation_test)
+    add_executable(map_party_sources_test tests/map_party_sources_test.cpp)
+    target_link_libraries(map_party_sources_test PRIVATE sdgo_api)
+    sdgo_strict(map_party_sources_test)
+    add_test(NAME map_party_sources COMMAND map_party_sources_test)
 
     add_executable(map_catalog_server_policy_test tests/map_catalog_server_policy_test.cpp)
     target_include_directories(map_catalog_server_policy_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     sdgo_strict(map_catalog_server_policy_test)
     add_test(NAME map_catalog_server_policy COMMAND map_catalog_server_policy_test)
+    add_executable(mission_damage_gate_runtime_test tests/mission_damage_gate_runtime_test.cpp)
+    target_include_directories(mission_damage_gate_runtime_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(mission_damage_gate_runtime_test PRIVATE sdgo_api)
+    sdgo_strict(mission_damage_gate_runtime_test)
+    add_test(NAME mission_damage_gate_runtime COMMAND mission_damage_gate_runtime_test)
+    add_executable(mission_damage_gate_dll_test tests/mission_damage_gate_dll_test.cpp)
+    target_link_libraries(mission_damage_gate_dll_test PRIVATE sdgo_api)
+    sdgo_strict(mission_damage_gate_dll_test)
+    add_dependencies(mission_damage_gate_dll_test map_catalog_server)
+    add_test(NAME mission_damage_gate_loaded_dll
+             COMMAND mission_damage_gate_dll_test $<TARGET_FILE:map_catalog_server>)
     add_executable(map_boundary_contact_test tests/map_boundary_contact_test.cpp)
     target_link_libraries(map_boundary_contact_test PRIVATE sdgo_api)
     sdgo_strict(map_boundary_contact_test)
@@ -365,6 +394,33 @@ if(BUILD_TESTING)
     target_link_libraries(map_boundary_runtime_test PRIVATE sdgo_api)
     sdgo_strict(map_boundary_runtime_test)
     add_test(NAME map_boundary_runtime COMMAND map_boundary_runtime_test)
+    add_executable(map_damage_gate_client_test tests/map_damage_gate_client_test.cpp)
+    target_include_directories(map_damage_gate_client_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(map_damage_gate_client_test PRIVATE sdgo_api)
+    sdgo_strict(map_damage_gate_client_test)
+    add_test(NAME map_damage_gate_client COMMAND map_damage_gate_client_test)
+
+    add_executable(map_retreat_client_test tests/map_retreat_client_test.cpp)
+    target_include_directories(map_retreat_client_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(map_retreat_client_test PRIVATE sdgo_api)
+    sdgo_strict(map_retreat_client_test)
+    add_test(NAME map_retreat_client COMMAND map_retreat_client_test)
+
+    add_library(map_retreat_overlay_stub SHARED tests/map_retreat_overlay_stub.cpp)
+    target_include_directories(map_retreat_overlay_stub PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(map_retreat_overlay_stub PRIVATE sdgo_api)
+    set_target_properties(map_retreat_overlay_stub PROPERTIES OUTPUT_NAME capsule_catalog
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/map_retreat_stub/$<CONFIG>"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/map_retreat_stub/$<CONFIG>")
+    sdgo_strict(map_retreat_overlay_stub)
+    add_executable(map_retreat_loaded_dll_test tests/map_retreat_loaded_dll_test.cpp)
+    target_include_directories(map_retreat_loaded_dll_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(map_retreat_loaded_dll_test PRIVATE sdgo_api)
+    sdgo_strict(map_retreat_loaded_dll_test)
+    add_dependencies(map_retreat_loaded_dll_test map_catalog map_retreat_overlay_stub)
+    add_test(NAME map_retreat_loaded_dll
+             COMMAND map_retreat_loaded_dll_test $<TARGET_FILE:map_catalog>
+                     $<TARGET_FILE:map_retreat_overlay_stub>)
 
     add_executable(map_catalog_server_dll_test tests/map_catalog_server_dll_test.cpp)
     target_link_libraries(map_catalog_server_dll_test PRIVATE sdgo_api)

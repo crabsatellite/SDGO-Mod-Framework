@@ -24,8 +24,9 @@ from .compiler import CompiledMap
 
 MODULE = 'map_catalog'
 PREFIX = 'client/sdgo/mods/map_catalog/'
-PLAN_SCHEMA = 'sdgo.map-import-server-plan/3'
-LEGACY_PLAN_SCHEMAS = frozenset({'sdgo.map-import-server-plan/1', 'sdgo.map-import-server-plan/2'})
+PLAN_SCHEMA = 'sdgo.map-import-server-plan/4'
+LEGACY_PLAN_SCHEMAS = frozenset({'sdgo.map-import-server-plan/1', 'sdgo.map-import-server-plan/2',
+                                 'sdgo.map-import-server-plan/3'})
 OVERLAY_DOMAINS = {'trns': '.trn', 'sol': '.sol', 'mdrs': '.mod', 'anrs': '.ani', 'txrs': '.txr', 'fxrs': '.zfx',
                    'sprs': '.spr', 'sdrs': '.zsd'}
 TABLE_KEYS = {
@@ -127,6 +128,14 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
     boundaries = boundary_format.normalize([row for report in mission_reports for row in report.get('boundaries', [])])
     if boundaries:
         runtime_policy['boundaries'] = boundaries
+    from . import damage_gate_format
+    damage_gates = damage_gate_format.normalize([
+        row for report in mission_reports for row in report.get('damage_gates', [])])
+    if damage_gates:
+        runtime_policy['damage_gates'] = damage_gates
+    advanced = any(report.get('minimum_programme') for report in mission_reports)
+    from . import retreat_format
+    retreats = retreat_format.normalize([row for report in mission_reports for row in report.get('retreats', [])])
     rows.sort(key=lambda row: (row[0] != 0x0F, row[0], row[1]))
     ids = [row[1] for row in rows]
     if len(set(ids)) != len(ids):
@@ -144,6 +153,7 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
         'server': hashlib.sha256(json.dumps([b.server for b in list(builds) + list(missions or [])],
                                             sort_keys=True, default=str).encode()).hexdigest(),
         'runtime_policy': runtime_policy,
+        'client_policy': {'retreats':retreats},
     }, sort_keys=True).encode()).hexdigest()[:16]
     maps = [{'map_key': b.report['map_key'], 'map_no': b.map_no, 'map_id': b.map_id, 'variant': b.variant,
              'trn': b.report['trn'], 'blocks': b.report.get('blocks', [])} for b in builds]
@@ -157,6 +167,10 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
         files[PREFIX + 'missions.lua'] = lua.encode('ascii')
     if boundaries:
         files[PREFIX + 'boundaries.bin'] = boundary_format.encode(boundaries)
+    if damage_gates:
+        files[PREFIX + 'damage-gates.bin'] = damage_gate_format.encode(damage_gates)
+    if retreats:
+        files[PREFIX + 'retreats.bin'] = retreat_format.encode(retreats)
     for name, raw in (program or {}).items():
         if name not in ('map_catalog.dll', 'mod.ini', 'manager.json', 'symbols.fragment.ini'):
             raise ValueError(f'unexpected program file {name}')
@@ -167,10 +181,12 @@ def build_publication(builds: list[CompiledMap], output: Path, *, program: dict[
         if not re.fullmatch(r'BGM/m[0-9]{3}[a-z0-9]*\.mp3', name):
             raise ValueError(f'unexpected loose file {name}')
         files['client/' + name] = raw
-    manifest = {'module': MODULE, 'schema_version': 1, 'revision': revision, 'maps': maps,
+    manifest = {'module': MODULE, 'schema_version': 2 if advanced else 1, 'revision': revision, 'maps': maps,
                 'files': {name: hashlib.sha256(raw).hexdigest() for name, raw in sorted(files.items())},
                 'owned_resources': sorted(resources), 'loose': sorted('client/' + n for n in loose),
                 'restart_required': True}
+    if advanced:
+        manifest['minimum_programme'] = '0.7.0'
     files['manifest.json'] = json.dumps(manifest, ensure_ascii=False, indent=2).encode('utf-8')
     client_zip = output / 'SDGO-MapImport-Client.zip'
     _write_zip(client_zip, files)

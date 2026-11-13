@@ -18,6 +18,12 @@ function checks(options,labels,selected){
  return {box,value:()=>options.filter(v=>inputs[v].checked)};
 }
 
+function textPane(){
+ const pane=e('pre');
+ pane.style.cssText='max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--panel-2,#111827);padding:12px;border-radius:8px;';
+ return pane;
+}
+
 export async function mount(root,ctx){
  let state=await json(await ctx.fetch('/api/maps'));
  const report=(text,error)=>{result.textContent=text;ctx.message(text,error);};
@@ -37,10 +43,17 @@ export async function mount(root,ctx){
  root.append(addCard);
 
  const examples=e('section',undefined,'manager-card');
- examples.append(e('h2','示例地图'),e('p','从框架公开仓库下载完整的示例地图包（逐个文件校验 SHA-256）并登记到工作区，可直接编译试玩，也可作为编写地图包的参考。','muted'));
+ examples.append(e('h2','OPEN 默认示例'),e('p','Manager 已内置并校验完整的公开任务包源码。查看文件不会登记、编译、安装、写数据库或启用任务；需要试玩时再明确登记。','muted'));
  for(const item of state.examples||[]){
-  examples.append(e('p',item.name.zh+' — '+item.description),
-   button('下载并登记',async()=>{const value=await ctx.request('/api/maps/examples/add',{id:item.id});state=value.state;render();report(value.message);},ctx,'ui-btn'));
+  const card=e('div',undefined,'manager-subcard'),title=e('h3',item.name.zh),tree=e('details'),treeList=textPane(),source=e('details'),files=e('div',undefined,'actions'),preview=textPane();
+  const packageFiles=item.package_files||[];
+  treeList.textContent=packageFiles.join('\n');
+  tree.append(e('summary',`完整源码树（${packageFiles.length} 个清单文件）`),treeList);
+  source.append(e('summary','打开源码文件'),files,preview);
+  for(const file of item.source_files||[])files.append(button(file,async()=>{const value=await ctx.request('/api/maps/examples/file',{id:item.id,file});preview.textContent=value.text;source.open=true;},ctx,'ui-btn is-ghost'));
+  card.append(title,e('p',item.description,'muted'),e('p',item.cached?'默认副本已在 Manager 工作区缓存并通过摘要校验。':'默认副本尚未缓存。','muted'),tree,source,
+   button('登记默认副本',async()=>{const value=await ctx.request('/api/maps/examples/add',{id:item.id});state=value.state;render();report(value.message);},ctx,'ui-btn'));
+  examples.append(card);
  }
  root.append(examples);
 
@@ -114,6 +127,17 @@ export async function mount(root,ctx){
   if(pub){
    const lines=pub.maps.map(m=>`${m.key}：地图编号 ${Object.entries(m.map_nos).map(([v,n])=>(v==='pvp'?'对战 ':'任务 ')+n).join('、')}${m.missions.length?'；任务 GameMode '+m.missions.map(x=>x.game_modes.join('/')).join('、'):''}`);
    summary.append(e('p',`当前发布物版本 ${pub.revision}`));for(const line of lines)summary.append(e('p',line,'muted'));
+  }
+  const published=state.publication_files||[],previews=state.publication_previews||[];
+  if(published.length){
+   const artifact=e('details'),artifactFiles=textPane(),artifactActions=e('div',undefined,'actions'),artifactPreview=textPane();
+   artifactFiles.textContent=published.join('\n');
+   artifact.append(e('summary',`当前生成发布物（${published.length} 个文件）`),artifactFiles);
+   if(previews.length){
+    artifact.append(e('p','下列清单和脚本直接读取自当前客户端 ZIP。','muted'),artifactActions,artifactPreview);
+    for(const file of previews)artifactActions.append(button(file,async()=>{const value=await ctx.request('/api/maps/publication/file',{file});artifactPreview.textContent=value.text;artifact.open=true;},ctx,'ui-btn is-ghost'));
+   }
+   summary.append(artifact);
   }
   const receipt=state.client_receipt;
   summary.append(e('p',receipt?`客户端已安装版本 ${receipt.revision}${pub&&receipt.revision!==pub.revision?'（与当前发布物不同，请重新安装）':''}`:'客户端尚未安装地图包',receipt&&pub&&receipt.revision!==pub.revision?'error':'muted'));

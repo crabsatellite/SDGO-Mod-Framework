@@ -10,6 +10,8 @@
 
 #include "sdgo/battle_ai_observer.h"
 #include "sdgo/game_test.h"
+#include "sdgo/map_boundary_contact.h"
+#include "sdgo/map_catalog_mission_observer.h"
 #include "sdgo/pvp_ai_client_observer.h"
 #include "sdgo/sdgo_api.h"
 
@@ -140,6 +142,25 @@ namespace sdgo_game_test_death
 // with the original arguments. They never write HP, position, input or packets.
 class NativeDeathProbe
 {
+public:
+    struct MapDamageEvidence
+    {
+        uint32_t sequence = 0;
+        uint32_t tick = 0;
+        uint32_t wirePilotId = 0;
+        uint32_t targetPilotId = 0;
+        uint32_t objectId = 0;
+        uint32_t npcId = 0;
+        uint32_t noticeHealth = 0;
+        int32_t beforeHp = 0;
+        int32_t afterHp = 0;
+        uint32_t missionId = 0;
+        uint32_t phase = 0;
+        int32_t maximumHp = 0;
+        uint32_t feedbackPending = 0;
+    };
+
+private:
     enum class Kind : uint8_t
     {
         Ordinary,
@@ -237,6 +258,9 @@ class NativeDeathProbe
     SdgoBattleAiGetUnitSnapshotV1Fn getBattleSnapshot_ = nullptr;
     HandlerFn deadOriginal_ = nullptr;
     HandlerFn mapDamageOriginal_ = nullptr;
+    bool preferLocalBoundaryExport_ = false;
+    SdgoMapCatalogGetLocalBoundaryReceiptV1Fn localBoundaryGetter_ = nullptr;
+    uint32_t localBoundaryBaselineSequence_ = 0;
     MovementMapSenderFn movementMapSenderOriginal_ = nullptr;
     EventMapSenderFn eventMapSenderOriginal_ = nullptr;
     CRITICAL_SECTION queueLock_ = {};
@@ -261,6 +285,13 @@ class NativeDeathProbe
     volatile LONG eventMapRequestCandidates_ = 0;
     volatile LONG eventMapRequests_ = 0;
     volatile LONG registeredAiEventMapRequests_ = 0;
+    mutable SRWLOCK ordinaryVictimLock_ = SRWLOCK_INIT;
+    static constexpr unsigned kOrdinaryVictimEvidenceCapacity = 512;
+    uint32_t ordinaryVictimPilots_[kOrdinaryVictimEvidenceCapacity] = {};
+    uint32_t ordinaryVictimNpcs_[kOrdinaryVictimEvidenceCapacity] = {};
+    unsigned ordinaryVictimEvidenceCount_ = 0;
+    mutable SRWLOCK mapDamageEvidenceLock_ = SRWLOCK_INIT;
+    MapDamageEvidence latestMapDamage_ = {};
 
     struct NetworkCounters
     {
@@ -539,18 +570,34 @@ class NativeDeathProbe
             event.raw4 = parsed.victims[i].raw4;
             event.raw9 = parsed.victims[i].raw9;
             event.raw10 = parsed.victims[i].raw10;
+            const uint32_t victimPilot =
+                event.victim.pilotId ? event.victim.pilotId : parsed.victims[i].pilotId;
+            const uint32_t victimNpc = event.victim.npcId;
+            AcquireSRWLockExclusive(&ordinaryVictimLock_);
+            bool retained = false;
+            for (unsigned index = 0; index < ordinaryVictimEvidenceCount_; ++index)
+                retained = retained ||
+                    (ordinaryVictimPilots_[index] == victimPilot &&
+                     ordinaryVictimNpcs_[index] == victimNpc);
+            if (!retained && ordinaryVictimEvidenceCount_ < kOrdinaryVictimEvidenceCapacity) {
+                ordinaryVictimPilots_[ordinaryVictimEvidenceCount_] = victimPilot;
+                ordinaryVictimNpcs_[ordinaryVictimEvidenceCount_] = victimNpc;
+                ++ordinaryVictimEvidenceCount_;
+            }
+            ReleaseSRWLockExclusive(&ordinaryVictimLock_);
             Queue(event);
             InterlockedIncrement(&ordinaryVictims_);
         }
     }
 
-    void CaptureMapDamage(const uint8_t* packet)
+    MapDamageEvidence CaptureMapDamage(const uint8_t* packet)
     {
+        MapDamageEvidence evidence = {};
         sdgo_game_test_death::MapDamagePacket parsed = {};
         if (!sdgo_game_test_death::ParseMapDamagePacket(
                 packet, &parsed)) {
             InterlockedIncrement(&parseFailures_);
-            return;
+            return evidence;
         }
         Event event = {};
         event.kind = Kind::MapDamage;
@@ -563,6 +610,36 @@ class NativeDeathProbe
         if (event.victim.registeredAi)
             InterlockedIncrement(
                 &registeredAiMapDamagePackets_);
+
+        evidence.wirePilotId = parsed.victimPilotId;
+        evidence.targetPilotId = event.victim.objectId
+            ? parsed.victimPilotId
+            : sdgo::map_boundary_contact::NoticeTarget(parsed.victimPilotId);
+        const Identity target = event.victim.objectId
+            ? event.victim
+            : CaptureIdentity(evidence.targetPilotId);
+        evidence.objectId = target.objectId;
+        evidence.npcId = target.npcId;
+        evidence.beforeHp = target.hp;
+        const uint8_t health[3] = {parsed.raw10, parsed.raw11, parsed.raw12};
+        evidence.noticeHealth = sdgo::map_boundary_contact::DecodeHealth(health);
+        return evidence;
+    }
+
+    void CompleteMapDamage(MapDamageEvidence evidence)
+    {
+        if (!evidence.wirePilotId || !evidence.targetPilotId) return;
+        const Identity after = CaptureIdentity(evidence.targetPilotId);
+        if (after.objectId) {
+            evidence.objectId = after.objectId;
+            evidence.npcId = after.npcId;
+            evidence.afterHp = after.hp;
+        }
+        evidence.tick = GetTickCount();
+        AcquireSRWLockExclusive(&mapDamageEvidenceLock_);
+        evidence.sequence = latestMapDamage_.sequence + 1;
+        latestMapDamage_ = evidence;
+        ReleaseSRWLockExclusive(&mapDamageEvidenceLock_);
     }
 
     Event CaptureMovementMapRequest(
@@ -637,11 +714,12 @@ class NativeDeathProbe
         void* self, void*, uint8_t* packet)
     {
         const DWORD incomingError = GetLastError();
-        active_->CaptureMapDamage(packet);
+        const MapDamageEvidence evidence = active_->CaptureMapDamage(packet);
         SetLastError(incomingError);
         const int result =
             active_->mapDamageOriginal_(self, packet);
         const DWORD originalError = GetLastError();
+        active_->CompleteMapDamage(evidence);
         SetLastError(originalError);
         return result;
     }
@@ -838,6 +916,66 @@ class NativeDeathProbe
     }
 
 public:
+    bool Enabled() const { return enabled_; }
+
+    bool LatestMapDamage(MapDamageEvidence& evidence) const
+    {
+        if (localBoundaryGetter_) {
+            SdgoMapLocalBoundaryReceiptV1 receipt{};
+            receipt.size = sizeof(receipt);
+            receipt.version = SDGO_MAP_LOCAL_BOUNDARY_RECEIPT_VERSION;
+            if (!localBoundaryGetter_(&receipt) || !receipt.hook_active ||
+                !receipt.sequence ||
+                receipt.sequence == localBoundaryBaselineSequence_ ||
+                !receipt.feedback_pending)
+                return false;
+            evidence = {};
+            evidence.sequence = receipt.sequence;
+            evidence.tick = receipt.tick;
+            evidence.wirePilotId = receipt.wire_pilot;
+            evidence.targetPilotId = receipt.pilot_id;
+            evidence.objectId = receipt.object_id;
+            evidence.npcId = receipt.npc_id;
+            evidence.noticeHealth = receipt.notice_hp;
+            evidence.beforeHp = receipt.request_before_hp;
+            evidence.afterHp = receipt.after_hp;
+            evidence.missionId = receipt.mission_id;
+            evidence.phase = receipt.phase;
+            evidence.maximumHp = receipt.maximum_hp;
+            evidence.feedbackPending = receipt.feedback_pending;
+            return true;
+        }
+        AcquireSRWLockShared(&mapDamageEvidenceLock_);
+        evidence = latestMapDamage_;
+        ReleaseSRWLockShared(&mapDamageEvidenceLock_);
+        return evidence.sequence != 0;
+    }
+
+    bool ConfigureLocalBoundaryExport(bool enabled)
+    {
+        if (active_) return false;
+        preferLocalBoundaryExport_ = enabled;
+        return true;
+    }
+
+    bool ObservedOrdinaryVictim(uint32_t pilotId, uint32_t npcId = 0) const
+    {
+        if (!enabled_ || (!pilotId && !npcId))
+            return false;
+        bool observed = false;
+        AcquireSRWLockShared(&ordinaryVictimLock_);
+        for (unsigned i = 0; i < ordinaryVictimEvidenceCount_; ++i) {
+            const bool pilotMatches = !pilotId || ordinaryVictimPilots_[i] == pilotId;
+            const bool npcMatches = !npcId || ordinaryVictimNpcs_[i] == npcId;
+            if (pilotMatches && npcMatches) {
+                observed = true;
+                break;
+            }
+        }
+        ReleaseSRWLockShared(&ordinaryVictimLock_);
+        return observed;
+    }
+
     bool Install(const SdgoApi* api, SdgoMod* mod)
     {
         if (!api || !api->SettingInt || !api->Symbol ||
@@ -870,29 +1008,42 @@ public:
             !findObject_ || !network_)
             return false;
         ResolveObservers();
+        if (preferLocalBoundaryExport_) {
+            const HMODULE mapModule = GetModuleHandleW(L"map_catalog.dll");
+            localBoundaryGetter_ = mapModule
+                ? reinterpret_cast<SdgoMapCatalogGetLocalBoundaryReceiptV1Fn>(
+                      GetProcAddress(mapModule, SDGO_MAP_LOCAL_BOUNDARY_RECEIPT_EXPORT))
+                : nullptr;
+            SdgoMapLocalBoundaryReceiptV1 receipt{};
+            receipt.size = sizeof(receipt);
+            receipt.version = SDGO_MAP_LOCAL_BOUNDARY_RECEIPT_VERSION;
+            if (!localBoundaryGetter_ || !localBoundaryGetter_(&receipt) ||
+                !receipt.hook_active)
+                return false;
+            localBoundaryBaselineSequence_ = receipt.sequence;
+        }
         InitializeCriticalSection(&queueLock_);
         active_ = this;
-        return
-            api->HookCode(
+        if (!api->HookCode(
                 mod, "game.dead_unit_handler",
                 reinterpret_cast<void*>(&DeadHandler),
-                reinterpret_cast<void**>(&deadOriginal_)) &&
-            api->HookCode(
+                reinterpret_cast<void**>(&deadOriginal_)))
+            return false;
+        if (!preferLocalBoundaryExport_ &&
+            !api->HookCode(
                 mod, "game.map_damage_handler",
                 reinterpret_cast<void*>(&MapDamageHandler),
-                reinterpret_cast<void**>(
-                    &mapDamageOriginal_)) &&
+                reinterpret_cast<void**>(&mapDamageOriginal_)))
+            return false;
+        return
             api->HookCode(
                 mod, "game.map_death_movement_sender",
-                reinterpret_cast<void*>(
-                    &MovementMapSender),
-                reinterpret_cast<void**>(
-                    &movementMapSenderOriginal_)) &&
+                reinterpret_cast<void*>(&MovementMapSender),
+                reinterpret_cast<void**>(&movementMapSenderOriginal_)) &&
             api->HookCode(
                 mod, "game.map_death_event_sender",
                 reinterpret_cast<void*>(&EventMapSender),
-                reinterpret_cast<void**>(
-                    &eventMapSenderOriginal_));
+                reinterpret_cast<void**>(&eventMapSenderOriginal_));
     }
 
     bool Observe(const SdgoGameTestContextV1* context)

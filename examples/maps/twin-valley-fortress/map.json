@@ -204,6 +204,44 @@
    }
   },
   {
+   "id": "odessa_base_shield",
+   "position": [
+    0.0,
+    2350.0,
+    3697.6
+   ],
+   "rotation_y": 0,
+   "scale": [
+    6.0,
+    20.739583333333332,
+    6.0
+   ],
+   "collision": [
+    {
+     "center": [
+      0,
+      0,
+      0
+     ],
+     "half_extents": [
+      492.8,
+      96.0,
+      249.6
+     ],
+     "rotation_y": 0
+    }
+   ],
+   "block": {
+    "template": 80577,
+    "hp": 2147483647,
+    "name": {
+     "zh": "基地防护罩",
+     "en": "Fortress shield"
+    }
+   },
+   "model": "models/base-shield.gltf"
+  },
+  {
    "position": [
     -1350.0,
     1036.9,
@@ -8737,6 +8775,8 @@
   "missions/odessa.json"
  ],
  "files": {
+  "CREDITS.md": "d5c366d531a6b49ff186df381bea99c0e2dc1971b41e2d387d06d3a3ccd99669",
+  "OPEN-ME.md": "2556b225f732cc0b462fd989eec76eae6bdee50813df3b9933dc97a80bbf2839",
   "images/banner_complete.png": "fe85389afc682a9ffc372b5f123a101a1d8fe45e2930cd9f5d84ca847d8d131c",
   "images/banner_gyan.png": "51d0a430dc366372bdb36c2d7811646e02969817c9164386fe8b802163e9d045",
   "images/banner_nuke.png": "a05631be19bc3763f50b2b9625a6743522278a6cfe932b2896eb5e36eb998fa5",
@@ -8748,7 +8788,7 @@
   "images/cat_title.png": "e977809842c5f9fae66dc3684843491f6d93d9db5d85ebf42fe9d325fac9601f",
   "images/minimap.png": "f4d8f890697769750ab5ff56d469b247e5ee93d2717e20acce34e661fe35f5de",
   "images/preview.png": "e44a51a86498f97d78f8fb4ac7586f241ef1a19497fe0ae3c5026015d2b32124",
-  "missions/odessa.json": "2a5478c2408ccef7d1ad1b52b34feed3ed6fd3708ffb748fc5e6eaed75dfb4d1",
+  "missions/odessa.json": "ba78863b501d61ece406a8f798a6704b0ed9a404aa456fe5c195fa838e68fdd1",
   "models/barracks.gltf": "70493cba0fbb9a440ef2b92c1de8945e75da181ebb50833f5e474289788dcc95",
   "models/barrel_01.gltf": "ec7dbdb749d2b2a25ca1c672cefd3338b94fc1260bc64b0933bca92288c7afc6",
   "models/barrel_03.gltf": "d74b760fd7f93cbf08a15e2732c0863405a4295f094cfce62ec351ef60970b37",
@@ -8875,6 +8915,7 @@
   "models/mountainside.gltf": "1ac61b5b1503f5ce6c8e95030d22680717844e7a78b7c0bb01eb4ff3124214e1",
   "models/mountainside_t20.gltf": "6ec5a557f61bd5f8e4876339f86dd16d520896b7ec9ebe65e42ddf77df095319",
   "models/mountainside_t35.gltf": "a1f75bd5917cd04a17e58ff7625e5b442b7d1e1d8d7726585ccc1e3e123e36f5",
+  "models/odessa_gate_leaf.glb": "8e330c083816cfd68e187190808057073eff025b19e58a2dd5ca5dfa63d97588",
   "models/pipe_rack.gltf": "1fce8a5526e22c08f67dc3cfe951017fe510507571382a64795a6cc909013ffb",
   "models/process_tanks.gltf": "9643909aee09733ff7b2eb55def0e45bf9bb8390dc712b0b4e7a0b1371282610",
   "models/pylon.gltf": "1f5d55c51170d77f98945225b578210e151533c6d731eb5f442a0a8bbede706b",
@@ -8890,6 +8931,7 @@
   "models/utility_box.gltf": "d6040854703697ab5e01a529ae44ac3fab11f9261300538cfbad2a4fbe887cbb",
   "models/wall_segment.gltf": "c875963450a3d0e29817f4d98df673d55c3a9468840f4a9af90eb7ea94c20e0b",
   "models/watch_tower.gltf": "a914b5c67d096ebc71833d6bfcb88371b4db9e01d26dd963eec1a1cabf8e13ae",
+  "scripts/add_mission.py": "6312611016b27102dc3b2131031888706555b3c99578756cdcc2fbf2c402629e",
   "terrain/base_dry_ground.jpg": "ffb81641548f3be38b9215142a2837552a02709ec9f6f364cf8daf7fd3c17c7f",
   "terrain/cliff.jpg": "98e2de481bb224de34d5f65f4d1e24a5c469390bada2755de1b10d76bf7c0c0e",
   "terrain/cliff_mask.png": "34845c325ca8cac30d047c0390c0deff1e89fff34672dd0916728e279cdedaa1",
@@ -8906,6 +8948,7 @@
   "terrain/rocky_mask.png": "bbb7b768bc51b7bd5c6f3ad434d824894b131ed57e802a8bd68a289f42d05fb3",
   "terrain/scorch.jpg": "69ddd8dccfb46f5c3b7037cf619efe56206eac1d4eca13596410d1758158d322",
   "terrain/scorch_mask.png": "432afd4d5ebe47de369c894f013d24d026febc1941614b68943d672933b576d6",
-  "models/odessa_gate_leaf.glb": "8e330c083816cfd68e187190808057073eff025b19e58a2dd5ca5dfa63d97588"
+  "models/base-shield.gltf": "b618d8a829bf7ccc25076b1fe6a6f4071c7229b6bbeddcb5969496d0ea9d731d",
+  "models/base-shield-grid.png": "7ddf454a31ff920bec6c57ca7bdf13a5cfbde7299874605ac0b214b11752f274"
  }
 }

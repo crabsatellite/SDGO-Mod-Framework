@@ -23,6 +23,12 @@ struct TargetCooldown {
     uint64_t at;
 };
 
+struct PendingBoundaryReceipt {
+    uint32_t target;
+    int32_t before;
+    uint64_t at;
+};
+
 struct BoundaryTransition {
     bool missionExitOrSwitch;
     bool phaseChanged;
@@ -47,15 +53,6 @@ inline bool LocalRoomMaster(bool nativeMaster, uint32_t roomLocalPilot,
     return nativeMaster && roomLocalPilot && roomLocalPilot == unitPilot;
 }
 
-// A confirmed boundary notice may lower health or acknowledge the same
-// nonzero authoritative value. Higher late notices are stale and must not
-// display contact feedback because they cannot be applied without healing.
-inline bool ShouldShowContactFeedback(int32_t current, int32_t maximum,
-                                      uint32_t notice) {
-    return current > 0 && maximum > 0 && notice >= 1 &&
-           notice <= static_cast<uint32_t>(maximum) &&
-           notice <= static_cast<uint32_t>(current);
-}
 
 inline bool ContactFeedbackCoolingDown(uint64_t last, uint64_t now,
                                        uint32_t duration) {
@@ -140,9 +137,59 @@ inline void CommitCooldown(std::vector<TargetCooldown>& cooldowns, uint32_t targ
     else cooldowns.push_back({target, now});
 }
 
-// Boundary feedback may only lower a living unit to a server-admitted,
-// nonzero value. A late duplicate cannot heal or revive a unit after other
-// ordered combat traffic has already changed its local HP.
+inline bool RecordBoundaryRequest(std::vector<PendingBoundaryReceipt>& receipts,
+                                  uint32_t target, int32_t before, uint64_t now,
+                                  size_t hardLimit = 4096) {
+    if (!target || before <= 0) return false;
+    const auto found = std::find_if(receipts.begin(), receipts.end(),
+        [target](const PendingBoundaryReceipt& entry) { return entry.target == target; });
+    if (found != receipts.end()) {
+        *found = {target, before, now};
+        return true;
+    }
+    if (receipts.size() >= hardLimit) return false;
+    receipts.push_back({target, before, now});
+    return true;
+}
+
+inline bool CancelBoundaryRequest(std::vector<PendingBoundaryReceipt>& receipts,
+                                  uint32_t target, int32_t before, uint64_t now) {
+    const auto found = std::find_if(receipts.begin(), receipts.end(),
+        [target, before, now](const PendingBoundaryReceipt& entry) {
+            return entry.target == target && entry.before == before && entry.at == now;
+        });
+    if (found == receipts.end()) return false;
+    receipts.erase(found);
+    return true;
+}
+
+// The server commits boundary HP before broadcasting its receipt. Native health
+// synchronization may therefore reach the client first. Match the receipt to a
+// request recorded with a strictly higher pre-contact HP instead of requiring
+// this callback itself to perform the decrease. Consuming the record also makes
+// a duplicate acknowledgement silent.
+inline bool ConsumeBoundaryReceipt(std::vector<PendingBoundaryReceipt>& receipts,
+                                   uint32_t target, int32_t current,
+                                   int32_t maximum, uint32_t notice,
+                                   uint64_t now, uint32_t lifetime,
+                                   int32_t& requestedBefore) {
+    requestedBefore = 0;
+    const auto found = std::find_if(receipts.begin(), receipts.end(),
+        [target](const PendingBoundaryReceipt& entry) { return entry.target == target; });
+    if (found == receipts.end()) return false;
+    const PendingBoundaryReceipt receipt = *found;
+    receipts.erase(found);
+    requestedBefore = receipt.before;
+    return target && current > 0 && maximum > 0 && notice >= 1 &&
+           notice <= static_cast<uint32_t>(maximum) &&
+           notice <= static_cast<uint32_t>(current) &&
+           notice < static_cast<uint32_t>(receipt.before) &&
+           now >= receipt.at && now - receipt.at <= lifetime;
+}
+
+// Boundary health synchronization may only lower a living unit to a
+// server-admitted, nonzero value. A late duplicate cannot heal or revive a unit
+// after other ordered combat traffic has already changed its local HP.
 inline bool ShouldApplyHealth(int32_t current, int32_t maximum, uint32_t notice) {
     return current > 0 && maximum > 0 && notice >= 1 &&
            notice <= static_cast<uint32_t>(maximum) &&

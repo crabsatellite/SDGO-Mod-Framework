@@ -13,6 +13,7 @@ subprocess.run(
 )
 sys.path.insert(0,str(root))
 from manager.configuration import render
+from manager.maps import bundled_example_datas
 unit_template=Path(workpath)/'unit-catalog-template'/'mod.ini'
 unit_template.parent.mkdir(parents=True,exist_ok=True)
 unit_template.write_bytes(render(
@@ -20,7 +21,7 @@ unit_template.write_bytes(render(
     json.loads((root/'mods/unit_catalog/manager.json').read_bytes()),
 ))
 library = Path(os.environ['SDGO_MANAGER_SERVICES'])
-data = [(str(root/'manager/static'),'manager/static'),
+data = bundled_example_datas(root) + [(str(root/'manager/static'),'manager/static'),
         (os.environ.get('SDGO_MANAGER_METADATA',str(root/'manager/repository.json')),'manager'),
         (str(root/'manager/addons'),'manager/addons'),
         (str(root/'manager/engines/operators/resources'),'manager/engines/operators/resources'),

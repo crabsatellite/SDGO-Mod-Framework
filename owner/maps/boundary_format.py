@@ -25,7 +25,7 @@ def normalize(rows):
     for row in rows:
         if not isinstance(row, dict) or set(row) != FIELDS:
             raise ValueError('boundary declaration fields do not match the protocol')
-        item = {key: _integer(row[key], key) for key in FIELDS - {'rect'}}
+        item = {key: _integer(row[key], key) for key in sorted(FIELDS - {'rect'})}
         _integer(item['mission_id'], 'mission_id', 1)
         _integer(item['phase'], 'phase', 1, 8)
         flags = _integer(item['flags'], 'flags', 0, 7)

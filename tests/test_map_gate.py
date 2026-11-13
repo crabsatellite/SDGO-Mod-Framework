@@ -192,7 +192,7 @@ class NamedBlockTests(unittest.TestCase):
             output = Path(tmp) / 'out'
             bundle.build_publication([pvp, mission], output)
             plan = server.load_plan(output / 'server-plan.json')
-            self.assertEqual(plan['schema'], 'sdgo.map-import-server-plan/3')
+            self.assertEqual(plan['schema'], bundle.PLAN_SCHEMA)
             self.assertEqual(len(plan['tables']['tbl_MapObjects']), 1)
             self.assertEqual(len(plan['tables']['tbl_MapBlocks']), 1)
             invalid = json.loads((output / 'server-plan.json').read_text(encoding='utf-8'))

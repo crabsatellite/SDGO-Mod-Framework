@@ -6,6 +6,8 @@
 // "map_catalog".
 #include <windows.h>
 #include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -19,8 +21,14 @@
 #include "sdgo/map_catalog_format.h"
 #include "presentation.h"
 #include "boundary_runtime.h"
+#include "shield_contact_presentation.h"
+#include "damage_gate_client.h"
 #include "sdgo/map_boundary_contact.h"
 #include "sdgo/map_boundary_format.h"
+#include "sdgo/mission_damage_gate_format.h"
+#include "sdgo/mission_retreat_format.h"
+#include "sdgo/map_catalog_mission_observer.h"
+#include "retreat_client.h"
 #include "../../support/native_resource_overlay/native_resource_overlay.h"
 
 namespace {
@@ -76,6 +84,7 @@ using SetHp = void(__thiscall*)(uint8_t*, int32_t);
 using Network = uint8_t*(__cdecl*)();
 using NetworkSend = int(__thiscall*)(void*, void*, const void*, int, int);
 using MapDamageHandler = int(__thiscall*)(void*, const uint8_t*);
+using QueueState = bool(__thiscall*)(uint8_t*, uint8_t*);
 
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
@@ -113,16 +122,61 @@ SetHp g_setHp = nullptr;
 Network g_network = nullptr;
 NetworkSend g_networkSend = nullptr;
 MapDamageHandler g_mapDamageHandler = nullptr;
+QueueState g_queueState = nullptr;
 std::vector<sdgo::map_boundary::Entry> g_boundaries;
+std::vector<sdgo::mission_damage_gate::Entry> g_damageGates;
+std::vector<sdgo::mission_retreat::Entry> g_retreats;
+struct PendingDamageGateNotice {
+    uint32_t recipient = 0;
+    uint32_t target = 0;
+};
+struct DamageGateVisualState {
+    sdgo::mission_damage_gate::Entry entry{};
+    std::vector<sdgo::map_catalog::damage_gate_client::GuardObservation> guards;
+    std::vector<sdgo::map_catalog::damage_gate_client::TargetHealthObservation> targets;
+    bool serverDamageObserved = false;
+};
+constexpr size_t kPendingDamageGateNotices = 16;
+SRWLOCK g_damageGateNoticeLock = SRWLOCK_INIT;
+std::array<PendingDamageGateNotice, kPendingDamageGateNotices> g_pendingDamageGateNotices{};
+size_t g_pendingDamageGateNoticeCount = 0;
+std::vector<DamageGateVisualState> g_damageGateStates;
+std::vector<sdgo::map_catalog::boundary_runtime::TargetCooldown> g_damageGateShieldCooldowns;
+std::vector<sdgo::map_catalog::boundary_runtime::TargetCooldown> g_damageGateWarningCooldowns;
+uint32_t g_damageGateMission = 0;
+uint32_t g_damageGatePhase = 0;
+bool g_damageGateSnapshotFault = false;
+bool g_damageGateFxFault = false;
 std::vector<sdgo::map_catalog::boundary_runtime::ActorStamp> g_boundaryActors;
 uint32_t g_boundaryMission = 0;
 uint32_t g_boundaryPhase = 0;
 uint64_t g_lastBoundaryWarning = 0;
 uint32_t g_lastBoundaryWarningSpeech = 0;
 std::vector<sdgo::map_catalog::boundary_runtime::TargetCooldown> g_boundaryDamageCooldowns;
+SRWLOCK g_boundaryReceiptLock = SRWLOCK_INIT;
+std::vector<sdgo::map_catalog::boundary_runtime::PendingBoundaryReceipt> g_boundaryReceipts;
 uint64_t g_lastBoundaryContactFx = 0;
 bool g_boundaryContactFxFault = false;
 volatile LONG g_pendingBoundaryContactFx = 0;
+SRWLOCK g_localBoundaryReceiptLock = SRWLOCK_INIT;
+SdgoMapLocalBoundaryReceiptV1 g_localBoundaryReceipt{
+    sizeof(SdgoMapLocalBoundaryReceiptV1), SDGO_MAP_LOCAL_BOUNDARY_RECEIPT_VERSION};
+
+void PublishLocalBoundaryReceipt(SdgoMapLocalBoundaryReceiptV1& value) {
+    AcquireSRWLockExclusive(&g_localBoundaryReceiptLock);
+    value.sequence = g_localBoundaryReceipt.sequence + 1;
+    if (!value.sequence) value.sequence = 1;
+    g_localBoundaryReceipt = value;
+    ReleaseSRWLockExclusive(&g_localBoundaryReceiptLock);
+}
+
+SdgoMapLocalBoundaryReceiptV1 LocalBoundaryReceiptSnapshot() {
+    AcquireSRWLockShared(&g_localBoundaryReceiptLock);
+    auto value = g_localBoundaryReceipt;
+    ReleaseSRWLockShared(&g_localBoundaryReceiptLock);
+    value.hook_active = g_mapDamageHandler ? 1u : 0u;
+    return value;
+}
 bool g_boundarySnapshotFault = false;
 std::string g_missionScript;
 lua_State* g_scriptVm = nullptr;
@@ -471,6 +525,37 @@ bool LoadBoundaries(const std::wstring& path, std::string& error) {
     return sdgo::map_boundary::Parse(raw.data(), raw.size(), g_boundaries, error);
 }
 
+bool LoadDamageGates(const std::wstring& path, std::string& error) {
+    FILE* stream = nullptr;
+    const errno_t openError = _wfopen_s(&stream, path.c_str(), L"rb");
+    if (openError != 0 || !stream) {
+        if (openError == ENOENT) return true;  // optional
+        error = "damage gate declaration could not be opened";
+        return false;
+    }
+    std::vector<uint8_t> raw;
+    uint8_t buffer[8192];
+    size_t read = 0;
+    const size_t maximum = sdgo::mission_damage_gate::kHeaderBytes +
+        static_cast<size_t>(sdgo::mission_damage_gate::kRowBytes) *
+            sdgo::mission_damage_gate::kMaxRows;
+    while ((read = std::fread(buffer, 1, sizeof(buffer), stream)) > 0) {
+        raw.insert(raw.end(), buffer, buffer + read);
+        if (raw.size() > maximum) break;
+    }
+    const bool fileError = std::ferror(stream) != 0;
+    std::fclose(stream);
+    if (fileError) {
+        error = "damage gate declaration could not be read";
+        return false;
+    }
+    if (raw.size() > maximum) {
+        error = "damage gate declaration is too large";
+        return false;
+    }
+    return sdgo::mission_damage_gate::Parse(raw.data(), raw.size(), g_damageGates, error);
+}
+
 bool CatalogContains(uint32_t kind, uint32_t id) {
     for (const auto& entry : g_catalog.records)
         if (entry.kind == kind && entry.id == id) return true;
@@ -486,6 +571,15 @@ bool ValidateBoundaries(std::string& error) {
         if ((entry.flags & sdgo::map_boundary::kWarningEnabled) &&
             !CatalogContains(kSpeechType, entry.warningSpeechId)) {
             error = "boundary declaration references speech outside catalog.bin";
+            return false;
+        }
+    }
+    return true;
+}
+bool ValidateDamageGates(std::string& error) {
+    for (const auto& entry : g_damageGates) {
+        if (!CatalogContains(kGameModeType, entry.missionId)) {
+            error = "damage gate declaration references a mission outside catalog.bin";
             return false;
         }
     }
@@ -515,6 +609,9 @@ constexpr size_t kRoomLocalPlayer = 0x68;
 constexpr size_t kHumanRecordBytes = 0x344;
 constexpr size_t kModeRoomMaster = 0x61C;
 constexpr uint32_t kBoundaryContactFxCooldownMs = 500;
+constexpr uint32_t kBoundaryReceiptLifetimeMs = 10000;
+constexpr uint32_t kDamageGateShieldFxCooldownMs = 1000;
+constexpr uint32_t kDamageGateWarningCooldownMs = 8000;
 
 // Returns the local human's one-based position in the authoritative room record
 // vector. Imported Lua uses that position only to choose the author's warp point;
@@ -541,26 +638,59 @@ int __cdecl LuaLocalHumanSlot(lua_State* L) {
     return 0;
 }
 
+#include "party_sources.inl"
+
 void RegisterMissionHelpers(lua_State* L) {
+    g_luaPushString(L, "SDGO_MapCatalogClockMs");
+    g_luaPushCClosure(L, &LuaMissionClockMs, 0);
+    g_luaSetTable(L, kLuaGlobals);
     g_luaPushString(L, "SDGO_MapCatalogLocalHumanSlot");
     g_luaPushCClosure(L, &LuaLocalHumanSlot, 0);
     g_luaSetTable(L, kLuaGlobals);
+    g_luaPushString(L, "SDGO_MapCatalogPartySources");
+    g_luaPushCClosure(L, &LuaPartySources, 0);
+    g_luaSetTable(L, kLuaGlobals);
+}
+
+bool ActiveMissionContext(uint8_t* mode, uint32_t& mission, uint32_t& phase) {
+    mission = phase = 0;
+    if (!mode || !g_gameApp || !g_find || !g_data) return false;
+    uint8_t* app = g_gameApp();
+    if (!app || *reinterpret_cast<uint32_t*>(app + 0x4A0) != 22) return false;
+    uint8_t* service = *reinterpret_cast<uint8_t**>(app + 0x4A4);
+    if (!service || *reinterpret_cast<uint8_t**>(service + 0x0C) != mode) return false;
+    const uint8_t* record = *reinterpret_cast<const uint8_t**>(mode + 0xE8);
+    if (!record) return false;
+    mission = U32(record);
+    const uint8_t* native = nullptr;
+    if (!mission || !g_find(g_data(), &native, mission, kGameModeType, 0) || native != record) {
+        mission = 0;
+        return false;
+    }
+    phase = U32(mode + 0x620);
+    return true;
 }
 
 const sdgo::map_boundary::Entry* ActiveBoundary(uint8_t* mode, uint32_t& mission, uint32_t& phase) {
-    mission = phase = 0;
-    if (!mode || !g_gameApp || g_boundaries.empty()) return nullptr;
-    uint8_t* app = g_gameApp();
-    if (!app || *reinterpret_cast<uint32_t*>(app + 0x4A0) != 22) return nullptr;
-    uint8_t* service = *reinterpret_cast<uint8_t**>(app + 0x4A4);
-    if (!service || *reinterpret_cast<uint8_t**>(service + 0x0C) != mode) return nullptr;
-    const uint8_t* record = *reinterpret_cast<const uint8_t**>(mode + 0xE8);
-    if (!record) return nullptr;
-    mission = U32(record);
-    const uint8_t* native = nullptr;
-    if (!g_find(g_data(), &native, mission, kGameModeType, 0) || native != record) return nullptr;
-    phase = U32(mode + 0x620);
+    if (!ActiveMissionContext(mode, mission, phase) || g_boundaries.empty()) return nullptr;
     return sdgo::map_boundary::Find(g_boundaries, mission, phase);
+}
+
+const sdgo::mission_damage_gate::Entry* FindDamageGate(uint32_t mission, uint32_t phase,
+                                                       uint32_t targetNpcId) {
+    const sdgo::mission_damage_gate::Entry key{mission, phase, targetNpcId, 0, 0};
+    const auto found = std::lower_bound(g_damageGates.begin(), g_damageGates.end(), key,
+        [](const auto& left, const auto& right) {
+            return sdgo::mission_damage_gate::Key(left) < sdgo::mission_damage_gate::Key(right);
+        });
+    return found != g_damageGates.end() && found->missionId == mission &&
+        found->phase == phase && found->targetNpcId == targetNpcId ? &*found : nullptr;
+}
+
+bool BoundaryDamageActive(uint32_t mission, uint32_t phase) {
+    const auto* entry = g_boundaries.empty() ? nullptr :
+        sdgo::map_boundary::Find(g_boundaries, mission, phase);
+    return entry && (entry->flags & sdgo::map_boundary::kDamageEnabled) != 0;
 }
 
 bool BoundarySnapshot(uint8_t* document, std::vector<uint32_t>& ids) {
@@ -583,6 +713,107 @@ bool BoundarySnapshot(uint8_t* document, std::vector<uint32_t>& ids) {
 uint8_t* CanonicalObject(uint8_t* document, uint32_t id) {
     uint8_t* object = document && g_findObject ? g_findObject(document, id) : nullptr;
     return object && *reinterpret_cast<uint32_t*>(object + 4) == id ? object : nullptr;
+}
+bool NpcDataId(const uint8_t* unit, uint32_t& npcId) {
+    npcId = 0;
+    if (!unit || !g_find || !g_data ||
+        (*reinterpret_cast<const uint32_t*>(unit + 0x2B68) & sdgo::map_boundary_contact::kNpc) == 0)
+        return false;
+    const auto* definition = *reinterpret_cast<const uint8_t* const*>(unit + 0x320C);
+    if (!definition) return false;
+    npcId = U32(definition);
+    const uint8_t* native = nullptr;
+    return npcId && g_find(g_data(), &native, npcId, kNpcTemplateType, 0) && native == definition;
+}
+
+#include "retreat_client.inl"
+
+void QueueDamageGateNotice(uint32_t recipient, uint32_t target) {
+    if (!recipient || !target) return;
+    AcquireSRWLockExclusive(&g_damageGateNoticeLock);
+    for (size_t i = 0; i < g_pendingDamageGateNoticeCount; ++i) {
+        if (g_pendingDamageGateNotices[i].recipient == recipient &&
+            g_pendingDamageGateNotices[i].target == target) {
+            ReleaseSRWLockExclusive(&g_damageGateNoticeLock);
+            return;
+        }
+    }
+    if (g_pendingDamageGateNoticeCount == g_pendingDamageGateNotices.size()) {
+        for (size_t i = 1; i < g_pendingDamageGateNoticeCount; ++i)
+            g_pendingDamageGateNotices[i - 1] = g_pendingDamageGateNotices[i];
+        --g_pendingDamageGateNoticeCount;
+    }
+    g_pendingDamageGateNotices[g_pendingDamageGateNoticeCount++] = {recipient, target};
+    ReleaseSRWLockExclusive(&g_damageGateNoticeLock);
+}
+
+size_t DrainDamageGateNotices(
+    std::array<PendingDamageGateNotice, kPendingDamageGateNotices>& notices) {
+    AcquireSRWLockExclusive(&g_damageGateNoticeLock);
+    const size_t count = g_pendingDamageGateNoticeCount;
+    std::copy_n(g_pendingDamageGateNotices.begin(), count, notices.begin());
+    g_pendingDamageGateNoticeCount = 0;
+    ReleaseSRWLockExclusive(&g_damageGateNoticeLock);
+    return count;
+}
+
+void ClearDamageGateNotices() {
+    AcquireSRWLockExclusive(&g_damageGateNoticeLock);
+    g_pendingDamageGateNoticeCount = 0;
+    ReleaseSRWLockExclusive(&g_damageGateNoticeLock);
+}
+
+bool RecordBoundaryRequest(uint32_t target, int32_t before, uint64_t now) {
+    AcquireSRWLockExclusive(&g_boundaryReceiptLock);
+    const bool recorded = sdgo::map_catalog::boundary_runtime::RecordBoundaryRequest(
+        g_boundaryReceipts, target, before, now);
+    ReleaseSRWLockExclusive(&g_boundaryReceiptLock);
+    return recorded;
+}
+
+void CancelBoundaryRequest(uint32_t target, int32_t before, uint64_t now) {
+    AcquireSRWLockExclusive(&g_boundaryReceiptLock);
+    sdgo::map_catalog::boundary_runtime::CancelBoundaryRequest(
+        g_boundaryReceipts, target, before, now);
+    ReleaseSRWLockExclusive(&g_boundaryReceiptLock);
+}
+
+bool ConsumeBoundaryReceipt(uint32_t target, int32_t current, int32_t maximum,
+                            uint32_t notice, uint64_t now, int32_t& requestedBefore) {
+    AcquireSRWLockExclusive(&g_boundaryReceiptLock);
+    const bool accepted = sdgo::map_catalog::boundary_runtime::ConsumeBoundaryReceipt(
+        g_boundaryReceipts, target, current, maximum, notice, now,
+        kBoundaryReceiptLifetimeMs, requestedBefore);
+    ReleaseSRWLockExclusive(&g_boundaryReceiptLock);
+    return accepted;
+}
+
+void ClearBoundaryReceipts() {
+    AcquireSRWLockExclusive(&g_boundaryReceiptLock);
+    g_boundaryReceipts.clear();
+    ReleaseSRWLockExclusive(&g_boundaryReceiptLock);
+}
+
+void ResetDamageGateState(bool clearWarning) {
+    g_damageGateStates.clear();
+    g_damageGateShieldCooldowns.clear();
+    g_damageGateMission = 0;
+    g_damageGatePhase = 0;
+    g_damageGateSnapshotFault = false;
+    g_damageGateFxFault = false;
+    ClearDamageGateNotices();
+    if (clearWarning) g_damageGateWarningCooldowns.clear();
+}
+
+DamageGateVisualState& DamageGateState(const sdgo::mission_damage_gate::Entry& entry) {
+    const auto found = std::find_if(g_damageGateStates.begin(), g_damageGateStates.end(),
+        [&entry](const DamageGateVisualState& state) {
+            return sdgo::mission_damage_gate::Key(state.entry) ==
+                sdgo::mission_damage_gate::Key(entry);
+        });
+    if (found != g_damageGateStates.end()) return *found;
+    g_damageGateStates.push_back({entry, {}, {}, false});
+    return g_damageGateStates.back();
 }
 
 void ClearBoundaryActors(uint8_t* document) {
@@ -607,6 +838,7 @@ void ResetBoundaryState(uint8_t* document, bool clearWarning) {
         InterlockedExchange(&g_pendingBoundaryContactFx, 0);
     }
     g_boundaryDamageCooldowns.clear();
+    ClearBoundaryReceipts();
 }
 
 bool BoundaryMatches(const uint8_t* object, const sdgo::map_boundary::Entry& entry) {
@@ -679,84 +911,87 @@ uint32_t BoundaryContact(uint8_t* unit, const sdgo::map_boundary::Entry& entry) 
     return sdgo::map_boundary::ContactEdges(entry, position.x, position.z);
 }
 
-bool BoundaryContactFx(uint8_t* unit, const sdgo::map_boundary::Entry& entry,
-                       uint32_t pilot, uint64_t now) {
-    using namespace sdgo::map_boundary;
+struct BoundaryContactFeedback {
+    bool nativeHurt = false;
+    bool terrainFx = false;
+};
+
+BoundaryContactFeedback BoundaryContactFx(uint8_t* unit, const sdgo::map_boundary::Entry& entry,
+                                          uint32_t pilot, uint64_t now) {
     using sdgo::map_catalog::boundary_runtime::ContactFeedbackCoolingDown;
-    if (!unit || !g_luaLoad || !g_luaPcall ||
-        ContactFeedbackCoolingDown(g_lastBoundaryContactFx, now,
-                                   kBoundaryContactFxCooldownMs)) return false;
+    BoundaryContactFeedback result{};
+    if (!unit || ContactFeedbackCoolingDown(g_lastBoundaryContactFx, now,
+                                             kBoundaryContactFxCooldownMs)) return result;
     uint8_t* node = *reinterpret_cast<uint8_t**>(unit + 8);
-    if (!node) return false;
+    if (!node) return result;
     const auto position = *reinterpret_cast<const BoundaryPosition*>(node + 0x88);
-    if (!std::isfinite(position.x) || !std::isfinite(position.y) ||
-        !std::isfinite(position.z)) return false;
-    // The server acknowledgement proves contact. A solid gate can stop this
-    // frame's candidate slightly inside the area, before its strict clamp FX.
-    const uint32_t edges = entry.damageEdgeMask;
-    if (!edges) return false;
+    sdgo::map_catalog::shield_contact::Plan plan{};
+    if (!sdgo::map_catalog::shield_contact::MakePlan(
+            entry, {position.x, position.y, position.z}, plan)) return result;
 
-    float x = position.x;
-    const float y = position.y + 100.0f;
-    float z = position.z;
-    float directionX = 0.0f;
-    float directionZ = 0.0f;
-    if (edges & kEdgeTop) {
-        z = std::min(entry.top, position.z + 100.0f);
-        directionZ = -1.0f;
-    } else if (edges & kEdgeBottom) {
-        z = std::max(entry.bottom, position.z - 100.0f);
-        directionZ = 1.0f;
-    } else if (edges & kEdgeLeft) {
-        x = std::max(entry.left, position.x - 100.0f);
-        directionX = 1.0f;
-    } else if (edges & kEdgeRight) {
-        x = std::min(entry.right, position.x + 100.0f);
-        directionX = -1.0f;
-    }
-    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return false;
-
-    char script[768]{};
-    const _locale_t locale = _create_locale(LC_NUMERIC, "C");
-    if (!locale) return false;
-    const int length = _sprintf_s_l(
-        script, sizeof(script),
-        "CreateEffectA('0506.zfx',vector3(%.3f,%.3f,%.3f),vector3(1.5,1.5,1.5),"
-        "vector3(%.1f,0,%.1f),vector3(0,1,0))\n"
-        "CreateEffectA('0087.zfx',vector3(%.3f,%.3f,%.3f),vector3(1,1,1),"
-        "vector3(%.1f,0,%.1f),vector3(0,1,0))",
-        locale, x, y, z, directionX, directionZ,
-        x, y, z, directionX, directionZ);
-    _free_locale(locale);
-    if (length <= 0 || static_cast<size_t>(length) >= sizeof(script)) return false;
-
-    EnsureMissionScripts();
-    lua_State* L = g_scriptVm;
-    if (!L) return false;
-    const int top = g_luaGetTop(L);
-    Chunk chunk{script, static_cast<size_t>(length)};
-    int status = g_luaLoad(L, ReadChunk, &chunk,
-                           "=map_catalog/boundary_contact_fx.lua");
-    if (status == 0) status = g_luaPcall(L, 0, 0, 0);
-    if (status != 0) {
-        if (!g_boundaryContactFxFault) {
-            const char* message = g_luaToString(L, -1);
-            g_api->Log(g_mod, SDGO_LOG_ERROR,
-                       "boundary contact effect failed: %s",
-                       message ? message : "unknown Lua error");
-            g_boundaryContactFxFault = true;
+    // The authoritative receipt already committed HP. Queue only the native
+    // ordinary-hurt state so Entry/Update/Exit provide the shipped mech body
+    // reaction without replaying the damaging 0x0C message.
+    if (g_queueState) {
+        __try {
+            result.nativeHurt = sdgo::map_catalog::shield_contact::QueueNativeHurt(
+                unit, plan.directionX, plan.directionZ,
+                [](uint8_t* fsm, uint8_t* state) noexcept {
+                    return g_queueState(fsm, state);
+                });
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            result.nativeHurt = false;
         }
-        g_luaSetTop(L, top);
-        return false;
     }
-    g_luaSetTop(L, top);
-    g_lastBoundaryContactFx = now;
-    g_api->Log(g_mod, SDGO_LOG_INFO,
-               "boundary contact effect: pilot=%lu x=%.1f y=%.1f z=%.1f",
-               static_cast<unsigned long>(pilot), x, y, z);
-    return true;
-}
 
+    // Terrain context is independent from the mech FSM. Preserve the stock
+    // wall effects, but do not add body particles or guess an impact sound.
+    if (g_luaLoad && g_luaPcall) {
+        char script[768]{};
+        const _locale_t locale = _create_locale(LC_NUMERIC, "C");
+        if (locale) {
+            const int length = _sprintf_s_l(
+                script, sizeof(script),
+                sdgo::map_catalog::shield_contact::kLuaFormat,
+                locale, plan.wall.x, plan.wall.y, plan.wall.z,
+                plan.directionX, plan.directionZ,
+                plan.wall.x, plan.wall.y, plan.wall.z,
+                plan.directionX, plan.directionZ);
+            _free_locale(locale);
+            if (length > 0 && static_cast<size_t>(length) < sizeof(script)) {
+                EnsureMissionScripts();
+                lua_State* L = g_scriptVm;
+                if (L) {
+                    const int top = g_luaGetTop(L);
+                    Chunk chunk{script, static_cast<size_t>(length)};
+                    int status = g_luaLoad(L, ReadChunk, &chunk,
+                                           "=map_catalog/boundary_contact_fx.lua");
+                    if (status == 0) status = g_luaPcall(L, 0, 0, 0);
+                    if (status != 0) {
+                        if (!g_boundaryContactFxFault) {
+                            const char* message = g_luaToString(L, -1);
+                            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                                       "boundary terrain effect failed: %s",
+                                       message ? message : "unknown Lua error");
+                            g_boundaryContactFxFault = true;
+                        }
+                    } else {
+                        result.terrainFx = true;
+                    }
+                    g_luaSetTop(L, top);
+                }
+            }
+        }
+    }
+
+    if (result.nativeHurt || result.terrainFx) g_lastBoundaryContactFx = now;
+    g_api->Log(g_mod, result.nativeHurt ? SDGO_LOG_INFO : SDGO_LOG_WARN,
+               "boundary contact feedback queued: pilot=%lu native_hurt=%u terrain_fx=%u "
+               "direction=(%.1f,%.1f)",
+               static_cast<unsigned long>(pilot), result.nativeHurt ? 1u : 0u,
+               result.terrainFx ? 1u : 0u, plan.directionX, plan.directionZ);
+    return result;
+}
 void BoundaryWarning(void* mode, const sdgo::map_boundary::Entry& entry, uint32_t edges, uint64_t now) {
     // When a damage edge is declared it is the authored shield face; other area
     // edges remain ordinary movement limits and must not announce shield contact.
@@ -773,6 +1008,77 @@ void BoundaryWarning(void* mode, const sdgo::map_boundary::Entry& entry, uint32_
     g_lastBoundaryWarning = now;
     g_lastBoundaryWarningSpeech = entry.warningSpeechId;
 }
+bool DamageGateShieldFx(uint8_t* unit, uint32_t pilot, bool impact) {
+    if (!unit || !g_luaLoad || !g_luaPcall || g_damageGateFxFault) return false;
+    uint8_t* node = *reinterpret_cast<uint8_t**>(unit + 8);
+    if (!node) return false;
+    const auto position = *reinterpret_cast<const BoundaryPosition*>(node + 0x88);
+    const float y = position.y + 100.0f;
+    if (!std::isfinite(position.x) || !std::isfinite(y) || !std::isfinite(position.z))
+        return false;
+
+    char script[640]{};
+    const _locale_t locale = _create_locale(LC_NUMERIC, "C");
+    if (!locale) return false;
+    const char* format = impact
+        ? "CreateEffectA('0506.zfx',vector3(%.3f,%.3f,%.3f),vector3(2.5,2.5,2.5),"
+          "vector3(0,0,1),vector3(0,1,0))\n"
+          "CreateEffectA('0087.zfx',vector3(%.3f,%.3f,%.3f),vector3(4,4,4),"
+          "vector3(0,0,1),vector3(0,1,0))"
+        : "CreateEffectA('0087.zfx',vector3(%.3f,%.3f,%.3f),vector3(3,3,3),"
+          "vector3(0,0,1),vector3(0,1,0))";
+    int length = 0;
+    if (impact) {
+        length = _sprintf_s_l(script, sizeof(script), format, locale,
+            position.x, y, position.z, position.x, y, position.z);
+    } else {
+        length = _sprintf_s_l(script, sizeof(script), format, locale,
+            position.x, y, position.z);
+    }
+    _free_locale(locale);
+    if (length <= 0 || static_cast<size_t>(length) >= sizeof(script)) return false;
+
+    EnsureMissionScripts();
+    lua_State* L = g_scriptVm;
+    if (!L) return false;
+    const int top = g_luaGetTop(L);
+    Chunk chunk{script, static_cast<size_t>(length)};
+    int status = g_luaLoad(L, ReadChunk, &chunk, "=map_catalog/damage_gate_fx.lua");
+    if (status == 0) status = g_luaPcall(L, 0, 0, 0);
+    if (status != 0) {
+        const char* message = g_luaToString(L, -1);
+        g_api->Log(g_mod, SDGO_LOG_ERROR, "damage gate effect failed: %s",
+                   message ? message : "unknown Lua error");
+        g_damageGateFxFault = true;
+        g_luaSetTop(L, top);
+        return false;
+    }
+    g_luaSetTop(L, top);
+    if (impact) {
+        g_api->Log(g_mod, SDGO_LOG_INFO,
+                   "damage gate blocked-hit effect: pilot=%lu x=%.1f y=%.1f z=%.1f",
+                   static_cast<unsigned long>(pilot), position.x, y, position.z);
+    }
+    return true;
+}
+
+void DamageGateWarning(void* mode, const sdgo::mission_damage_gate::Entry& entry,
+                       uint32_t recipient, uint32_t localPilot, uint64_t now) {
+    using sdgo::map_catalog::boundary_runtime::CommitCooldown;
+    using sdgo::map_catalog::boundary_runtime::CoolingDown;
+    if (!g_missionCall ||
+        !sdgo::map_catalog::damage_gate_client::IsLocalWarning(recipient, localPilot) ||
+        CoolingDown(g_damageGateWarningCooldowns, entry.targetNpcId, now,
+                    kDamageGateWarningCooldownMs)) return;
+    char name[96]{};
+    sprintf_s(name, "SDGOMI_DG_%lu_%lu_%lu",
+              static_cast<unsigned long>(entry.missionId),
+              static_cast<unsigned long>(entry.phase),
+              static_cast<unsigned long>(entry.targetNpcId));
+    EnsureMissionScripts();
+    g_missionCall(name, mode);
+    CommitCooldown(g_damageGateWarningCooldowns, entry.targetNpcId, now);
+}
 
 bool LocalIsRoomMaster(uint8_t* mode, const uint8_t* local) {
     if (!mode || !local) return false;
@@ -784,7 +1090,7 @@ bool LocalIsRoomMaster(uint8_t* mode, const uint8_t* local) {
         *reinterpret_cast<const uint32_t*>(local + 0x2B68));
 }
 
-void SendBoundaryDamageRequest(uint32_t source, uint32_t target,
+void SendBoundaryDamageRequest(uint32_t source, uint32_t target, int32_t before,
                                const sdgo::map_boundary::Entry& entry, uint32_t edges, uint64_t now) {
     using namespace sdgo::map_boundary_contact;
     using sdgo::map_catalog::boundary_runtime::CommitCooldown;
@@ -800,10 +1106,17 @@ void SendBoundaryDamageRequest(uint32_t source, uint32_t target,
     uint8_t* network = g_network();
     void* socket = network ? *reinterpret_cast<void**>(network + 0x14) : nullptr;
     if (!network || !socket) return;
+    // Reserve before the transport call so a receive callback on another thread
+    // cannot arrive before its request baseline exists. A rejected send cancels
+    // only this exact reservation; an already consumed receipt stays consumed.
+    if (!RecordBoundaryRequest(target, before, now)) return;
     ++*reinterpret_cast<uint32_t*>(network + 0x58);
     *reinterpret_cast<uint32_t*>(network + 0x5C) += sizeof(packet);
-    if (g_networkSend(network, socket, packet, sizeof(packet), 0))
+    if (g_networkSend(network, socket, packet, sizeof(packet), 0)) {
         CommitCooldown(g_boundaryDamageCooldowns, target, now);
+    } else {
+        CancelBoundaryRequest(target, before, now);
+    }
 }
 
 void BoundaryDamageRequests(uint8_t* mode, uint8_t* document, uint8_t* local,
@@ -811,14 +1124,18 @@ void BoundaryDamageRequests(uint8_t* mode, uint8_t* document, uint8_t* local,
     using namespace sdgo::map_boundary_contact;
     if ((entry.flags & sdgo::map_boundary::kDamageEnabled) == 0) return;
     const uint32_t source = *reinterpret_cast<uint32_t*>(local + 0x2B68);
-    SendBoundaryDamageRequest(source, source, entry, localEdges, now);
+    SendBoundaryDamageRequest(source, source,
+                              *reinterpret_cast<int32_t*>(local + 0x38),
+                              entry, localEdges, now);
     if (!LocalIsRoomMaster(mode, local)) return;
     for (const auto& actor : g_boundaryActors) {
         uint8_t* unit = CanonicalObject(document, actor.id);
         if (!unit || unit != actor.object || unit == local) continue;
         const uint32_t target = *reinterpret_cast<uint32_t*>(unit + 0x2B68);
         if ((target & kNpc) == 0) continue;
-        SendBoundaryDamageRequest(source, target, entry, BoundaryContact(unit, entry), now);
+        SendBoundaryDamageRequest(source, target,
+                                  *reinterpret_cast<int32_t*>(unit + 0x38),
+                                  entry, BoundaryContact(unit, entry), now);
     }
 }
 
@@ -826,6 +1143,10 @@ void BoundaryTick(uint8_t* mode) {
     uint8_t* document = g_unitManager ? *g_unitManager : nullptr;
     uint32_t mission = 0, phase = 0;
     const auto* entry = ActiveBoundary(mode, mission, phase);
+    // A receipt belongs only to the first completed mission update after its
+    // authoritative HP commit. Discard it on phase/demo/mission early exits so
+    // it cannot become a delayed reaction in later combat.
+    const auto pending = static_cast<uint32_t>(InterlockedExchange(&g_pendingBoundaryContactFx, 0));
     if (!document || !mission) {
         if (!g_boundaryActors.empty() || g_boundaryMission) ResetBoundaryState(document, true);
         return;
@@ -836,11 +1157,13 @@ void BoundaryTick(uint8_t* mode) {
     else if (transition.phaseChanged) {
         ClearBoundaryActors(document);
         g_boundaryDamageCooldowns.clear();
+        ClearBoundaryReceipts();
     }
     g_boundaryMission = mission;
     g_boundaryPhase = phase;
     if (!entry) {
         if (!g_boundaryActors.empty()) ClearBoundaryActors(document);
+        ClearBoundaryReceipts();
         return;
     }
     // Native DemoPlay releases mission actors from combat control. Do not clamp
@@ -849,6 +1172,7 @@ void BoundaryTick(uint8_t* mode) {
     if (!BoundaryCombatReleased(mode)) {
         if (!g_boundaryActors.empty()) ClearBoundaryActors(document);
         g_boundaryDamageCooldowns.clear();
+        ClearBoundaryReceipts();
         return;
     }
     ApplyBoundaryActors(document, *entry);
@@ -860,30 +1184,177 @@ void BoundaryTick(uint8_t* mode) {
     BoundaryDamageRequests(mode, document, local, *entry, edges, now);
     // Scene effects and the shared Lua VM stay on the completed mission-update
     // thread. The packet callback only queues this coalesced visual receipt.
-    const auto pending = static_cast<uint32_t>(InterlockedExchange(&g_pendingBoundaryContactFx, 0));
     if (pending && pending == *reinterpret_cast<uint32_t*>(local + 0x2B68) &&
         *reinterpret_cast<int32_t*>(local + 0x38) > 0 &&
-        (entry->flags & sdgo::map_boundary::kDamageEnabled))
-        BoundaryContactFx(local, *entry, pending, now);
+        (entry->flags & sdgo::map_boundary::kDamageEnabled)) {
+        const auto feedback = BoundaryContactFx(local, *entry, pending, now);
+        g_api->Log(g_mod, feedback.nativeHurt ? SDGO_LOG_INFO : SDGO_LOG_WARN,
+                   "boundary contact feedback: pilot=%lu native_hurt=%u terrain_fx=%u",
+                   static_cast<unsigned long>(pending), feedback.nativeHurt ? 1u : 0u,
+                   feedback.terrainFx ? 1u : 0u);
+    }
+}
+
+struct DamageGateNpcUnit {
+    uint8_t* unit = nullptr;
+    uint32_t pilot = 0;
+    uint32_t npcId = 0;
+    int32_t health = 0;
+};
+
+void DamageGateTick(uint8_t* mode) {
+    std::array<PendingDamageGateNotice, kPendingDamageGateNotices> notices{};
+    size_t noticeCount = DrainDamageGateNotices(notices);
+    uint8_t* document = g_unitManager ? *g_unitManager : nullptr;
+    uint32_t mission = 0, phase = 0;
+    if (!document || !ActiveMissionContext(mode, mission, phase)) {
+        if (g_damageGateMission || !g_damageGateStates.empty()) ResetDamageGateState(true);
+        return;
+    }
+    if (g_damageGateMission != mission || g_damageGatePhase != phase) {
+        ResetDamageGateState(true);
+        g_damageGateMission = mission;
+        g_damageGatePhase = phase;
+        noticeCount = 0;
+    }
+    if (BoundaryDamageActive(mission, phase) || !BoundaryCombatReleased(mode)) return;
+
+    const sdgo::mission_damage_gate::Entry key{mission, phase, 0, 0, 0};
+    auto first = std::lower_bound(g_damageGates.begin(), g_damageGates.end(), key,
+        [](const auto& left, const auto& right) {
+            return sdgo::mission_damage_gate::Key(left) < sdgo::mission_damage_gate::Key(right);
+        });
+    auto last = first;
+    while (last != g_damageGates.end() && last->missionId == mission && last->phase == phase) ++last;
+    if (first == last) return;
+
+    std::vector<uint32_t> ids;
+    if (!BoundarySnapshot(document, ids)) {
+        if (!g_damageGateSnapshotFault) {
+            g_api->Log(g_mod, SDGO_LOG_WARN,
+                       "damage gate actor snapshot rejected because a native list changed");
+            g_damageGateSnapshotFault = true;
+        }
+        return;
+    }
+    g_damageGateSnapshotFault = false;
+    std::vector<DamageGateNpcUnit> units;
+    units.reserve(ids.size());
+    for (uint32_t id : ids) {
+        uint8_t* unit = CanonicalObject(document, id);
+        uint32_t npcId = 0;
+        if (!unit || !NpcDataId(unit, npcId)) continue;
+        const uint32_t pilot = *reinterpret_cast<uint32_t*>(unit + 0x2B68);
+        if (!pilot) continue;
+        units.push_back({unit, pilot, npcId,
+                         *reinterpret_cast<int32_t*>(unit + 0x38)});
+    }
+
+    for (auto entry = first; entry != last; ++entry) {
+        auto& state = DamageGateState(*entry);
+        bool guardAliveNow = false;
+        for (const auto& unit : units) {
+            if (unit.npcId != entry->guardNpcId) continue;
+            if (unit.health > 0) guardAliveNow = true;
+            if (sdgo::map_catalog::damage_gate_client::ObserveGuard(
+                    state.guards, unit.pilot, unit.health)) {
+                g_api->Log(g_mod, SDGO_LOG_INFO,
+                           "damage gate observed guard defeat: mission=%lu phase=%lu guard=%lu pilot=%lu defeats=%lu/%lu",
+                           static_cast<unsigned long>(mission), static_cast<unsigned long>(phase),
+                           static_cast<unsigned long>(entry->guardNpcId),
+                           static_cast<unsigned long>(unit.pilot),
+                           static_cast<unsigned long>(
+                               sdgo::map_catalog::damage_gate_client::DefeatCount(state.guards)),
+                           static_cast<unsigned long>(entry->requiredDefeats));
+            }
+        }
+        const bool guardWasObserved = std::any_of(
+            state.guards.begin(), state.guards.end(),
+            [](const auto& guard) { return guard.aliveObserved; });
+        if (state.serverDamageObserved) continue;
+        for (const auto& unit : units) {
+            if (unit.npcId != entry->targetNpcId) continue;
+            if (!sdgo::map_catalog::damage_gate_client::ObserveAcceptedTargetDamage(
+                    state.targets, unit.pilot, unit.health,
+                    guardWasObserved, guardAliveNow)) continue;
+            state.serverDamageObserved = true;
+            g_api->Log(g_mod, SDGO_LOG_INFO,
+                       "damage gate observed authoritative target damage after guard departure: mission=%lu phase=%lu target=%lu pilot=%lu",
+                       static_cast<unsigned long>(mission), static_cast<unsigned long>(phase),
+                       static_cast<unsigned long>(entry->targetNpcId),
+                       static_cast<unsigned long>(unit.pilot));
+            break;
+        }
+    }
+
+    const uint64_t now = GetTickCount64();
+    uint8_t* local = LocalBoundaryUnit(document);
+    const uint32_t localPilot = local ? *reinterpret_cast<uint32_t*>(local + 0x2B68) : 0;
+    for (size_t i = 0; i < noticeCount; ++i) {
+        const uint32_t objectId = g_objectForPilot(document, notices[i].target);
+        uint8_t* target = objectId ? CanonicalObject(document, objectId) : nullptr;
+        uint32_t targetNpcId = 0;
+        if (!target || *reinterpret_cast<uint32_t*>(target + 0x2B68) != notices[i].target ||
+            !NpcDataId(target, targetNpcId)) continue;
+        const auto* entry = FindDamageGate(mission, phase, targetNpcId);
+        if (!entry) continue;
+        const bool effect = DamageGateShieldFx(target, notices[i].target, true);
+        if (effect) sdgo::map_catalog::boundary_runtime::CommitCooldown(
+            g_damageGateShieldCooldowns, notices[i].target, now);
+        DamageGateWarning(mode, *entry, notices[i].recipient, localPilot, now);
+        g_api->Log(g_mod, SDGO_LOG_INFO,
+                   "damage gate blocked-hit receipt: mission=%lu phase=%lu recipient=%lu target=%lu npc=%lu effect=%u warning_local=%u",
+                   static_cast<unsigned long>(mission), static_cast<unsigned long>(phase),
+                   static_cast<unsigned long>(notices[i].recipient),
+                   static_cast<unsigned long>(notices[i].target),
+                   static_cast<unsigned long>(targetNpcId), effect ? 1u : 0u,
+                   sdgo::map_catalog::damage_gate_client::IsLocalWarning(
+                       notices[i].recipient, localPilot) ? 1u : 0u);
+    }
+
+    for (auto entry = first; entry != last; ++entry) {
+        auto& state = DamageGateState(*entry);
+        if (state.serverDamageObserved ||
+            !sdgo::map_catalog::damage_gate_client::Locked(
+                entry->requiredDefeats, state.guards)) continue;
+        for (const auto& unit : units) {
+            if (unit.npcId != entry->targetNpcId || unit.health <= 0 ||
+                sdgo::map_catalog::boundary_runtime::CoolingDown(
+                    g_damageGateShieldCooldowns, unit.pilot, now,
+                    kDamageGateShieldFxCooldownMs)) continue;
+            if (DamageGateShieldFx(unit.unit, unit.pilot, false)) {
+                sdgo::map_catalog::boundary_runtime::CommitCooldown(
+                    g_damageGateShieldCooldowns, unit.pilot, now);
+            }
+        }
+    }
 }
 
 void __fastcall MissionUpdateDetour(void* mode, void*) {
     g_missionUpdate(mode);
     __try {
-        BoundaryTick(static_cast<uint8_t*>(mode));
+        if (!g_boundaries.empty()) BoundaryTick(static_cast<uint8_t*>(mode));
+        if (!g_damageGates.empty()) DamageGateTick(static_cast<uint8_t*>(mode));
+        if (!g_retreats.empty()) RetreatFxTick(static_cast<uint8_t*>(mode));
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        if (!g_boundarySnapshotFault) {
-            g_api->Log(g_mod, SDGO_LOG_ERROR, "exception %08lX while applying imported mission boundary",
+        if (!g_boundarySnapshotFault && !g_damageGateSnapshotFault) {
+            g_api->Log(g_mod, SDGO_LOG_ERROR,
+                       "exception %08lX while applying imported mission client policy",
                        static_cast<unsigned long>(GetExceptionCode()));
             g_boundarySnapshotFault = true;
+            g_damageGateSnapshotFault = true;
         }
     }
 }
 
 int __fastcall MapDamageDetour(void* handler, void*, const uint8_t* packet) {
     using namespace sdgo::map_boundary_contact;
+    using sdgo::map_catalog::damage_gate_client::NoticeRoute;
     __try {
         if (packet && *reinterpret_cast<const uint16_t*>(packet) == kBoundaryNoticeOpcode) {
+            // The native room broadcast rewrites +2 for each route. It is the
+            // recipient on the client, not a stable producer discriminator.
+            const uint32_t recipient = *reinterpret_cast<const uint32_t*>(packet + 2);
             const uint32_t marked = *reinterpret_cast<const uint32_t*>(packet + 6);
             if ((marked & kMarker) != 0) {
                 uint8_t* document = g_unitManager ? *g_unitManager : nullptr;
@@ -891,46 +1362,86 @@ int __fastcall MapDamageDetour(void* handler, void*, const uint8_t* packet) {
                 uint8_t* exactUnit = exactObjectId ? CanonicalObject(document, exactObjectId) : nullptr;
                 const uint32_t exactPilot = exactUnit
                     ? *reinterpret_cast<uint32_t*>(exactUnit + 0x2B68) : 0;
-                if (sdgo::map_catalog::boundary_runtime::RouteMapDamage(
-                        marked, exactPilot, kMarker) ==
-                    sdgo::map_catalog::boundary_runtime::MapDamageRoute::Boundary) {
-                    uint8_t* app = g_gameApp ? g_gameApp() : nullptr;
-                    uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + 0x4A4) : nullptr;
-                    auto* mode = service ? *reinterpret_cast<uint8_t**>(service + 0x0C) : nullptr;
-                    uint32_t mission = 0, phase = 0;
-                    const auto* entry = ActiveBoundary(mode, mission, phase);
-                    if (IsNotice(marked) && document && entry &&
-                        (entry->flags & sdgo::map_boundary::kDamageEnabled)) {
-                        const uint32_t pilot = NoticeTarget(marked);
-                        const uint32_t objectId = g_objectForPilot(document, pilot);
-                        uint8_t* unit = CanonicalObject(document, objectId);
-                        const uint32_t hp = DecodeHealth(packet + 10);
-                        if (unit && *reinterpret_cast<uint32_t*>(unit + 0x2B68) == pilot) {
-                            const int32_t before = *reinterpret_cast<int32_t*>(unit + 0x38);
-                            const int32_t maximum = *reinterpret_cast<int32_t*>(unit + 0x3C);
-                            const bool contactFeedback = BoundaryCombatReleased(mode) &&
-                                unit == LocalBoundaryUnit(document) &&
-                                sdgo::map_catalog::boundary_runtime::ShouldShowContactFeedback(
-                                    before, maximum, hp);
-                            if (sdgo::map_catalog::boundary_runtime::ShouldApplyHealth(before, maximum, hp)) {
-                                g_setHp(unit, static_cast<int32_t>(hp));
-                                const int32_t after = *reinterpret_cast<int32_t*>(unit + 0x38);
-                                g_api->Log(g_mod, SDGO_LOG_INFO,
-                                           "boundary health receipt: pilot=%lu object=%lu phase=%lu hp=%ld->%ld/%ld",
-                                           static_cast<unsigned long>(pilot), static_cast<unsigned long>(objectId),
-                                           static_cast<unsigned long>(phase), static_cast<long>(before),
-                                           static_cast<long>(after), static_cast<long>(maximum));
-                            }
-                            if (contactFeedback)
-                                InterlockedExchange(&g_pendingBoundaryContactFx, static_cast<LONG>(pilot));
-                        }
-                    }
-                    // Every extension-owned notice is consumed here. A malformed,
-                    // stale or phase-late notice must never enter death processing.
+
+                uint8_t* app = g_gameApp ? g_gameApp() : nullptr;
+                uint8_t* service = app ? *reinterpret_cast<uint8_t**>(app + 0x4A4) : nullptr;
+                auto* mode = service ? *reinterpret_cast<uint8_t**>(service + 0x0C) : nullptr;
+                uint32_t mission = 0, phase = 0;
+                const bool activeContext = ActiveMissionContext(mode, mission, phase);
+                const uint32_t pilot =
+                    sdgo::map_catalog::damage_gate_client::NoticeTarget(marked, kMarker);
+                const uint32_t objectId = document && pilot
+                    ? g_objectForPilot(document, pilot) : 0;
+                uint8_t* unit = objectId ? CanonicalObject(document, objectId) : nullptr;
+                const bool canonicalTarget = unit &&
+                    *reinterpret_cast<uint32_t*>(unit + 0x2B68) == pilot;
+                const auto* boundary = activeContext && !g_boundaries.empty()
+                    ? sdgo::map_boundary::Find(g_boundaries, mission, phase) : nullptr;
+                const bool activeBoundaryTarget = canonicalTarget && boundary &&
+                    (boundary->flags & sdgo::map_boundary::kDamageEnabled) != 0;
+                uint32_t targetNpcId = 0;
+                const bool activeProtectedTarget = canonicalTarget && activeContext &&
+                    !activeBoundaryTarget && NpcDataId(unit, targetNpcId) &&
+                    FindDamageGate(mission, phase, targetNpcId) != nullptr;
+                const auto route = sdgo::map_catalog::damage_gate_client::RouteNotice(
+                    marked, exactPilot, kMarker, activeBoundaryTarget,
+                    activeProtectedTarget);
+
+                if (route == NoticeRoute::Protected) {
+                    // The packet callback publishes identities only. The completed
+                    // mission update resolves the target again before Lua/scene work.
+                    QueueDamageGateNotice(recipient, pilot);
                     return 1;
                 }
-                // An exact native pilot identity always retains the original 0793
-                // damage/death path, even when its id contains the extension bit.
+                if (route == NoticeRoute::Boundary) {
+                    const uint32_t hp = DecodeHealth(packet + 10);
+                    const int32_t before = *reinterpret_cast<int32_t*>(unit + 0x38);
+                    const int32_t maximum = *reinterpret_cast<int32_t*>(unit + 0x3C);
+                    const uint64_t now = GetTickCount64();
+                    int32_t requestedBefore = 0;
+                    const bool freshReceipt = ConsumeBoundaryReceipt(
+                        pilot, before, maximum, hp, now, requestedBefore);
+                    bool applied = false;
+                    int32_t after = before;
+                    if (sdgo::map_catalog::boundary_runtime::ShouldApplyHealth(
+                            before, maximum, hp)) {
+                        g_setHp(unit, static_cast<int32_t>(hp));
+                        after = *reinterpret_cast<int32_t*>(unit + 0x38);
+                        applied = after == static_cast<int32_t>(hp);
+                    }
+                    const bool contactFeedback = freshReceipt &&
+                        after == static_cast<int32_t>(hp) &&
+                        BoundaryCombatReleased(mode) &&
+                        unit == LocalBoundaryUnit(document);
+                    g_api->Log(g_mod, SDGO_LOG_INFO,
+                        "boundary health receipt: mission=%lu phase=%lu recipient=%lu "
+                        "pilot=%lu object=%lu request_hp=%ld notice=%lu local_hp=%ld->%ld/%ld "
+                        "applied=%u fresh=%u feedback=%u",
+                        static_cast<unsigned long>(mission),
+                        static_cast<unsigned long>(phase),
+                        static_cast<unsigned long>(recipient),
+                        static_cast<unsigned long>(pilot),
+                        static_cast<unsigned long>(objectId),
+                        static_cast<long>(requestedBefore),
+                        static_cast<unsigned long>(hp),
+                        static_cast<long>(before), static_cast<long>(after),
+                        static_cast<long>(maximum), applied ? 1u : 0u,
+                        freshReceipt ? 1u : 0u, contactFeedback ? 1u : 0u);
+                    if (contactFeedback) {
+                        SdgoMapLocalBoundaryReceiptV1 observation{
+                            sizeof(SdgoMapLocalBoundaryReceiptV1), SDGO_MAP_LOCAL_BOUNDARY_RECEIPT_VERSION,
+                            1, 0, static_cast<uint32_t>(now), mission, phase, marked, pilot,
+                            objectId, 0, hp, before, after, requestedBefore, maximum, 1};
+                        PublishLocalBoundaryReceipt(observation);
+                        InterlockedExchange(&g_pendingBoundaryContactFx,
+                                            static_cast<LONG>(pilot));
+                    }
+                    // Every active boundary receipt is consumed here. A malformed,
+                    // duplicate or stale value cannot enter native death processing.
+                    return 1;
+                }
+                // Exact native identities and unowned marked packets retain the
+                // original 0793 path; the native lookup is nil-safe when absent.
             }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -938,7 +1449,6 @@ int __fastcall MapDamageDetour(void* handler, void*, const uint8_t* packet) {
     }
     return g_mapDamageHandler(handler, packet);
 }
-
 uint32_t __stdcall DecideOperatorMode(uint32_t mode, const uint8_t* room) {
     if ((mode & 0xFFFF) != kListedMissionMode || !room || g_importedModes.empty()) return mode;
     __try {
@@ -1206,6 +1716,22 @@ bool RegisterResourceOverlay() {
 }
 } // namespace
 
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMapCatalogGetMissionSuccessV1(SdgoMapMissionSuccessV1* value) {
+    if (!value || value->size < sizeof(*value) ||
+        value->version != SDGO_MAP_MISSION_SUCCESS_VERSION) return 0;
+    *value = MissionSuccessSnapshot();
+    return 1;
+}
+
+extern "C" __declspec(dllexport) int __cdecl
+SdgoMapCatalogGetLocalBoundaryReceiptV1(SdgoMapLocalBoundaryReceiptV1* value) {
+    if (!value || value->size < sizeof(*value) ||
+        value->version != SDGO_MAP_LOCAL_BOUNDARY_RECEIPT_VERSION) return 0;
+    *value = LocalBoundaryReceiptSnapshot();
+    return 1;
+}
+
 SDGO_MOD_ENTRY {
     g_api = api;
     g_mod = mod;
@@ -1215,7 +1741,11 @@ SDGO_MOD_ENTRY {
     std::string error;
     const std::wstring modDirectory = api->ModDirectory(mod);
     if (!g_catalog.Load(modDirectory + L"\\catalog.bin", error) ||
-        !LoadBoundaries(modDirectory + L"\\boundaries.bin", error) || !ValidateBoundaries(error)) {
+        !LoadBoundaries(modDirectory + L"\\boundaries.bin", error) || !ValidateBoundaries(error) ||
+        !LoadDamageGates(modDirectory + L"\\damage-gates.bin", error) ||
+        !ValidateDamageGates(error) ||
+        !LoadRetreats(modDirectory + L"\\retreats.bin", error) ||
+        !ValidateRetreats(error)) {
         api->Log(mod, SDGO_LOG_ERROR, "%s", error.c_str());
         return 0;
     }
@@ -1230,9 +1760,12 @@ SDGO_MOD_ENTRY {
         api->Log(mod, SDGO_LOG_ERROR, "missions.lua must be ASCII text Lua under 4 MiB");
         return 0;
     }
-    if ((!g_missionScript.empty() || !g_boundaries.empty()) &&
-        (!Bind(g_luaState, "lua_tinker.state") || !Bind(g_luaLoad, "lua.load") || !Bind(g_luaPcall, "lua.pcall") ||
-         !Bind(g_luaGetTop, "lua.gettop") || !Bind(g_luaSetTop, "lua.settop") || !Bind(g_luaToString, "lua.tostring") ||
+    const bool scriptedMissionPolicy = !g_missionScript.empty() ||
+        !g_boundaries.empty() || !g_damageGates.empty() || !g_retreats.empty();
+    if (scriptedMissionPolicy &&
+        (!Bind(g_luaState, "lua_tinker.state") || !Bind(g_luaLoad, "lua.load") ||
+         !Bind(g_luaPcall, "lua.pcall") || !Bind(g_luaGetTop, "lua.gettop") ||
+         !Bind(g_luaSetTop, "lua.settop") || !Bind(g_luaToString, "lua.tostring") ||
          !Bind(g_luaPushNumber, "lua.pushnumber") || !Bind(g_luaPushString, "lua.pushstring") ||
          !Bind(g_luaPushCClosure, "lua.pushcclosure") || !Bind(g_luaSetTable, "lua.settable") ||
          !api->HookCode(mod, "map_catalog.mission_call", reinterpret_cast<void*>(&MissionCallDetour),
@@ -1242,25 +1775,50 @@ SDGO_MOD_ENTRY {
     bool boundaryWarning = false;
     bool boundaryDamage = false;
     for (const auto& entry : g_boundaries) {
-        boundaryWarning = boundaryWarning || (entry.flags & sdgo::map_boundary::kWarningEnabled) != 0;
-        boundaryDamage = boundaryDamage || (entry.flags & sdgo::map_boundary::kDamageEnabled) != 0;
+        boundaryWarning = boundaryWarning ||
+            (entry.flags & sdgo::map_boundary::kWarningEnabled) != 0;
+        boundaryDamage = boundaryDamage ||
+            (entry.flags & sdgo::map_boundary::kDamageEnabled) != 0;
     }
-    if (boundaryWarning && g_missionScript.empty()) {
-        api->Log(mod, SDGO_LOG_ERROR, "boundary warnings require missions.lua");
+    if ((boundaryWarning || !g_damageGates.empty()) && g_missionScript.empty()) {
+        api->Log(mod, SDGO_LOG_ERROR,
+                 boundaryWarning ? "boundary warnings require missions.lua" :
+                                   "damage gates require missions.lua");
         return 0;
     }
-    if (!g_boundaries.empty()) {
-        if (!Bind(g_gameApp, "game.app") || !Bind(g_unitManager, "game.unit_manager") ||
-            !Bind(g_findObject, "um.find_object") ||
-            !Bind(g_setTerrainRect, "map_catalog.set_terrain_rect") ||
-            !Bind(g_setTerrainRectOnOff, "map_catalog.set_terrain_rect_enabled")) return 0;
-        if (boundaryDamage &&
-            (!Bind(g_objectForPilot, "um.object_id_from_pilot") || !Bind(g_setHp, "map_catalog.set_hp") ||
-             !Bind(g_network, "flow.network") || !Bind(g_networkSend, "flow.network_send") ||
-             !api->HookCode(mod, "game.map_damage_handler", reinterpret_cast<void*>(&MapDamageDetour),
-                            reinterpret_cast<void**>(&g_mapDamageHandler)))) return 0;
-        if (!api->HookCode(mod, "map_catalog.mission_update", reinterpret_cast<void*>(&MissionUpdateDetour),
-                           reinterpret_cast<void**>(&g_missionUpdate))) return 0;
+    if (scriptedMissionPolicy &&
+        (!Bind(g_gameApp, "game.app") || !Bind(g_unitManager, "game.unit_manager") ||
+         !Bind(g_findObject, "um.find_object") ||
+         !Bind(g_objectForPilot, "um.object_id_from_pilot"))) return 0;
+    if (!g_boundaries.empty() &&
+        (!Bind(g_setTerrainRect, "map_catalog.set_terrain_rect") ||
+         !Bind(g_setTerrainRectOnOff, "map_catalog.set_terrain_rect_enabled"))) return 0;
+    if (boundaryDamage &&
+        (!Bind(g_setHp, "map_catalog.set_hp") || !Bind(g_network, "flow.network") ||
+         !Bind(g_networkSend, "flow.network_send") ||
+         !Bind(g_queueState, "fsm.queue_state"))) return 0;
+    if ((boundaryDamage || !g_damageGates.empty()) &&
+        !api->HookCode(mod, "game.map_damage_handler", reinterpret_cast<void*>(&MapDamageDetour),
+                       reinterpret_cast<void**>(&g_mapDamageHandler))) return 0;
+    if ((!g_boundaries.empty() || !g_damageGates.empty() || !g_retreats.empty()) &&
+        !api->HookCode(mod, "map_catalog.mission_update", reinterpret_cast<void*>(&MissionUpdateDetour),
+                       reinterpret_cast<void**>(&g_missionUpdate))) return 0;
+    if (!g_retreats.empty()) {
+        if (api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) ||
+            !api->HookSite ||
+            !Bind(g_retreatFxSkip, "map_catalog.retreat_fx_skip") ||
+            !Bind(g_retreatAudioSkip, "map_catalog.retreat_audio_skip") ||
+            !api->HookSite(mod, "map_catalog.retreat_fx", reinterpret_cast<void*>(&RetreatFxSite),
+                           &g_retreatFxOriginal) ||
+            !api->HookSite(mod, "map_catalog.retreat_audio", reinterpret_cast<void*>(&RetreatAudioSite),
+                           &g_retreatAudioOriginal) ||
+            !api->HookCode(mod, "map_catalog.success_cleanup",
+                           reinterpret_cast<void*>(&SuccessCleanupDetour),
+                           reinterpret_cast<void**>(&g_successCleanup))) {
+            api->Log(mod, SDGO_LOG_ERROR,
+                     "authoritative allied retreat presentation hooks unavailable");
+            return 0;
+        }
     }
     bool groupedSections = false;
     for (const auto& entry : g_catalog.records)

@@ -205,7 +205,7 @@ def _validate_runtime_policy(plan: dict) -> list[int]:
     policy = plan.get('runtime_policy')
     if policy is None:
         policy = {}
-    if not isinstance(policy, dict) or set(policy) - {'immediate_transition_missions', 'boundaries'}:
+    if not isinstance(policy, dict) or set(policy) - {'immediate_transition_missions', 'boundaries', 'damage_gates'}:
         raise ValueError('服务端计划的 runtime_policy 无效')
     mission_ids = policy.get('immediate_transition_missions', [])
     if (not isinstance(mission_ids, list)
@@ -227,9 +227,23 @@ def _validate_runtime_policy(plan: dict) -> list[int]:
     if any(row['mission_id'] not in planned_modes or (row['mission_id'], row['phase']) not in phases
            for row in boundaries):
         raise ValueError('服务端边界策略引用了计划外的任务或阶段')
+    from . import damage_gate_format
+    gates = damage_gate_format.normalize(policy.get('damage_gates', []))
+    spawns = {}
+    for row in plan.get('tables', {}).get('tbl_MissionNpc', []):
+        if row.get('NpcParty') == 2:
+            key = (row['MissionID'], row['MissionPart'], row['NpcID'])
+            spawns[key] = spawns.get(key, 0) + 1
+    for gate in gates:
+        key = gate['mission_id'], gate['phase']
+        if (key not in phases or not spawns.get((*key, gate['target_npc_id'])) or
+                spawns.get((*key, gate['guard_npc_id']), 0) < gate['required_defeats']):
+            raise ValueError('服务端目标保护策略引用了计划外的任务、阶段或守卫刷怪数量')
     plan['runtime_policy'] = {'immediate_transition_missions': mission_ids}
     if boundaries:
         plan['runtime_policy']['boundaries'] = boundaries
+    if gates:
+        plan['runtime_policy']['damage_gates'] = gates
     return mission_ids
 
 
@@ -237,6 +251,12 @@ def _boundary_runtime_policy(plan):
     from . import boundary_format
     rows = plan.get('runtime_policy', {}).get('boundaries', [])
     return boundary_format.encode(rows), any(row['flags'] & 4 for row in rows)
+
+
+def _damage_gate_runtime_policy(plan):
+    from . import damage_gate_format
+    rows = plan.get('runtime_policy', {}).get('damage_gates', [])
+    return damage_gate_format.encode(rows), bool(rows)
 
 
 def load_plan(path) -> dict:
@@ -251,9 +271,11 @@ def load_plan(path) -> dict:
         if any(table in plan['tables'] for table in ('tbl_WeaponsRev', 'tbl_UnitNpc')):
             raise ValueError('旧版服务端计划不能声明配对机体/武器表，请用当前协议重新编译')
         plan['runtime_policy'] = {'immediate_transition_missions': []}
-    if schema in LEGACY_PLAN_SCHEMAS and any(
+    if schema in ('sdgo.map-import-server-plan/1', 'sdgo.map-import-server-plan/2') and any(
             table in plan['tables'] for table in ('tbl_MapObjects', 'tbl_MapBlocks')):
         raise ValueError('旧版服务端计划不能声明命名物件表，请用当前协议重新编译')
+    if schema in LEGACY_PLAN_SCHEMAS and 'damage_gates' in (plan.get('runtime_policy') or {}):
+        raise ValueError('目标保护需要新版服务端计划，请用当前协议重新编译')
     for table, rows in plan['tables'].items():
         if table not in COLUMNS:
             raise ValueError('服务端计划包含未支持的表：' + table)
@@ -304,10 +326,11 @@ def _battle_policy_hosts(server_ini) -> list[dict]:
         symbols = mod / 'symbols.fragment.ini'
         config = mod / 'config.ini'
         boundary = mod / 'boundaries.bin'
+        damage_gates = mod / 'damage-gates.bin'
         problem = ''
         values = None
         if (mod.is_symlink() or dll.is_symlink() or mod_ini.is_symlink() or symbols.is_symlink()
-                or config.is_symlink() or boundary.is_symlink()):
+                or config.is_symlink() or boundary.is_symlink() or damage_gates.is_symlink()):
             problem = '模块目录或程序文件不能是目录链接'
         elif not dll.is_file() or not mod_ini.is_file() or not symbols.is_file():
             problem = '缺少 DLL、mod.ini 或 symbols.fragment.ini'
@@ -339,17 +362,22 @@ def _battle_policy_hosts(server_ini) -> list[dict]:
         parts = version.split('.')
         contact_supported = len(parts) == 3 and all(part.isdecimal() for part in parts) and \
             tuple(map(int, parts)) >= (0, 2, 0)
+        gates_supported = len(parts) == 3 and all(part.isdecimal() for part in parts) and \
+            tuple(map(int, parts)) >= (0, 3, 0)
         boundary_raw = boundary.read_bytes() if installed and boundary.is_file() and boundary.stat().st_size <= 800000 else None
+        gates_raw = damage_gates.read_bytes() if installed and damage_gates.is_file() and damage_gates.stat().st_size <= 400000 else None
         result.append({'host': host.name, 'path': host, 'mod': mod, 'installed': installed,
                        'enabled': enabled, 'global_enabled': global_enabled, 'configured_ids': configured,
-                       'problem': problem, 'contact_supported': contact_supported, 'boundary_raw': boundary_raw})
+                       'problem': problem, 'contact_supported': contact_supported, 'boundary_raw': boundary_raw,
+                       'gates_supported': gates_supported, 'gates_raw': gates_raw})
     return result
 
 
 def runtime_policy_state(plan: dict, server_ini) -> dict:
     mission_ids = _validate_runtime_policy(plan)
     expected_boundary, contact_required = _boundary_runtime_policy(plan)
-    required = bool(mission_ids) or contact_required
+    expected_gates, gates_required = _damage_gate_runtime_policy(plan)
+    required = bool(mission_ids) or contact_required or gates_required
     try:
         hosts = _battle_policy_hosts(server_ini)
         topology_error = ''
@@ -357,7 +385,8 @@ def runtime_policy_state(plan: dict, server_ini) -> dict:
         hosts = []
         topology_error = str(error)
     missing = [row['host'] for row in hosts if not row['installed'] or
-               (contact_required and not row['contact_supported'])] if required else []
+               (contact_required and not row['contact_supported']) or
+               (gates_required and not row['gates_supported'])] if required else []
     if topology_error:
         missing = []
     elif required and not hosts:
@@ -367,12 +396,15 @@ def runtime_policy_state(plan: dict, server_ini) -> dict:
     for row in hosts:
         boundary_configured = row['boundary_raw'] == expected_boundary or \
             (not plan['runtime_policy'].get('boundaries') and row['boundary_raw'] is None)
-        configured = row['configured_ids'] == expected and boundary_configured
+        gates_configured = row['gates_raw'] == expected_gates or \
+            (not gates_required and row['gates_raw'] is None)
+        configured = row['configured_ids'] == expected and boundary_configured and gates_configured
         row['policy_configured'] = configured
         public_hosts.append({'host': row['host'], 'installed': row['installed'], 'configured': configured,
                              'enabled': row['enabled'], 'global_enabled': row['global_enabled'],
                              'problem': row['problem'], 'contact_supported': row['contact_supported'],
-                             'boundary_configured': boundary_configured})
+                             'boundary_configured': boundary_configured,
+                             'gates_supported': row['gates_supported'], 'gates_configured': gates_configured})
     if topology_error:
         status = 'topology_error'
     elif required and missing:
@@ -394,6 +426,7 @@ def runtime_policy_state(plan: dict, server_ini) -> dict:
             'hosts': public_hosts, 'missing_hosts': missing, 'configured_hosts': configured_hosts,
             'ready_hosts': ready_hosts, 'topology_error': topology_error,
             'policy_active': False, 'runtime_verified': False, 'boundary_contact_required': contact_required,
+            'target_damage_gate_required': gates_required,
             'restart_required': status in ('configuration_required', 'activation_required', 'configured')}
 
 
@@ -406,8 +439,9 @@ def apply_runtime_policy(plan: dict, server_ini) -> dict:
     from manager import storage
     mission_ids = _validate_runtime_policy(plan)
     expected_boundary, contact_required = _boundary_runtime_policy(plan)
+    expected_gates, gates_required = _damage_gate_runtime_policy(plan)
     before = runtime_policy_state(plan, server_ini)
-    if before['topology_error'] or ((mission_ids or contact_required) and before['status'] == 'pending_programme_deployment'):
+    if before['topology_error'] or ((mission_ids or contact_required or gates_required) and before['status'] == 'pending_programme_deployment'):
         return before
     hosts = [row for row in _battle_policy_hosts(server_ini) if row['installed']]
     if not hosts:
@@ -430,6 +464,10 @@ def apply_runtime_policy(plan: dict, server_ini) -> dict:
         if plan['runtime_policy'].get('boundaries') or boundary.exists():
             original = boundary.read_bytes() if boundary.is_file() else None
             boundary_prepared.append((boundary, original, expected_boundary))
+        gates_path = row['mod'] / 'damage-gates.bin'
+        if gates_required or gates_path.exists():
+            original = gates_path.read_bytes() if gates_path.is_file() else None
+            boundary_prepared.append((gates_path, original, expected_gates))
     written = []
     try:
         # Configure every host before enabling any host, so no BattleServer can load a half-written allowlist.
@@ -543,6 +581,11 @@ def _plan_changes(cursor, plan: dict, lock: bool, map_key: str | None = None) ->
 
 
 def apply(plan: dict, server_ini, map_key: str) -> dict:
+    if plan.get('runtime_policy', {}).get('damage_gates'):
+        readiness = runtime_policy_state(plan, server_ini)
+        if readiness['topology_error'] or readiness['missing_hosts'] or any(
+                not host['global_enabled'] for host in _battle_policy_hosts(server_ini)):
+            raise ValueError('目标保护需要所有配套 BattleServer 安装并启用 map_catalog_server 0.3.0；未写入任务数据')
     connection = repository._connect(Path(server_ini))
     try:
         cursor = connection.cursor()

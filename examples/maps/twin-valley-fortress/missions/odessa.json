@@ -1,13 +1,13 @@
 {
  "schema": "sdgo.map-mission",
- "schema_version": 3,
+ "schema_version": 5,
  "mission_key": "sdgo-sample.twin-valley-fortress.odessa",
  "name": {
   "zh": "奥德萨作战",
   "en": "Operation Odessa"
  },
  "description": {
-  "zh": "一年战争·奥德萨反攻。突破矿区外围防线，摧毁导弹阵地，掩护钢坦克轰开基地闸门；迎击黑色三连星的喷射气流攻击，突入基地核心，在核弹发射前将其击破。"
+  "zh": "一年战争·奥德萨反攻。突破矿区外围防线，摧毁导弹阵地，掩护钢坦克轰开基地闸门；迎击黑色三连星的喷射气流攻击，突入基地核心，在核弹发射前摧毁发射井。"
  },
  "presentation": {
   "list_banner": "images/cat_list_banner.png",
@@ -28,15 +28,33 @@
    "第2阶段：摧毁3座导弹阵地",
    "第3阶段：掩护钢坦克90秒",
    "第4阶段：击破黑色三连星",
-   "第5阶段：击破基地指挥官，肃清残兵，60秒内击破核弹头"
+   "第5阶段：击破基地指挥官，肃清残兵，60秒内摧毁核弹发射井"
   ]
  },
  "difficulties": [
   {
-   "level": 3,
+   "level": 1,
    "required_rank": 5,
    "time_limit": 1200,
    "lives": 7
+  },
+  {
+   "level": 2,
+   "required_rank": 5,
+   "time_limit": 1200,
+   "lives": 7
+  },
+  {
+   "level": 3,
+   "required_rank": 5,
+   "time_limit": 1200,
+   "lives": 5
+  },
+  {
+   "level": 4,
+   "required_rank": 5,
+   "time_limit": 1200,
+   "lives": 5
   }
  ],
  "bgm": {
@@ -50,7 +68,18 @@
    "template": 85192
   },
   "nuke": {
-   "template": 85303
+   "template": 85303,
+   "hp": 50000,
+   "hp_by_difficulty": {
+    "1": 12500,
+    "2": 22000,
+    "3": 50000,
+    "4": 68500
+   },
+   "name": {
+    "zh": "核弹发射井",
+    "en": "Nuclear Missile Silo"
+   }
   },
   "whitebase_actor": {
    "template": 85268
@@ -64,10 +93,16 @@
     "zh": "钢坦克（隼人）",
     "en": "Guntank"
    },
-   "hp": 12000,
+   "hp": 36000,
    "block_attack": {
     "block": "odessa_gate_leaf",
     "weapon": "second"
+   },
+   "hp_by_difficulty": {
+    "1": 18000,
+    "2": 27000,
+    "3": 36000,
+    "4": 45000
    }
   },
   "gm_ally": {
@@ -87,6 +122,12 @@
    "name": {
     "zh": "扎古II改良型（火箭炮）",
     "en": "Zaku II Bazooka"
+   },
+   "hp_by_difficulty": {
+    "1": 2360,
+    "2": 3086,
+    "3": 4300,
+    "4": 7644
    }
   },
   "zaku_one": {
@@ -97,6 +138,12 @@
    "name": {
     "zh": "扎古I",
     "en": "Zaku I"
+   },
+   "hp_by_difficulty": {
+    "1": 1976,
+    "2": 2584,
+    "3": 3600,
+    "4": 6400
    }
   },
   "zaku_magella": {
@@ -107,6 +154,12 @@
    "name": {
     "zh": "扎古II（马哲兰炮）",
     "en": "Zaku II Magella"
+   },
+   "hp_by_difficulty": {
+    "1": 2250,
+    "2": 2943,
+    "3": 4100,
+    "4": 7289
    }
   },
   "zaku_mine": {
@@ -117,6 +170,12 @@
    "name": {
     "zh": "扎古布雷者",
     "en": "Zaku Minelayer"
+   },
+   "hp_by_difficulty": {
+    "1": 2141,
+    "2": 2799,
+    "3": 3900,
+    "4": 6933
    }
   },
   "zaku_cannon": {
@@ -127,6 +186,12 @@
    "name": {
     "zh": "扎古加农",
     "en": "Zaku Cannon"
+   },
+   "hp_by_difficulty": {
+    "1": 2525,
+    "2": 3302,
+    "3": 4600,
+    "4": 8178
    }
   },
   "dopp": {
@@ -137,6 +202,12 @@
    "name": {
     "zh": "老虎",
     "en": "Dopp"
+   },
+   "hp_by_difficulty": {
+    "1": 1372,
+    "2": 1794,
+    "3": 2500,
+    "4": 4444
    }
   },
   "dopp_fly": {
@@ -147,6 +218,12 @@
    "name": {
     "zh": "老虎试飞型",
     "en": "Dopp flight"
+   },
+   "hp_by_difficulty": {
+    "1": 1427,
+    "2": 1866,
+    "3": 2600,
+    "4": 4622
    }
   },
   "dom_trop": {
@@ -157,6 +234,12 @@
    "name": {
     "zh": "大魔热带型",
     "en": "Dom Tropical"
+   },
+   "hp_by_difficulty": {
+    "1": 3403,
+    "2": 4450,
+    "3": 6200,
+    "4": 11022
    }
   },
   "dom_desert": {
@@ -167,6 +250,12 @@
    "name": {
     "zh": "大魔热带型（沙漠战）",
     "en": "Dom Desert"
+   },
+   "hp_by_difficulty": {
+    "1": 3513,
+    "2": 4594,
+    "3": 6400,
+    "4": 11378
    }
   },
   "tristar_zaku": {
@@ -177,6 +266,12 @@
    "name": {
     "zh": "黑色三连星专用扎古II",
     "en": "Tri-Stars Zaku"
+   },
+   "hp_by_difficulty": {
+    "1": 2854,
+    "2": 3732,
+    "3": 5200,
+    "4": 9244
    }
   },
   "commander": {
@@ -187,6 +282,12 @@
    "name": {
     "zh": "扎古II（指挥官用）",
     "en": "Commander Zaku"
+   },
+   "hp_by_difficulty": {
+    "1": 3732,
+    "2": 4881,
+    "3": 6800,
+    "4": 12089
    }
   },
   "dom": {
@@ -197,6 +298,12 @@
    "name": {
     "zh": "大魔",
     "en": "Dom"
+   },
+   "hp_by_difficulty": {
+    "1": 3623,
+    "2": 4737,
+    "3": 6600,
+    "4": 11733
    }
   },
   "dopp_kai": {
@@ -207,13 +314,19 @@
    "name": {
     "zh": "老虎特装型",
     "en": "Dopp custom"
+   },
+   "hp_by_difficulty": {
+    "1": 1756,
+    "2": 2297,
+    "3": 3200,
+    "4": 5689
    }
   },
   "gaia": {
    "label": "加亚",
    "template": 85109,
    "ai": "VSAI_Infighter_01",
-   "hp": 21000,
+   "hp": 87750,
    "attack": 2.0,
    "special_attack": 2.0,
    "boss": true,
@@ -224,32 +337,50 @@
    "cutin": {
     "native_sprite": "sprs\\8879.spr",
     "line": "l10"
+   },
+   "hp_by_difficulty": {
+    "1": 21850,
+    "2": 38475,
+    "3": 87750,
+    "4": 120000
    }
   },
   "mash": {
    "label": "马修",
    "template": 85110,
    "ai": "VSAI_Infighter_02",
-   "hp": 20000,
+   "hp": 87750,
    "attack": 2.0,
    "special_attack": 2.0,
    "boss": true,
    "name": {
     "zh": "大魔（马修）",
     "en": "Dom Mash"
+   },
+   "hp_by_difficulty": {
+    "1": 21850,
+    "2": 38475,
+    "3": 87750,
+    "4": 120000
    }
   },
   "ortega": {
    "label": "奥尔迪加",
    "template": 85111,
    "ai": "VSAI_Gunfighter_01",
-   "hp": 20500,
+   "hp": 87750,
    "attack": 2.0,
    "special_attack": 2.0,
    "boss": true,
    "name": {
     "zh": "大魔（奥尔迪加）",
     "en": "Dom Ortega"
+   },
+   "hp_by_difficulty": {
+    "1": 21850,
+    "2": 38475,
+    "3": 87750,
+    "4": 120000
    }
   },
   "gyan": {
@@ -257,13 +388,19 @@
    "unit": 11021,
    "base": 85109,
    "ai": "VSAI_Infighter_03",
-   "hp": 36000,
+   "hp": 87750,
    "attack": 2.0,
    "special_attack": 1.5,
    "boss": true,
    "name": {
     "zh": "强人（马克贝）",
     "en": "Gyan M'Quve"
+   },
+   "hp_by_difficulty": {
+    "1": 21850,
+    "2": 38475,
+    "3": 87750,
+    "4": 120000
    }
   }
  },
@@ -409,7 +546,7 @@
     "zh": "布莱德"
    },
    "text": {
-    "zh": "绝不能让它飞出去！阿姆罗，拦截！只有六十秒！"
+    "zh": "发射程序已启动！全机集中攻击，六十秒内摧毁核弹发射井！"
    }
   },
   "l15": {
@@ -429,11 +566,20 @@
    "text": {
     "zh": "干得好。奥德萨作战，我军胜利！全机返航！"
    }
+  },
+  "lshield": {
+   "portrait": "sprs\\9070.spr",
+   "speaker": {
+    "zh": "芙拉"
+   },
+   "text": {
+    "zh": "基地有防护罩，不能强行穿越！请掩护钢坦克打开正门，从大门进入！"
+   }
   }
  },
  "area": [
   -4600,
-  3000,
+  2100,
   4600,
   -6200
  ],
@@ -441,24 +587,44 @@
   "north_valley": {
    "warp": [
     [
-     -300.0,
-     140.9,
-     3300.0
+     -300,
+     100.9,
+     3300
     ],
     [
-     300.0,
-     141.1,
-     3300.0
+     300,
+     101.1,
+     3300
     ],
     [
-     -300.0,
-     117.4,
-     3550.0
+     -300,
+     77.4,
+     3550
     ],
     [
-     300.0,
-     116.3,
-     3550.0
+     300,
+     76.4,
+     3550
+    ],
+    [
+     -150,
+     104.5,
+     3200
+    ],
+    [
+     150,
+     105.5,
+     3200
+    ],
+    [
+     -150,
+     85.6,
+     3450
+    ],
+    [
+     150,
+     86.2,
+     3450
     ]
    ],
    "facing": [
@@ -555,7 +721,8 @@
    "reward": {
     "points": 30,
     "unit_exp": 60
-   }
+   },
+   "section_clear": false
   },
   {
    "key": "mopup",
@@ -672,7 +839,8 @@
    "reward": {
     "points": 40,
     "unit_exp": 80
-   }
+   },
+   "section_clear": false
   },
   {
    "key": "missiles",
@@ -795,7 +963,8 @@
    "reward": {
     "points": 60,
     "unit_exp": 120
-   }
+   },
+   "section_clear": true
   },
   {
    "key": "guntank",
@@ -804,7 +973,7 @@
    },
    "slots": {
     "ally": 1,
-    "enemy": 8
+    "enemy": 9
    },
    "enter": {
     "lines": [
@@ -829,72 +998,793 @@
      "npc": "dopp_fly",
      "positions": [
       [
-       1900.0,
-       185.1,
-       900.0
-      ],
-      [
-       1.1634144591899854e-13,
-       147.8,
-       2800.0
-      ],
-      [
-       -1900.0,
-       122.7,
-       900.0000000000002
-      ],
-      [
-       -3.4902433775699563e-13,
-       154.1,
-       -1000.0
+       -2600.0,
+       571.5,
+       1000.0
       ]
      ],
-     "at": 0,
-     "every": 4
+     "at": 0
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -2300.0,
+       64.1,
+       600.0
+      ]
+     ],
+     "at": 0
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       2600.0,
+       619.4,
+       1000.0
+      ]
+     ],
+     "at": 0
     },
     {
      "npc": "dom_trop",
      "positions": [
       [
        2300.0,
-       130.2,
+       70.2,
        600.0
-      ],
-      [
-       1.4083438190194562e-13,
-       148.4,
-       2900.0
-      ],
-      [
-       -2300.0,
-       124.1,
-       600.0000000000002
-      ],
-      [
-       -4.225031457058368e-13,
-       283.4,
-       -1700.0
       ]
      ],
-     "at": 20,
-     "every": 5
+     "at": 0
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -1900.0,
+       756.5,
+       -1000.0
+      ]
+     ],
+     "at": 0
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -1700.0,
+       165.6,
+       -1300.0
+      ]
+     ],
+     "at": 0
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       1900.0,
+       658.6,
+       -1000.0
+      ]
+     ],
+     "at": 4
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       0.0,
+       749.6,
+       -1800.0
+      ]
+     ],
+     "at": 4
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       1700.0,
+       114.2,
+       -1300.0
+      ]
+     ],
+     "at": 4
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -2600.0,
+       571.5,
+       1000.0
+      ]
+     ],
+     "at": 8
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       2600.0,
+       619.4,
+       1000.0
+      ]
+     ],
+     "at": 8
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       0.0,
+       322.1,
+       -2200.0
+      ]
+     ],
+     "at": 8
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -1900.0,
+       756.5,
+       -1000.0
+      ]
+     ],
+     "at": 12
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       1900.0,
+       658.6,
+       -1000.0
+      ]
+     ],
+     "at": 12
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -2300.0,
+       64.1,
+       600.0
+      ]
+     ],
+     "at": 12
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       0.0,
+       749.6,
+       -1800.0
+      ]
+     ],
+     "at": 16
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -2600.0,
+       571.5,
+       1000.0
+      ]
+     ],
+     "at": 16
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       2300.0,
+       70.2,
+       600.0
+      ]
+     ],
+     "at": 16
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       2600.0,
+       619.4,
+       1000.0
+      ]
+     ],
+     "at": 20
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -1900.0,
+       756.5,
+       -1000.0
+      ]
+     ],
+     "at": 20
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -1700.0,
+       165.6,
+       -1300.0
+      ]
+     ],
+     "at": 20
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       1900.0,
+       658.6,
+       -1000.0
+      ]
+     ],
+     "at": 24
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       0.0,
+       749.6,
+       -1800.0
+      ]
+     ],
+     "at": 24
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       1700.0,
+       114.2,
+       -1300.0
+      ]
+     ],
+     "at": 24
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -2600.0,
+       571.5,
+       1000.0
+      ]
+     ],
+     "at": 28
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       2600.0,
+       619.4,
+       1000.0
+      ]
+     ],
+     "at": 28
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       0.0,
+       322.1,
+       -2200.0
+      ]
+     ],
+     "at": 28
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -1900.0,
+       756.5,
+       -1000.0
+      ]
+     ],
+     "at": 32
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -2300.0,
+       64.1,
+       600.0
+      ]
+     ],
+     "at": 32
     },
     {
      "npc": "dom_desert",
      "positions": [
       [
-       2100.0,
-       143.5,
-       300.0
-      ],
-      [
-       -2100.0,
-       148.7,
-       300.0000000000003
+       2300.0,
+       70.2,
+       600.0
       ]
      ],
-     "at": 45,
-     "every": 6
+     "at": 32
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       1900.0,
+       658.6,
+       -1000.0
+      ]
+     ],
+     "at": 36
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -1700.0,
+       165.6,
+       -1300.0
+      ]
+     ],
+     "at": 36
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       1700.0,
+       114.2,
+       -1300.0
+      ]
+     ],
+     "at": 36
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       0.0,
+       749.6,
+       -1800.0
+      ]
+     ],
+     "at": 40
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       0.0,
+       322.1,
+       -2200.0
+      ]
+     ],
+     "at": 40
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       -2300.0,
+       64.1,
+       600.0
+      ]
+     ],
+     "at": 40
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -2600.0,
+       571.5,
+       1000.0
+      ]
+     ],
+     "at": 44
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       2300.0,
+       70.2,
+       600.0
+      ]
+     ],
+     "at": 44
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       -1700.0,
+       165.6,
+       -1300.0
+      ]
+     ],
+     "at": 44
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       2600.0,
+       619.4,
+       1000.0
+      ]
+     ],
+     "at": 48
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       1700.0,
+       114.2,
+       -1300.0
+      ]
+     ],
+     "at": 48
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       0.0,
+       322.1,
+       -2200.0
+      ]
+     ],
+     "at": 48
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -1900.0,
+       756.5,
+       -1000.0
+      ]
+     ],
+     "at": 52
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -2300.0,
+       64.1,
+       600.0
+      ]
+     ],
+     "at": 52
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       2300.0,
+       70.2,
+       600.0
+      ]
+     ],
+     "at": 52
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       1900.0,
+       658.6,
+       -1000.0
+      ]
+     ],
+     "at": 56
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -1700.0,
+       165.6,
+       -1300.0
+      ]
+     ],
+     "at": 56
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       1700.0,
+       114.2,
+       -1300.0
+      ]
+     ],
+     "at": 56
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       0.0,
+       749.6,
+       -1800.0
+      ]
+     ],
+     "at": 60
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       0.0,
+       322.1,
+       -2200.0
+      ]
+     ],
+     "at": 60
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       -2300.0,
+       64.1,
+       600.0
+      ]
+     ],
+     "at": 60
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -2600.0,
+       571.5,
+       1000.0
+      ]
+     ],
+     "at": 64
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       2300.0,
+       70.2,
+       600.0
+      ]
+     ],
+     "at": 64
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       -1700.0,
+       165.6,
+       -1300.0
+      ]
+     ],
+     "at": 64
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       2600.0,
+       619.4,
+       1000.0
+      ]
+     ],
+     "at": 68
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       1700.0,
+       114.2,
+       -1300.0
+      ]
+     ],
+     "at": 68
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       0.0,
+       322.1,
+       -2200.0
+      ]
+     ],
+     "at": 68
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -1900.0,
+       756.5,
+       -1000.0
+      ]
+     ],
+     "at": 72
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -2300.0,
+       64.1,
+       600.0
+      ]
+     ],
+     "at": 72
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       2300.0,
+       70.2,
+       600.0
+      ]
+     ],
+     "at": 72
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       1900.0,
+       658.6,
+       -1000.0
+      ]
+     ],
+     "at": 76
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       -1700.0,
+       165.6,
+       -1300.0
+      ]
+     ],
+     "at": 76
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       1700.0,
+       114.2,
+       -1300.0
+      ]
+     ],
+     "at": 76
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       0.0,
+       749.6,
+       -1800.0
+      ]
+     ],
+     "at": 80
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       0.0,
+       322.1,
+       -2200.0
+      ]
+     ],
+     "at": 80
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       -2300.0,
+       64.1,
+       600.0
+      ]
+     ],
+     "at": 80
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       -2600.0,
+       571.5,
+       1000.0
+      ]
+     ],
+     "at": 84
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       2300.0,
+       70.2,
+       600.0
+      ]
+     ],
+     "at": 84
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       -1700.0,
+       165.6,
+       -1300.0
+      ]
+     ],
+     "at": 84
+    },
+    {
+     "npc": "dopp_fly",
+     "positions": [
+      [
+       2600.0,
+       619.4,
+       1000.0
+      ]
+     ],
+     "at": 88
+    },
+    {
+     "npc": "dom_trop",
+     "positions": [
+      [
+       1700.0,
+       114.2,
+       -1300.0
+      ]
+     ],
+     "at": 88
+    },
+    {
+     "npc": "dom_desert",
+     "positions": [
+      [
+       0.0,
+       322.1,
+       -2200.0
+      ]
+     ],
+     "at": 88
     }
    ],
    "goal": {
@@ -910,7 +1800,11 @@
    "reward": {
     "points": 80,
     "unit_exp": 150
-   }
+   },
+   "section_clear": false,
+   "retreat_allies": [
+    "guntank"
+   ]
   },
   {
    "key": "tristars",
@@ -928,8 +1822,19 @@
      {
       "block": "odessa_gate_leaf",
       "visible": false
+     },
+     {
+      "block": "odessa_base_shield",
+      "visible": false
      }
-    ]
+    ],
+    "area": [
+     -4600,
+     3000,
+     4600,
+     -6200
+    ],
+    "boundary_warning": false
    },
    "spawns": [
     {
@@ -1013,7 +1918,8 @@
    "reward": {
     "points": 150,
     "unit_exp": 300
-   }
+   },
+   "section_clear": false
   },
   {
    "key": "core",
@@ -1026,11 +1932,11 @@
    },
    "enter": {
     "lines": [
-     "l11",
      "l12",
      "l12a"
     ],
-    "sector": "north_valley"
+    "sector": "north_valley",
+    "cutscene": "base_entry"
    },
    "spawns": [
     {
@@ -1088,7 +1994,8 @@
    "reward": {
     "points": 80,
     "unit_exp": 150
-   }
+   },
+   "section_clear": true
   },
   {
    "key": "core_mopup",
@@ -1200,12 +2107,13 @@
    "reward": {
     "points": 80,
     "unit_exp": 150
-   }
+   },
+   "section_clear": false
   },
   {
    "key": "nuke",
    "objective": {
-    "zh": "60秒内击破核弹头"
+    "zh": "核弹发射井"
    },
    "slots": {
     "ally": 0,
@@ -1213,9 +2121,7 @@
    },
    "enter": {
     "cutscene": "nuke",
-    "lines": [
-     "l14"
-    ]
+    "lines": []
    },
    "spawns": [
     {
@@ -1274,7 +2180,8 @@
    "reward": {
     "points": 200,
     "unit_exp": 400
-   }
+   },
+   "section_clear": false
   }
  ],
  "opening": "opening",
@@ -1768,7 +2675,205 @@
      "line": "l16"
     }
    ]
+  },
+  "base_entry": {
+   "length": 5,
+   "hide_players": true,
+   "actors": {},
+   "party": {
+    "from": [
+     [
+      -270,
+      100.1,
+      2050
+     ],
+     [
+      270,
+      98.2,
+      2050
+     ],
+     [
+      -150,
+      98.3,
+      1950
+     ],
+     [
+      150,
+      97.2,
+      1950
+     ],
+     [
+      -60,
+      97.6,
+      1850
+     ],
+     [
+      60,
+      96.4,
+      1850
+     ],
+     [
+      -270,
+      96.7,
+      1750
+     ],
+     [
+      270,
+      89.8,
+      1750
+     ]
+    ],
+    "via": [
+     [
+      -270,
+      105.5,
+      2500
+     ],
+     [
+      270,
+      97.6,
+      2500
+     ],
+     [
+      -150,
+      105.2,
+      2400
+     ],
+     [
+      150,
+      99.4,
+      2400
+     ],
+     [
+      -60,
+      103.1,
+      2350
+     ],
+     [
+      60,
+      100.5,
+      2350
+     ],
+     [
+      -270,
+      103.3,
+      2300
+     ],
+     [
+      270,
+      99.1,
+      2300
+     ]
+    ],
+    "to": [
+     [
+      -300,
+      100.9,
+      3300
+     ],
+     [
+      300,
+      101.1,
+      3300
+     ],
+     [
+      -300,
+      77.4,
+      3550
+     ],
+     [
+      300,
+      76.4,
+      3550
+     ],
+     [
+      -150,
+      104.5,
+      3200
+     ],
+     [
+      150,
+      105.5,
+      3200
+     ],
+     [
+      -150,
+      85.6,
+      3450
+     ],
+     [
+      150,
+      86.2,
+      3450
+     ]
+    ],
+    "facing": [
+     0,
+     1
+    ],
+    "include_wingmen": true
+   },
+   "camera": [
+    {
+     "t": 0,
+     "pos": [
+      450,
+      1200,
+      600
+     ],
+     "look": [
+      0,
+      230,
+      2050
+     ]
+    },
+    {
+     "t": 2.5,
+     "pos": [
+      400,
+      1200,
+      1200
+     ],
+     "look": [
+      0,
+      230,
+      2650
+     ]
+    },
+    {
+     "t": 5,
+     "pos": [
+      350,
+      1200,
+      1850
+     ],
+     "look": [
+      0,
+      230,
+      3300
+     ]
+    }
+   ],
+   "events": [
+    {
+     "t": 1,
+     "line": "l11"
+    }
+   ]
   }
  },
- "transition_delay": "immediate"
+ "transition_delay": "immediate",
+ "boundary_markings": "initial",
+ "boundary_warning": "lshield",
+ "boundary_damage": {
+  "phases": [
+   "outer",
+   "mopup",
+   "missiles",
+   "guntank"
+  ],
+  "edge": "top",
+  "permille": 50,
+  "cooldown": 2
+ }
 }

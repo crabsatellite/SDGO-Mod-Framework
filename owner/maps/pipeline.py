@@ -149,9 +149,13 @@ def mission_templates(baseline, server_ini) -> M.Templates:
         connection.close()
     clears = records('gdrs/0055.gdt', 391)
     routes = records('gdrs/0057.gdt', 34)
+    routes_by_level = {routes[i][9]:routes[i] for i in (195001,195002,195003) if i in routes}
+    for _, row in sorted(routes.items()):
+        if len(row) == 34 and 1 <= row[9] <= 9:
+            routes_by_level.setdefault(row[9], row)
     return M.Templates(
         game_mode=records('gdrs/0021.gdt', 1090)[88006], clear=clears[min(clears)],
-        routes={routes[i][9]: routes[i] for i in (195001, 195002, 195003)},
+        routes=routes_by_level,
         objective=records('gdrs/0080.gdt', 634)[197001], catalogue=records('gdrs/0056.gdt', 1309)[191001],
         speech=records('gdrs/0119.gdt', 506)[3229322], npc_templates=npc_templates, npc_data=npc_data,
         spawn=records('gdrs/0053.gdt', 152)[620001],

@@ -380,22 +380,19 @@ namespace
         uint8_t packet[0x20] = {};
         *reinterpret_cast<uint16_t*>(packet) = 0x07D4;
         *reinterpret_cast<uint32_t*>(packet + 0x06) = 9001;
+        uint8_t deadPacket[0x20] = {};
+        *reinterpret_cast<uint16_t*>(deadPacket) = 0x0570;
+        *reinterpret_cast<uint32_t*>(deadPacket + 0x06) = 7001;
+        deadPacket[0x0B] = 1;
+        *reinterpret_cast<uint32_t*>(deadPacket + 0x0C) = 9001;
         g_expectedSelf = packet + 1;
         g_expectedPacket = packet;
         g_expectedError = 0x11223344u;
 
         uintptr_t before = 0;
         uintptr_t after = 0;
-        SetLastError(g_expectedError);
-        __asm mov before, esp
-        const int deadResult =
-            dead(g_expectedSelf, nullptr, packet);
-        __asm mov after, esp
-        CHECK(before == after);
-        CHECK(deadResult == 0x51A7);
-        CHECK(g_deadCalls == 1);
-        CHECK(GetLastError() == 0xD00D0001u);
-
+        CHECK(!probe.ObservedOrdinaryVictim(9001));
+        CHECK(!probe.ObservedOrdinaryVictim(0, 3604443));
         SetLastError(g_expectedError);
         __asm mov before, esp
         const int mapResult =
@@ -405,8 +402,27 @@ namespace
         CHECK(mapResult == 0x62B8);
         CHECK(g_mapCalls == 1);
         CHECK(GetLastError() == 0xD00D0002u);
+        CHECK(!probe.ObservedOrdinaryVictim(9001));
+        CHECK(!probe.ObservedOrdinaryVictim(0, 3604443));
+
+        g_expectedSelf = deadPacket + 1;
+        g_expectedPacket = deadPacket;
+        SetLastError(g_expectedError);
+        __asm mov before, esp
+        const int deadResult =
+            dead(g_expectedSelf, nullptr, deadPacket);
+        __asm mov after, esp
+        CHECK(before == after);
+        CHECK(deadResult == 0x51A7);
+        CHECK(g_deadCalls == 1);
+        CHECK(GetLastError() == 0xD00D0001u);
+        CHECK(probe.ObservedOrdinaryVictim(9001));
+        CHECK(probe.ObservedOrdinaryVictim(0, 3604443));
+        CHECK(probe.ObservedOrdinaryVictim(9001, 3604443));
+        CHECK(!probe.ObservedOrdinaryVictim(9002));
 
         g_expectedSelf = g_movement;
+        g_expectedPacket = packet;
         g_expectedControl = g_unit + 0xDC0;
         SetLastError(g_expectedError);
         __asm mov before, esp

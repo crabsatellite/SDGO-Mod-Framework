@@ -1,8 +1,10 @@
 #include <windows.h>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include "../mods/map_catalog/presentation.h"
+#include "../mods/map_catalog/shield_contact_presentation.h"
 
 namespace m = sdgo::map_catalog;
 
@@ -22,6 +24,90 @@ int main(int argc, char** argv) {
         Check(m::ShowsSectionClear(0x5401, phase) == (phase == 3 || phase == 5 || phase == 7),
               "only declared completed sections show a banner");
     Check(m::ShowsSectionClear(0x5401, 0), "unknown native phase preserves original presentation");
+    {
+        namespace hit = sdgo::map_catalog::shield_contact;
+        sdgo::map_boundary::Entry boundary{};
+        boundary.flags = sdgo::map_boundary::kAreaEnabled | sdgo::map_boundary::kDamageEnabled;
+        boundary.left = -1000.0f; boundary.top = 1000.0f;
+        boundary.right = 1000.0f; boundary.bottom = -1000.0f;
+        boundary.damageEdgeMask = sdgo::map_boundary::kEdgeRight;
+        hit::Plan plan{};
+        Check(hit::MakePlan(boundary, {950.0f, 25.0f, 40.0f}, plan),
+              "authoritative shield contact produces a presentation plan");
+        Check(plan.wall.x == 1000.0f && plan.wall.y == 125.0f && plan.wall.z == 40.0f,
+              "wall context remains clamped to the configured damage edge");
+        Check(plan.directionX == -1.0f && plan.directionZ == 0.0f,
+              "native hurt direction points inward from the touched wall");
+        const hit::Plan accepted = plan;
+        Check(!hit::MakePlan(boundary, {INFINITY, 25.0f, 40.0f}, plan) &&
+                   plan.wall.x == accepted.wall.x,
+              "invalid coordinates cannot replace an accepted presentation plan");
+        Check(std::strstr(hit::kLuaFormat, "0506.zfx") != nullptr &&
+                  std::strstr(hit::kLuaFormat, "0087.zfx") != nullptr &&
+                  std::strstr(hit::kLuaFormat, "0106.zfx") == nullptr &&
+                  std::strstr(hit::kLuaFormat, "0050.zsd") == nullptr &&
+                  std::strstr(hit::kLuaFormat, "CameraShake") == nullptr,
+              "contact presentation preserves terrain effects without invented body particles or sound");
+
+        std::array<uint8_t, 0xF00> unit{};
+        std::array<uint8_t, 0x240> movement{};
+        const int32_t health = 700;
+        hit::WriteField(unit.data(), hit::kUnitHealth, health);
+        hit::WriteField(unit.data(), hit::kUnitMovementFsm, movement.data());
+        hit::WriteField(movement.data(), hit::kMovementOwner, unit.data());
+        hit::WriteField(movement.data(), hit::kFsmCurrentState, movement.data() + 0x20);
+        hit::WriteField<uint8_t*>(movement.data(), hit::kFsmPendingState, nullptr);
+        unsigned queued = 0;
+        uint8_t* queuedFsm = nullptr;
+        uint8_t* queuedState = nullptr;
+        auto queue = [&](uint8_t* fsm, uint8_t* state) noexcept {
+            ++queued; queuedFsm = fsm; queuedState = state; return true;
+        };
+        Check(hit::QueueNativeHurt(unit.data(), plan.directionX, plan.directionZ, queue),
+              "idle native movement FSM accepts ordinary wall hurt");
+        Check(queued == 1 && queuedFsm == movement.data() &&
+                  queuedState == movement.data() + hit::kMovementHurtState,
+              "wall hurt queues the shipped movement E8 state exactly once");
+        Check(hit::ReadField<int32_t>(unit.data(), hit::kUnitHealth) == health,
+              "presentation-only native hurt never writes authoritative HP");
+        Check(hit::ReadField<uint8_t>(movement.data(), hit::kMovementHurtStyle) ==
+                  hit::kOrdinaryHurtStyle &&
+                  hit::ReadField<float>(movement.data(), hit::kMovementMagnitude) == 0.0f &&
+                  hit::ReadField<float>(movement.data(), hit::kMovementDirectionX) == -1.0f &&
+                  hit::ReadField<float>(movement.data(), hit::kMovementDirectionY) == 0.0f &&
+                  hit::ReadField<float>(movement.data(), hit::kMovementDirectionZ) == 0.0f,
+              "wall hurt uses native light ordinary-hit inputs without extra knockback");
+
+        const float sentinelDirection = 9.0f;
+        const uint8_t sentinelStyle = 7;
+        const float sentinelMagnitude = 8.0f;
+        hit::WriteField(movement.data(), hit::kMovementDirectionX, sentinelDirection);
+        hit::WriteField(movement.data(), hit::kMovementHurtStyle, sentinelStyle);
+        hit::WriteField(movement.data(), hit::kMovementMagnitude, sentinelMagnitude);
+        hit::WriteField(movement.data(), hit::kFsmCurrentState,
+                        movement.data() + hit::kMovementProtectedHurtState);
+        Check(!hit::QueueNativeHurt(unit.data(), -1.0f, 0.0f, queue) && queued == 1 &&
+                  hit::ReadField<float>(movement.data(), hit::kMovementDirectionX) == sentinelDirection &&
+                  hit::ReadField<uint8_t>(movement.data(), hit::kMovementHurtStyle) == sentinelStyle &&
+                  hit::ReadField<float>(movement.data(), hit::kMovementMagnitude) == sentinelMagnitude &&
+                  hit::ReadField<int32_t>(unit.data(), hit::kUnitHealth) == health,
+              "protected native hurt state is preserved without input or HP mutation");
+        const uint8_t invulnerable = 1;
+        hit::WriteField(unit.data(), hit::kUnitInvulnerable, invulnerable);
+        Check(!hit::QueueNativeHurt(unit.data(), -1.0f, 0.0f, queue) && queued == 1,
+              "native invulnerability preserves the current action and HP");
+        hit::WriteField<uint8_t>(unit.data(), hit::kUnitInvulnerable, 0);
+        hit::WriteField<uint32_t>(unit.data(), hit::kUnitHurtState, 2);
+        Check(!hit::QueueNativeHurt(unit.data(), -1.0f, 0.0f, queue) && queued == 1 &&
+                  hit::ReadField<int32_t>(unit.data(), hit::kUnitHealth) == health,
+              "native SP/hurt protection rejects synthetic wall interruption");
+        hit::WriteField<uint32_t>(unit.data(), hit::kUnitHurtState, 0);
+        hit::WriteField(movement.data(), hit::kFsmCurrentState, movement.data() + 0x20);
+        hit::WriteField(movement.data(), hit::kFsmPendingState,
+                        movement.data() + hit::kMovementDownState);
+        Check(!hit::QueueNativeHurt(unit.data(), -1.0f, 0.0f, queue) && queued == 1,
+              "pending native knockdown cannot be overwritten by wall feedback");
+    }
     m::Catalog catalog;
     m::Entry npc{m::kNpcTemplateType, 8001, 0, std::vector<uint8_t>(598)};
     Put(npc, 0, npc.id);

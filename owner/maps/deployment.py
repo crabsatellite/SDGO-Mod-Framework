@@ -19,6 +19,8 @@ from . import boundary_format
 MAX_PACKAGE_BYTES = 256 * 1024 * 1024
 MAX_FILE_BYTES = 128 * 1024 * 1024
 MOD_FILES = {'catalog.bin', 'definitions.json', 'resource-overlay.ini', 'resources.zdx', 'resources.zpk', 'missions.lua', 'boundaries.bin',
+             'damage-gates.bin',
+             'retreats.bin',
              'map_catalog.dll', 'mod.ini', 'manager.json', 'symbols.fragment.ini'}
 PROGRAM_FILES = {'map_catalog.dll', 'mod.ini', 'manager.json', 'symbols.fragment.ini'}
 REQUIRED = {'catalog.bin', 'definitions.json', 'resource-overlay.ini', 'resources.zdx', 'resources.zpk'}
@@ -71,8 +73,11 @@ def install_package(client, raw: bytes) -> dict:
         if 'manifest.json' not in names or len(names) > 64:
             raise ValueError('地图包缺少清单或文件过多')
         manifest = json.loads(archive.read('manifest.json'))
-        if manifest.get('module') != 'map_catalog' or manifest.get('schema_version') != 1:
+        schema = manifest.get('schema_version')
+        if manifest.get('module') != 'map_catalog' or type(schema) is not int or schema not in (1, 2):
             raise ValueError('不是地图导入客户端包')
+        if schema == 2 and manifest.get('minimum_programme') != '0.7.0':
+            raise ValueError('新版地图包的配套程序声明无效')
         declared = manifest.get('files')
         if not isinstance(declared, dict) or set(declared) != set(names) - {'manifest.json'}:
             raise ValueError('地图包文件与清单不一致')
@@ -91,6 +96,27 @@ def install_package(client, raw: bytes) -> dict:
     mod_dir = client / 'sdgo/mods/map_catalog'
     if 'mod.ini' not in leaves and not (mod_dir / 'mod.ini').is_file():
         raise ValueError('客户端尚未安装地图导入模块（map_catalog）')
+    if schema == 2:
+        programme_manifest = pending.get('sdgo/mods/map_catalog/mod.ini')
+        if programme_manifest is None:
+            try:
+                programme_manifest = (mod_dir / 'mod.ini').read_bytes()
+            except OSError:
+                raise ValueError('客户端尚未安装地图导入模块（map_catalog）') from None
+        if _programme_version(programme_manifest) < (0, 7, 0):
+            raise ValueError('队伍过场与目标保护需要 map_catalog 0.7.0 或更高版本，未写入任何文件')
+    gates_path = 'sdgo/mods/map_catalog/damage-gates.bin'
+    if gates_path in pending:
+        from . import damage_gate_format
+        damage_gate_format.decode(pending[gates_path])
+        if schema != 2:
+            raise ValueError('目标保护需要新版地图包协议，未写入任何文件')
+    retreats_path = 'sdgo/mods/map_catalog/retreats.bin'
+    if retreats_path in pending:
+        from . import retreat_format
+        retreat_format.decode(pending[retreats_path])
+        if schema != 2:
+            raise ValueError('友军撤离需要新版地图包协议，未写入任何文件')
     boundary_path = 'sdgo/mods/map_catalog/boundaries.bin'
     if boundary_path in pending:
         boundary_format.decode(pending[boundary_path])

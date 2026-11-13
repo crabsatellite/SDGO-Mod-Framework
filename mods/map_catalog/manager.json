@@ -3,7 +3,7 @@
   "distribution": "public",
   "id": "map_catalog",
   "title": "地图与任务导入",
-  "description": "登记按地图包协议编译的对战地图与任务：地图表行、任务记录、任务脚本（过场/阶段事件）、原生机体图片横幅、任务活动范围与地形/模型/贴图资源。不改动原有地图与任务。",
+  "description": "登记协议地图与阶段任务，包含队伍机体行进过场、原生机体横幅、活动范围、护罩反馈及守卫保护目标。不改动原有地图与任务。",
   "hosts": [
     "client"
   ],
@@ -40,7 +40,9 @@
     "resources.zdx",
     "resources.zpk",
     "missions.lua",
-    "boundaries.bin"
+    "boundaries.bin",
+    "damage-gates.bin",
+    "retreats.bin"
   ],
   "retirement": {
     "content_files": [
@@ -50,7 +52,9 @@
       "resources.zdx",
       "resources.zpk",
       "missions.lua",
-      "boundaries.bin"
+      "boundaries.bin",
+      "damage-gates.bin",
+      "retreats.bin"
     ]
   },
   "runtime_enabled_setting": "enabled"

@@ -1,4 +1,4 @@
-"""Compile a neutral mission description (`sdgo.map-mission` v1/v2/v3/v4) into server mission rows, client mirror records
+"""Compile a neutral mission description (`sdgo.map-mission` v1..v5) into server mission rows, client mirror records
 and a text Lua script for cutscenes and phase events.
 
 The mission runs on a map row of the map package (normally its ``mission`` variant). Server semantics follow
@@ -243,12 +243,61 @@ function SDGOMI.cleanup(m, c)
   s.hidden = nil
   if s.demo == 1 then m:DemoEnd(); m:ChangeGameCamera(); s.demo = 0 end
 end
+function SDGOMI.party(m, c, s)
+  local p = c.party
+  if p == nil then return true end
+  if SDGO_MapCatalogPartySources == nil then print('party cinematic requires current map programme'); return false end
+  local snapshot = {SDGO_MapCatalogPartySources()}
+  local sources = {}
+  local n = 0
+  for i = 1, 8 do
+    local source = snapshot[i * 2 - 1]
+    local template = snapshot[i * 2]
+    if source ~= nil and (template == 0 or p.wingmen == 1) then
+      n = n + 1
+      sources[n * 2 - 1] = source
+      sources[n * 2] = template
+    end
+  end
+  if n < 1 or n > p.n then print('party cinematic participant snapshot does not fit declared slots'); return false end
+  s.hidden = s.hidden or {n = 0}
+  for i = 1, n do
+    local source = sources[i * 2 - 1]
+    local template = sources[i * 2]
+    if template == 0 or p.wingmen == 1 then
+      local original = DocumentFind(source)
+      if original ~= nil then
+        local actor = nil
+        if template == 0 then
+          if GetPlayer(source) ~= nil then actor = CreateDummyPlayer(source) end
+        else
+          actor = m:CreateNpc(template, p.start[i], OBJECT_TEAM_RED, p.dir)
+          if actor ~= nil then actor:SetLuaFunctionName() end
+        end
+        if actor ~= nil then
+          local key = '__party'..i
+          s.actors[key] = actor
+          HideObject(source)
+          s.hidden.n = s.hidden.n + 1
+          s.hidden[s.hidden.n] = source
+          actor:MoveStop()
+          actor:ClearActEvent()
+          actor:SetNowPos(p.start[i])
+          actor:SetMoveTargetPos(p.finish[i])
+          actor:SaveActEvent()
+          actor:SetMoveTargetPos(p.via[i])
+        else return false end
+      else return false end
+    end
+  end
+  return true
+end
 function SDGOMI.init(m, c)
   local s = {frame = 0, next = 1, actors = {}, demo = 1}
   SDGOMI[c.id] = s
   m:DemoPlay()
   if c.area ~= nil then SDGOMI.area(m, c.area) end
-  if c.hide == 1 then
+  if c.hide == 1 and c.party == nil then
     s.hidden = {n = 0}
     local unit = SDGOMI.local_unit()
     if unit ~= nil then
@@ -264,9 +313,17 @@ function SDGOMI.init(m, c)
     local npc = m:CreateNpc(a.tpl, a.at, team, a.dir)
     if npc ~= nil then npc:SetLuaFunctionName(); s.actors[name] = npc end
   end
+  if not SDGOMI.party(m, c, s) then SDGOMI.cleanup(m, c); s.finished = 1; return 1 end
   m:ChangeMoveCamera()
   local cam = m:GetMoveCamera()
   cam:SetCameraPos(c.cam0); cam:SetEyePoint(c.look0)
+  if c.party ~= nil then
+    if SDGO_MapCatalogClockMs == nil then
+      print('party cinematic requires monotonic clock programme')
+      SDGOMI.cleanup(m, c); s.finished = 1; return 1
+    end
+    s.started_ms = SDGO_MapCatalogClockMs()
+  end
   return 1
 end
 function SDGOMI.run(m, c, e, s)
@@ -300,7 +357,10 @@ end
 function SDGOMI.update(m, c)
   local s = SDGOMI[c.id]
   if s == nil then return 456 end
-  s.frame = s.frame + 1
+  if s.finished == 1 then return 456 end
+  if c.party ~= nil then
+    s.frame = (SDGO_MapCatalogClockMs() - s.started_ms) * 0.06
+  else s.frame = s.frame + 1 end
   SDGOMI.camera(m, c, s)
   for name, a in pairs(c.actors) do
     if a.hold == 1 and s.actors[name] ~= nil then s.actors[name]:SetNowPos(a.at) end
@@ -498,7 +558,7 @@ def _validate_npcs(spec: dict, templates: Templates) -> dict:
             tpl = row['template']
             if tpl not in templates.npc_templates or tpl not in templates.npc_data:
                 _fail(f'npcs.{key}.template {tpl} 在目标客户端或服务端不存在')
-            derived = any(k in row for k in ('ai', 'hp', 'boss', 'name', 'label', 'attack', 'special_attack', 'cutin', 'block_attack'))
+            derived = any(k in row for k in ('ai', 'hp', 'hp_by_difficulty', 'boss', 'name', 'label', 'attack', 'special_attack', 'cutin', 'block_attack'))
             npcs[key] = {'kind': 'derived' if derived else 'native', 'base': int(tpl), **row}
         else:
             _fail(f'npcs.{key} 需要 template 或 unit')
@@ -513,6 +573,139 @@ def _validate_npcs(spec: dict, templates: Templates) -> dict:
     return npcs
 
 
+def _damage_gates(phases, npc_ids, version):
+    output = []
+    for index, phase in enumerate(phases):
+        gates = phase.get('damage_gates')
+        if gates is None:
+            continue
+        if version < 5 or not isinstance(gates, list) or not 1 <= len(gates) <= 32:
+            _fail(f'phases[{index}].damage_gates 需要 schema_version=5 与 1..32 个保护目标')
+        counts, sides = {}, {}
+        for spawn in phase.get('spawns', []):
+            key = spawn.get('npc')
+            positions = spawn.get('positions', [])
+            if not isinstance(positions, list):
+                _fail(f'phases[{index}].spawns.positions 必须是列表')
+            counts[key] = counts.get(key, 0) + len(positions)
+            sides.setdefault(key, set()).add(spawn.get('side', 'enemy'))
+        graph, seen = {}, set()
+        for gate in gates:
+            if (not isinstance(gate, dict) or set(gate) - {'target', 'requires_defeat', 'warning'} or
+                    not {'target', 'requires_defeat'} <= set(gate)):
+                _fail(f'phases[{index}].damage_gates 需要 target、requires_defeat，可选 warning')
+            target, guards = gate['target'], gate['requires_defeat']
+            if (not isinstance(target, str) or target not in npc_ids or target in seen or
+                    counts.get(target, 0) < 1 or sides[target] != {'enemy'}):
+                _fail(f'phases[{index}].damage_gates.target 必须是本阶段刷出的唯一敌方 NPC key')
+            if (not isinstance(guards, list) or not 1 <= len(guards) <= 4 or
+                    any(not isinstance(g, str) for g in guards) or len(set(guards)) != len(guards)):
+                _fail(f'phases[{index}].damage_gates.requires_defeat 需要 1..4 个不重复的 NPC key')
+            seen.add(target)
+            graph[target] = guards
+            if gate.get('warning') is not None and not isinstance(gate['warning'], str):
+                _fail(f'phases[{index}].damage_gates.warning 必须是台词 key')
+            for guard in guards:
+                if (guard not in npc_ids or npc_ids[guard] == npc_ids[target] or
+                        not 1 <= counts.get(guard, 0) <= 255 or sides[guard] != {'enemy'}):
+                    _fail(f'phases[{index}].damage_gates 守卫必须是本阶段刷出的其他敌方 NPC')
+                output.append({'phase': index + 1, 'target_npc_id': npc_ids[target],
+                               'guard_npc_id': npc_ids[guard], 'required_defeats': counts[guard],
+                               'warning': gate.get('warning')})
+        complete = set()
+        def visit(node, path):
+            if node in path:
+                _fail(f'phases[{index}].damage_gates 不能形成循环保护')
+            if node in complete:
+                return
+            for guard in graph.get(node, []):
+                visit(guard, path | {node})
+            complete.add(node)
+        for target in graph:
+            visit(target, set())
+    return output
+
+
+def _party_cutscene(package, party, version, name, occluder_sets):
+    if party is None:
+        return 'nil'
+    if version < 5:
+        _fail('队伍行进过场需要 schema_version=5；旧编译器必须拒绝这些新语义')
+    fields = {'from', 'via', 'to', 'facing', 'include_wingmen'}
+    if not isinstance(party, dict) or set(party) - fields or not {'from', 'via', 'to'} <= set(party):
+        _fail(f'cutscenes.{name}.party 需要 from、via、to，可选 facing、include_wingmen')
+    paths = {}
+    for field_name in ('from', 'via', 'to'):
+        raw = party[field_name]
+        if not isinstance(raw, list) or not 1 <= len(raw) <= 8:
+            _fail(f'cutscenes.{name}.party.{field_name} 需要 1..8 个队伍位置')
+        paths[field_name] = [_vec(point, f'cutscenes.{name}.party.{field_name}') for point in raw]
+    count = len(paths['from'])
+    if any(len(points) != count for points in paths.values()):
+        _fail(f'cutscenes.{name}.party 三组队伍位置数量必须相同')
+    facing = _vec(party.get('facing', [0, 1]), f'cutscenes.{name}.party.facing', 2)
+    if math.hypot(*facing) < 1e-6:
+        _fail(f'cutscenes.{name}.party.facing 不能是零向量')
+    wingmen = party.get('include_wingmen', True)
+    if not isinstance(wingmen, bool):
+        _fail(f'cutscenes.{name}.party.include_wingmen 必须是布尔值')
+    from .occlusion import blocked
+    for i in range(count):
+        route = [paths[field_name][i] for field_name in ('from', 'via', 'to')]
+        for k, point in enumerate(route):
+            lift = 20.0 if k == 0 else MOVE_TARGET_LIFT
+            if point[1] < package_ground(package, point) + lift:
+                _fail(f'cutscenes.{name}.party 的位置低于原生移动所需离地高度')
+        for a, b in zip(route, route[1:]):
+            for k in range(25):
+                point = tuple(a[j] + (b[j] - a[j]) * k / 24 for j in range(3))
+                if any(blocked(boxes, point) or blocked(boxes, (point[0], point[1] + 120, point[2]))
+                       for boxes in occluder_sets):
+                    _fail(f'cutscenes.{name}.party 的队伍路线穿过物件')
+    return '{n=%d,start={%s},via={%s},finish={%s},dir=%s,wingmen=%d}' % (
+        count, ','.join(_v3(p) for p in paths['from']), ','.join(_v3(p) for p in paths['via']),
+        ','.join(_v3(p) for p in paths['to']), _v3((facing[0], 0, facing[1])), int(wingmen))
+
+
+def _retreats(phases, npc_ids, version):
+    result = []
+    for index, phase in enumerate(phases):
+        roles = phase.get('retreat_allies')
+        if roles is None:
+            continue
+        if (version < 5 or not isinstance(roles, list) or not 1 <= len(roles) <= 10 or
+                any(not isinstance(role, str) for role in roles) or len(set(roles)) != len(roles)):
+            _fail(f'phases[{index}].retreat_allies 需要 schema_version=5 与 1..10 个不重复的友军 key')
+        allies = {spawn.get('npc') for spawn in phase.get('spawns', []) if spawn.get('side') == 'ally'}
+        for role in roles:
+            if role not in npc_ids or role not in allies:
+                _fail(f'phases[{index}].retreat_allies 只能引用本阶段刷出的友军')
+            result.append({'phase':index + 1, 'npc_id':npc_ids[role]})
+    return result
+
+
+def _validate_party_bindings(spec, phases, sectors, cutscenes):
+    names = {key for key, scene in cutscenes.items() if scene.get('party') is not None}
+    for name in names:
+        if name in (spec.get('opening'), spec.get('ending')):
+            _fail(f'cutscenes.{name}.party 需要绑定阶段入口和对应 sector')
+        used = False
+        for phase in phases:
+            enter = phase.get('enter') or {}
+            if enter.get('cutscene') != name:
+                continue
+            used = True
+            sector = sectors.get(enter.get('sector'))
+            party = cutscenes[name]['party']
+            if (not isinstance(party, dict) or not isinstance(sector, dict) or
+                    party.get('to') != sector.get('warp')):
+                _fail(f'cutscenes.{name}.party.to 必须与本阶段 sector.warp 完全相同，避免结束后跳位')
+        if not used:
+            _fail(f'cutscenes.{name}.party 需要绑定阶段入口和对应 sector')
+        if cutscenes[name].get('hide_players', True) is not True:
+            _fail(f'cutscenes.{name}.party 需要 hide_players=true')
+
+
 def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: str, ids: MissionIds,
                     templates: Templates, banner_effect: Callable[[bytes, str], dict[str, bytes]] | None = None,
                     occluders: list | None = None) -> MissionBuild:
@@ -520,8 +713,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     effect named `name` (a cloned text effect bound to the PNG) or None when banners are unsupported."""
     spec = deepcopy(spec)
     version = spec.get('schema_version')
-    if spec.get('schema') != SCHEMA or type(version) is not int or version not in (1, 2, 3, 4):
-        _fail(f'任务文件必须声明 schema={SCHEMA} 且 schema_version=1、2、3 或 4')
+    if spec.get('schema') != SCHEMA or type(version) is not int or version not in (1, 2, 3, 4, 5):
+        _fail(f'任务文件必须声明 schema={SCHEMA} 且 schema_version=1、2、3、4 或 5')
     if version >= 3:
         allowed = {'schema', 'schema_version', 'mission_key', 'name', 'description', 'briefing', 'difficulties',
                    'bgm', 'npcs', 'area', 'presentation', 'lines', 'banners', 'sectors', 'phases', 'opening',
@@ -555,14 +748,25 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     difficulties = spec.get('difficulties')
     if not isinstance(difficulties, list) or not 1 <= len(difficulties) <= 4:
         _fail('difficulties 需要 1..4 档')
+    levels = [d.get('level', 3) for d in difficulties if isinstance(d, dict)]
+    if (len(levels) != len(difficulties) or any(type(level) is not int for level in levels) or
+            len(set(levels)) != len(levels)):
+        _fail('difficulties.level 必须是不重复的整数')
     npcs = _validate_npcs(spec.get('npcs'), templates)
+    for key, npc in npcs.items():
+        by_level = npc.get('hp_by_difficulty')
+        if by_level is None:
+            continue
+        if (version < 5 or not isinstance(by_level, dict) or set(by_level) != {str(level) for level in levels} or
+                any(type(hp) is not int or not 1 <= hp <= 0x7fffffff for hp in by_level.values())):
+            _fail(f'npcs.{key}.hp_by_difficulty 需要 schema_version=5，每个已声明难度一项正整数 HP')
     if version < 2 and (transition_delay != 'native' or any(npc.get('cutin') is not None for npc in npcs.values())):
         _fail('机体图片横幅与立即阶段衔接需要 schema_version=2；旧编译器必须拒绝这些新语义')
     block_names = {obj.object_id for obj in package.objects if obj.block is not None}
     block_attacks = []
     weapon_constants = {'first': 'UNIT_WEAPON_CHANGE_FIRST', 'second': 'UNIT_WEAPON_CHANGE_SECOND',
                         'third': 'UNIT_WEAPON_CHANGE_THIRD', 'special': 'UNIT_WEAPON_CHANGE_SPECIAL'}
-    npc_allowed = {'template', 'unit', 'base', 'ai', 'hp', 'boss', 'name', 'label', 'attack',
+    npc_allowed = {'template', 'unit', 'base', 'ai', 'hp', 'hp_by_difficulty', 'boss', 'name', 'label', 'attack',
                    'special_attack', 'cutin', 'block_attack'}
     for attack_index, (key, npc) in enumerate(npcs.items()):
         if version >= 3 and set(npc) - npc_allowed - {'kind'}:
@@ -608,6 +812,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
             if visible:
                 section_clear_flags |= 1 << (i + 8)
         enter = phase.get('enter') or {}
+        if (phase.get('damage_gates') is not None or phase.get('retreat_allies') is not None) and version < 5:
+            _fail('阶段目标保护需要 schema_version=5；旧编译器必须拒绝这些新语义')
         if not isinstance(enter, dict):
             _fail(f'phases[{i}].enter 必须是对象')
         enter_fields = {'cutscene', 'lines', 'sector', 'area', 'blocks', 'boundary_warning'}
@@ -674,6 +880,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     active_scenes.update((phase.get('enter') or {}).get('cutscene') for phase in phases)
     for name in cloned_scenes - active_scenes:
         del cutscenes[name]
+    if version >= 5:
+        _validate_party_bindings(spec, phases, sectors, cutscenes)
 
     # -- NPC ids: native templates keep their id; derived/unit NPCs get new NpcData + template rows
     npc_ids: dict[str, int] = {}
@@ -787,6 +995,12 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         build.rows.append((SPEECH_KIND, ident, bytes(row)))
         speech_ids[key] = ident
 
+    damage_gates = _damage_gates(phases, npc_ids, version)
+    retreats = _retreats(phases, npc_ids, version)
+    for gate in damage_gates:
+        if gate['warning'] is not None and gate['warning'] not in speech_ids:
+            _fail('damage_gates.warning 引用未定义的台词')
+
     # Native OriginalModeOperator's full-width UnitIcon. The NPC-create path reads the dialogue at +390
     # and the sprite at +398; the original UI owns its animation, placement and resolution scaling.
     for cutin_index, (key, npc) in enumerate(npcs.items()):
@@ -846,6 +1060,33 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                 break
         else:
             _fail(f'npcs.{key}.cutin 缺少派生 NPC 模板')
+
+    # Difficulty-specific HP owns a paired NPC template and SQL definition. The
+    # real unit/weapon and kill-goal identities remain unchanged.
+    difficulty_npc_ids = {level:dict(npc_ids) for level in levels}
+    difficulty_hp = {}
+    for key, npc in npcs.items():
+        by_level = npc.get('hp_by_difficulty')
+        if by_level is None:
+            continue
+        base_id = npc_ids[key]
+        native = next(raw for kind, ident, raw in build.rows if kind == NPC_TEMPLATE_KIND and ident == base_id)
+        sql = next(row for row in build.server['tbl_NpcData'] if row['NpcDataID'] == base_id)
+        used = {sql['UseUnitHP']:base_id}
+        difficulty_hp[key] = {}
+        for level in levels:
+            hp = by_level[str(level)]
+            if hp not in used:
+                ident = next_npc
+                next_npc += 1
+                raw = bytearray(native)
+                _u32(raw, 0, ident)
+                _u32(raw, 229, hp)
+                build.rows.append((NPC_TEMPLATE_KIND, ident, bytes(raw)))
+                build.server['tbl_NpcData'].append(dict(sql, NpcDataID=ident, UseUnitHP=hp))
+                used[hp] = ident
+            difficulty_npc_ids[level][key] = used[hp]
+            difficulty_hp[key][str(level)] = hp
 
     # -- banners: one overlay effect per banner image
     banner_fx: dict[str, str] = {}
@@ -1017,12 +1258,16 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
 
     all_occluders = occluders.active() if hasattr(occluders, 'active') else occluders
     cutscene_names: dict[str, tuple[str, float]] = {}
+    party_cutscenes = []
     for n, (key, cut) in enumerate(sorted(cutscenes.items())):
         fn = f'{ids.lua_prefix}_C{n}'
         length = float(cut.get('length', 0))
         if not 1.0 <= length <= 60.0:
             _fail(f'cutscenes.{key}.length 需要 1..60 秒')
         active_occluder_sets = cutscene_occluder_sets(key)
+        party_lua = _party_cutscene(package, cut.get('party'), version, key, active_occluder_sets)
+        if cut.get('party') is not None:
+            party_cutscenes.append(key)
         actors = {}
         actor_pos = {}
         for actor, a in (cut.get('actors') or {}).items():
@@ -1149,8 +1394,8 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         if not isinstance(hide, bool):
             _fail(f'cutscenes.{key}.hide_players 必须是布尔值')
         area = start_area if key == spec.get('opening') else 'nil'    # the opening applies the starting area
-        lua_parts.append('%s = {id=%s, frames=%d, n=%d, hide=%d, area=%s, cam0=%s, look0=%s, path=%s, actors={%s}, events={\n  %s\n}}\n' % (
-            fn, _lua_string(fn), int(round(length * FPS)), len(events), 1 if hide else 0, area, _v3(p0), _v3(l0),
+        lua_parts.append('%s = {id=%s, frames=%d, n=%d, hide=%d, area=%s, party=%s, cam0=%s, look0=%s, path=%s, actors={%s}, events={\n  %s\n}}\n' % (
+            fn, _lua_string(fn), int(round(length * FPS)), len(events), 1 if hide else 0, area, party_lua, _v3(p0), _v3(l0),
             path_lua, ','.join(actors.values()),
             ',\n  '.join('{f=%d,%s}' % (max(1, int(round(t * FPS))), body) for t, body in events)))
         init_commands = []
@@ -1224,6 +1469,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     tables = build.server
     for d_index, difficulty in enumerate(difficulties):
         level = int(difficulty.get('level', 3))
+        selected_npc_ids = difficulty_npc_ids[level]
         if level not in templates.routes:
             _fail(f'difficulties[{d_index}].level {level} 没有可用的原生路由模板')
         mode_id = ids.game_mode_first + d_index
@@ -1240,7 +1486,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
         drop_id = _drop_rows(tables, spec.get('drops'), drop_items, ids.group, level)
         tables['tbl_MissionMode'][-1]['DropConditionID'] = drop_id
         # Ranking/boss summary row: every listed native mission room reads it before starting.
-        bosses = [npc_ids[k] for k, n in npcs.items() if n.get('boss')][:5]
+        bosses = [selected_npc_ids[k] for k, n in npcs.items() if n.get('boss')][:5]
         tables.setdefault('tbl_MissionRankBossData', []).append({
             'MissionID': mode_id, 'DropConditionID': drop_id, 'ClearPoint': 20,
             'DifficultPoint': min(255, 5 * level), **{f'BossID_{i + 1}': (bosses[i] if i < len(bosses) else 0)
@@ -1424,7 +1670,7 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                     if area is not None and not (area[0] <= pos[0] <= area[2] and area[3] <= pos[2] <= area[1]):
                         _fail(f'phases[{p_index}].spawns[{s_index}].positions[{k}] 不在本阶段的活动范围内'
                               f'（x {area[0]:.0f}..{area[2]:.0f}，z {area[3]:.0f}..{area[1]:.0f}）')
-                    queue.append((side, at + every * k, s_index, k, npc_ids[spawn['npc']], pos,
+                    queue.append((side, at + every * k, s_index, k, selected_npc_ids[spawn['npc']], pos,
                                   int(spawn.get('min_free', 1))))
             queue.sort(key=lambda q: (q[0], q[1], q[2], q[3]))
             for side, t, _, _, npc, pos, min_free in queue:
@@ -1479,12 +1725,19 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
     for kind, ident, raw in build.rows:
         if len(raw) != SIZES[kind]:
             _fail(f'内部错误：记录 {ident} (kind {kind:#x}) 长度 {len(raw)} != {SIZES[kind]}')
-    for mode_id in (ids.game_mode_first + index for index in range(len(difficulties))):
+    for difficulty_index, mode_id in enumerate(ids.game_mode_first + index for index in range(len(difficulties))):
         for row in boundary_rows:
             if row['warning'] is None:
                 continue
             lua_parts.append('function SDGOMI_BW_%d_%d(m)\n  PutOperatorSpeech(%d)\n  return 0\nend\n' %
                              (mode_id, row['phase'], row['warning_speech_id']))
+        selected_gates = _damage_gates(phases, difficulty_npc_ids[levels[difficulty_index]], version)
+        for phase, target in sorted({(g['phase'], g['target_npc_id']) for g in selected_gates}):
+            warning = next((g['warning'] for g in selected_gates if g['phase'] == phase and
+                            g['target_npc_id'] == target and g['warning'] is not None), None)
+            body = '  PutOperatorSpeech(%d)\n' % speech_ids[warning] if warning is not None else ''
+            lua_parts.append('function SDGOMI_DG_%d_%d_%d(m)\n%s  return 0\nend\n' %
+                             (mode_id, phase, target, body))
 
     build.lua = ''.join(lua_parts)
     if not all(ord(c) < 128 for c in build.lua):
@@ -1499,6 +1752,21 @@ def compile_mission(package: Package, spec: dict, *, map_no: int, terrain_path: 
                                       for key, ai, block, weapon in block_attacks],
                     'block_controls': sum(len(actions) for actions in phase_block_actions.values()),
                     'lua_bytes': len(build.lua), 'records': len(build.rows)}
+    if party_cutscenes or damage_gates or retreats or difficulty_hp:
+        build.report['minimum_programme'] = '0.7.0'
+        build.report['party_cutscenes'] = party_cutscenes
+    if damage_gates:
+        build.report['damage_gates'] = [
+            dict(mission_id=mode_id, **{k: gate[k] for k in (
+                'phase', 'target_npc_id', 'guard_npc_id', 'required_defeats')})
+            for index,mode_id in enumerate(build.report['game_modes'])
+            for gate in _damage_gates(phases, difficulty_npc_ids[levels[index]], version)]
+    if retreats:
+        build.report['retreats'] = [dict(mission_id=mode_id, phase=row['phase'],
+            npc_id=difficulty_npc_ids[levels[index]][next(key for key,ident in npc_ids.items()if ident==row['npc_id'])])
+            for index,mode_id in enumerate(build.report['game_modes'])for row in retreats]
+    if difficulty_hp:
+        build.report['hp_by_difficulty'] = difficulty_hp
     if grouped_sections:
         build.report['section_clear_phases'] = [i + 1 for i, p in enumerate(phases)
                                                 if p.get('section_clear', True)]

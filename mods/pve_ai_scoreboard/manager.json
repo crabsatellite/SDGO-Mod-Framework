@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "pve_ai_scoreboard",
+  "title": "PvE AI 队友 TAB 列表修复",
+  "category": "fixes",
+  "hosts": ["client"],
+  "presentation": "automatic_fix",
+  "description": "任务战斗按 TAB 时，将已经注册为队友的 AI 加入原生队伍列表，显示其名字、机体、击破、助攻和分数。",
+  "mechanism": "只补齐原生 TAB 面板缺失的任务 AI 槽位和显示顺序；任务脚本读取的真人数量、单位、血量、位置、复活和任务状态不变。缺少有效 AI 槽位时保持原生行为。",
+  "settings": []
+}

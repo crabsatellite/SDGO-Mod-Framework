@@ -54,6 +54,16 @@ public:
         void(__thiscall*)(uint8_t*, void*);
 
     static constexpr uint32_t kForwardAction = 0;
+    // The shipped movement consumer maps actions 0..3 to forward, backward,
+    // right and left. RunUpdate uses node+6C as forward and Up x Forward as
+    // right (00670E10, 006DE800, 006D79F0). Select an existing key from that
+    // read-only basis for a finite north-boundary approach; never author pose.
+    static uint32_t NorthwardAction(float forwardX, float forwardZ) {
+        const float scores[4] = {forwardZ,-forwardZ,-forwardX,forwardX};
+        uint32_t best = 0;
+        for (uint32_t i=1;i<4;++i) if (scores[i]>scores[best]) best=i;
+        return best;
+    }
     static constexpr uint32_t kPrimaryAction = 9;
     static constexpr uint32_t kLockAction = 10;
     static constexpr uint64_t kCycleMs = 900;
@@ -108,6 +118,8 @@ public:
 
     bool enabled_ = false;
     bool continuousPrimary_ = false;
+    bool missionAdvance_ = false;
+    uint32_t missionAdvanceDurationMs_ = 0;
     bool lockOn_ = false;
     int requestedWeaponSlot_ = -1;
     bool weaponReported_ = false;
@@ -132,6 +144,10 @@ public:
     uint32_t boundObjectId_ = 0;
     uint8_t* boundUnit_ = nullptr;
     uint64_t controlStartedAt_ = 0;
+    bool missionAdvanceStarted_ = false;
+    uint64_t missionAdvanceStartedAt_ = 0;
+    float missionAdvanceOriginX_ = 0, missionAdvanceOriginZ_ = 0;
+    bool missionReturned_ = false, missionCentered_ = false;
     uint32_t bursts_ = 0;
     uint32_t consumedMoveQueries_ = 0;
     uint32_t consumedFireQueries_ = 0;
@@ -173,7 +189,7 @@ public:
 
     void Release(ScoreboardActions& input)
     {
-        input.HoldGameplay(kForwardAction, false);
+        for (uint32_t action=0;action<4;++action) input.HoldGameplay(action,false);
         input.HoldGameplay(kPrimaryAction, false);
         input.HoldGameplay(kLockAction, false);
         if (requestedWeaponSlot_ >= 0)
@@ -207,6 +223,8 @@ public:
         consumedMoveQueries_ = 0;
         consumedFireQueries_ = 0;
         dispatches_ = 0;
+        missionAdvanceStarted_ = false;
+        missionAdvanceStartedAt_ = 0;
         specialPhase_ = SpecialPhase::Charge;
         specialPhaseAt_ = 0;
         specialAttempts_ = 0;
@@ -535,6 +553,15 @@ public:
             return false;
         enabled_ = setting != 0;
         continuousPrimary_ = continuous != 0;
+        const int missionAdvance = api->SettingInt(mod, "BattlePlayerMissionAdvance", 0);
+        const int missionAdvanceDuration =
+            api->SettingInt(mod, "BattlePlayerMissionAdvanceMs", 0);
+        if ((missionAdvance != 0 && missionAdvance != 1) ||
+            (missionAdvance != 0 && !enabled_) ||
+            missionAdvanceDuration < 0 || missionAdvanceDuration > 120000 ||
+            ((missionAdvance != 0) != (missionAdvanceDuration != 0))) return false;
+        missionAdvance_ = missionAdvance != 0;
+        missionAdvanceDurationMs_ = static_cast<uint32_t>(missionAdvanceDuration);
         const int lock = api->SettingInt(mod, "BattlePlayerSecondary", 0);
         if (lock != 0 && lock != 1) return false;
         lockOn_ = lock != 0;
@@ -584,6 +611,15 @@ public:
     }
 
     void SetSpecialEventSource(SpecialEventsFn source) { specialEvents_ = source; }
+    bool Enabled() const { return enabled_; }
+    bool ContinuousPrimaryEnabled() const { return enabled_ && continuousPrimary_; }
+    bool MissionAdvanceEnabled() const { return enabled_ && missionAdvance_; }
+    uint32_t MissionAdvanceDurationMs() const {
+        return MissionAdvanceEnabled() ? missionAdvanceDurationMs_ : 0;
+    }
+    // Release every mapped gameplay action without producing acceptance assertions.
+    // The test harness calls this on failure and process-level finalization.
+    void Stop(ScoreboardActions& input) { Release(input); }
     bool SpecialEnabled() const { return enabled_ && special_; }
     bool SpecialObserved() const { return specialObserved_; }
     uint32_t SpecialWeapon() const { return specialWeapon_; }
@@ -621,7 +657,8 @@ public:
             snapshot.received_battle_start_count,
             released,
             "battle",
-            input);
+            input,
+            false);
         pvpSnapshot_ = nullptr;
         return result;
     }
@@ -635,7 +672,13 @@ public:
         uint32_t profilePilotId,
         ScoreboardActions& input)
     {
+        uint8_t demo = 1;
+        const auto* mode = reinterpret_cast<const uint8_t*>(
+            static_cast<uintptr_t>(snapshot.mode_object));
+        const bool gameplayControl = mode &&
+            battle_ai::native::detail::Read(mode, 0x104, demo) && demo == 0;
         const bool released =
+            gameplayControl &&
             snapshot.size == sizeof(snapshot) &&
             snapshot.version ==
                 SDGO_MISSION_AI_CLIENT_OBSERVER_VERSION &&
@@ -654,7 +697,8 @@ public:
             snapshot.battle_generation,
             released,
             "mission",
-            input);
+            input,
+            true);
     }
 
     // Scoped boundary review keeps forward input active after authored sector
@@ -702,7 +746,8 @@ private:
         uint32_t sequence,
         bool released,
         const char* scope,
-        ScoreboardActions& input)
+        ScoreboardActions& input,
+        bool missionControl)
     {
         if (!enabled_)
             return true;
@@ -914,11 +959,44 @@ private:
 
         const uint64_t controlledFor =
             now - controlStartedAt_;
+        if (missionControl && missionAdvance_ && !missionAdvanceStarted_) {
+            missionAdvanceStarted_ = true;
+            missionAdvanceStartedAt_ = now;
+            missionAdvanceOriginX_ = position[0];
+            missionAdvanceOriginZ_ = position[2];
+        }
+        const bool missionAdvanceActive =
+            missionAdvanceStarted_ &&
+            now - missionAdvanceStartedAt_ < missionAdvanceDurationMs_;
+        // A finite approach must retain native forward direction. Lock-on and
+        // attack can turn or stop the unit, so ordinary combat resumes only
+        // after that input lease expires. No pose or FSM state is authored.
+        const bool approaching = missionControl && missionAdvance_ && missionAdvanceActive;
+        float facingX=0.0f, facingZ=0.0f;
+        const bool facingValid = battle_ai::native::detail::Read(node,0x6C,facingX) &&
+            battle_ai::native::detail::Read(node,0x74,facingZ) &&
+            std::isfinite(facingX) && std::isfinite(facingZ) &&
+            facingX*facingX+facingZ*facingZ>0.01f;
+        const bool returnLease = missionControl && missionAdvanceStarted_ &&
+            !missionAdvanceActive && facingValid &&
+            now-missionAdvanceStartedAt_ < missionAdvanceDurationMs_+30000u;
+        if (returnLease && position[2] <= missionAdvanceOriginZ_+3300.0f)
+            missionReturned_=true;
+        if (returnLease && missionReturned_ && position[0] >= missionAdvanceOriginX_+2400.0f)
+            missionCentered_=true;
+        const bool returning = returnLease && !missionReturned_;
+        const bool centering = returnLease && missionReturned_ && !missionCentered_;
+        const bool navigating = approaching || returning || centering;
         // The bound special fires in pulses from its binding, so every cycle
         // offers the native admission a fresh primary down edge.
+        const bool initialForward =
+            controlledFor < kForwardHeldMs &&
+            (!missionControl || !missionAdvance_ || missionAdvanceActive);
         const bool forward =
-            !specialFire && controlledFor < kForwardHeldMs;
-        const bool primary =
+            !specialFire &&
+            (initialForward ||
+             navigating);
+        const bool primary = !navigating && (
             specialFire
                 ? (now - specialPhaseAt_) % kCycleMs <
                       kPrimaryHeldMs
@@ -926,31 +1004,61 @@ private:
                       (continuousPrimary_ ||
                        (controlledFor - kForwardHeldMs) %
                                kCycleMs <
-                           kPrimaryHeldMs);
+                           kPrimaryHeldMs));
         if (primary && !primaryHeld_)
             ++bursts_;
-        input.HoldGameplay(kForwardAction, forward);
+        uint32_t movementAction = kForwardAction;
+        if (approaching) {
+            float fx=0.0f,fz=0.0f;
+            if (battle_ai::native::detail::Read(node,0x6C,fx) &&
+                battle_ai::native::detail::Read(node,0x74,fz) &&
+                std::isfinite(fx) && std::isfinite(fz) && fx*fx+fz*fz>0.01f)
+                movementAction=NorthwardAction(fx,fz);
+            if (context->tick % 300 == 0) {
+                char text[192]{};
+                sprintf_s(text,"native finite north approach action=%u basis=(%.3f,%.3f) pos=(%.1f,%.1f)",
+                    movementAction,fx,fz,position[0],position[2]);
+                context->Observe(text);
+            }
+        }
+        // Leave the damaging edge through ordinary mapped movement and return
+        // to the open battlefield before firing. Staying at the wall would
+        // turn a protection mission into an AI-only fight. These are bounded
+        // input leases using read-only positions, never authored transforms.
+        if (returning) movementAction=NorthwardAction(-facingX,-facingZ);
+        else if (centering) movementAction=NorthwardAction(-facingZ,facingX);
+        if ((returning || centering) && context->tick % 300 == 0) {
+            char text[192]{};
+            sprintf_s(text,"native finite return to battlefield leg=%s action=%u pos=(%.1f,%.1f)",
+                      returning?"south":"east",movementAction,position[0],position[2]);
+            context->Observe(text);
+        }
+        // Keep the selected key held rather than manufacturing a fresh down
+        // edge every frame (which the native consumer treats as double-tap).
+        for (uint32_t action=0;action<4;++action)
+            if (action!=movementAction) input.HoldGameplay(action,false);
+        input.HoldGameplay(movementAction, forward);
         input.HoldGameplay(kPrimaryAction, primary);
         // Supply the mapped secondary action to its original consumer.
         // Target choice, aim and all control-state changes stay native.
         // Reacquire ordinary targets with real down edges; a melee special
         // retains its native held lock while capturing the target in reach.
-        const bool lock =
+        const bool lock = !navigating && (
             (lockOn_ && controlledFor % kCycleMs < kPrimaryHeldMs) ||
-            (specialFire && MeleeFamily(specialFamily_));
+            (specialFire && MeleeFamily(specialFamily_)));
         input.HoldGameplay(kLockAction, lock);
         if (lock) lockInput_(unit, nativeInput);
         forwardHeld_ = forward;
         primaryHeld_ = primary;
 
-        const uint32_t moveBefore =
-            input.GameplayQueries(kForwardAction);
+        uint32_t moveBefore = 0;
+        for (uint32_t action=0;action<4;++action) moveBefore+=input.GameplayQueries(action);
         const uint32_t fireBefore =
             input.GameplayQueries(kPrimaryAction);
         moveInput_(unit, nativeInput);
         fireInput_(unit, nativeInput);
-        const uint32_t moveAfter =
-            input.GameplayQueries(kForwardAction);
+        uint32_t moveAfter = 0;
+        for (uint32_t action=0;action<4;++action) moveAfter+=input.GameplayQueries(action);
         const uint32_t fireAfter =
             input.GameplayQueries(kPrimaryAction);
         consumedMoveQueries_ += moveAfter - moveBefore;

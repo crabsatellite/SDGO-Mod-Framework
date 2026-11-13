@@ -15,6 +15,8 @@ namespace
     int g_failures = 0;
     int g_setting = 1;
     int g_continuousSetting = 0;
+    int g_missionAdvanceSetting = 0;
+    int g_missionAdvanceDurationSetting = 0;
     int g_secondarySetting = 0;
     int g_weaponSlotSetting = -1;
     int g_specialSetting = 0;
@@ -52,6 +54,7 @@ namespace
     void* g_moveVtable[2] = {};
     void* g_attackVtable[2] = {};
     uint8_t g_nativeInput[0x40] = {};
+    uint8_t g_missionMode[0x200] = {};
 
     int g_moveInputCalls = 0;
     int g_fireInputCalls = 0;
@@ -217,6 +220,12 @@ namespace
                 "BattlePlayerCombatContinuous") == 0)
             return g_continuousSetting;
         if (std::strcmp(
+                key, "BattlePlayerMissionAdvance") == 0)
+            return g_missionAdvanceSetting;
+        if (std::strcmp(
+                key, "BattlePlayerMissionAdvanceMs") == 0)
+            return g_missionAdvanceDurationSetting;
+        if (std::strcmp(
                 key, "BattlePlayerSecondary") == 0)
             return g_secondarySetting;
         if (std::strcmp(key, "BattlePlayerWeaponSlot") == 0)
@@ -348,6 +357,7 @@ namespace
         snapshot.active = 1;
         snapshot.battle_generation = 73;
         snapshot.room_object = 0x123400;
+        snapshot.mode_object = reinterpret_cast<uintptr_t>(g_missionMode);
         return snapshot;
     }
 
@@ -360,6 +370,7 @@ namespace
         std::memset(g_attack, 0, sizeof(g_attack));
         std::memset(
             g_nativeInput, 0, sizeof(g_nativeInput));
+        std::memset(g_missionMode, 0, sizeof(g_missionMode));
         g_moveVtable[0] = nullptr;
         g_moveVtable[1] =
             FunctionAddress(&MoveDispatch);
@@ -563,6 +574,8 @@ namespace
         SdgoApi api = Api();
         g_setting = 0;
         g_continuousSetting = 0;
+        g_missionAdvanceSetting = 0;
+        g_missionAdvanceDurationSetting = 0;
         g_secondarySetting = 0;
         g_symbolCalls = 0;
         g_missingSymbol = nullptr;
@@ -583,6 +596,31 @@ namespace
         CHECK(g_symbolCalls == 1);
 
         g_continuousSetting = 0;
+        g_missionAdvanceSetting = 2;
+        NativePlayerCombatProbe invalidMissionAdvance;
+        CHECK(!invalidMissionAdvance.Install(&api, nullptr));
+        CHECK(g_symbolCalls == 1);
+
+        g_missionAdvanceSetting = 1;
+        NativePlayerCombatProbe missingMissionAdvanceDuration;
+        CHECK(!missingMissionAdvanceDuration.Install(&api, nullptr));
+        CHECK(g_symbolCalls == 1);
+
+        g_missionAdvanceDurationSetting = 5000;
+        g_secondarySetting = 1;
+        g_setting = 0;
+        NativePlayerCombatProbe disabledMissionAdvance;
+        CHECK(!disabledMissionAdvance.Install(&api, nullptr));
+        CHECK(g_symbolCalls == 1);
+
+        g_setting = 1;
+        g_missionAdvanceDurationSetting = 120001;
+        NativePlayerCombatProbe excessiveMissionAdvanceDuration;
+        CHECK(!excessiveMissionAdvanceDuration.Install(&api, nullptr));
+        CHECK(g_symbolCalls == 1);
+
+        g_missionAdvanceSetting = 0;
+        g_missionAdvanceDurationSetting = 0;
         g_secondarySetting = 2;
         NativePlayerCombatProbe invalidSecondary;
         CHECK(!invalidSecondary.Install(&api, nullptr));
@@ -603,6 +641,7 @@ namespace
         SdgoApi api = Api();
         g_setting = 1;
         g_continuousSetting = 0;
+        g_missionAdvanceSetting = 0;
         g_secondarySetting = 0;
         g_symbolCalls = 0;
 
@@ -856,6 +895,8 @@ namespace
         SdgoApi api = Api();
         g_setting = 1;
         g_continuousSetting = 1;
+        g_missionAdvanceSetting = 0;
+        g_missionAdvanceDurationSetting = 0;
         g_secondarySetting = 1;
         g_weaponSlotSetting = -1;
         g_symbolCalls = 0;
@@ -870,6 +911,8 @@ namespace
         NativePlayerCombatProbe probe;
         CHECK(probe.Install(&api, nullptr));
         CHECK(g_symbolCalls == 6);
+        CHECK(probe.ContinuousPrimaryEnabled());
+        CHECK(!probe.MissionAdvanceEnabled());
 
         auto mission = MissionSnapshot();
         const auto originalMission = mission;
@@ -995,6 +1038,120 @@ namespace
             g_fireInputCalls == finishedFire &&
             g_lockInputCalls == finishedLock);
 
+        ResetNativeWorld();
+        g_secondarySetting = 0;
+        g_continuousSetting = 1;
+        g_missionAdvanceSetting = 1;
+        g_missionAdvanceDurationSetting = 5000;
+        NativePlayerCombatProbe advance;
+        CHECK(advance.Install(&api, nullptr));
+        CHECK(advance.ContinuousPrimaryEnabled());
+        CHECK(advance.MissionAdvanceEnabled());
+        CHECK(advance.MissionAdvanceDurationMs() == 5000);
+        auto advanceMission = MissionSnapshot();
+        auto advanceContext = Context(0);
+        g_missionMode[0x104] = 1;
+        CHECK(advance.PollMission(
+            &advanceContext, advanceMission, advanceMission.battle_generation,
+            advanceMission.room_object, 22, kPilotId, input));
+        CHECK(!g_moveHeld && !g_fireHeld &&
+              g_moveInputCalls == 0 && g_fireInputCalls == 0);
+        g_missionMode[0x104] = 0;
+        CHECK(advance.PollMission(
+            &advanceContext, advanceMission, advanceMission.battle_generation,
+            advanceMission.room_object, 22, kPilotId, input));
+        CHECK(g_moveHeld && !g_fireHeld);
+        advanceContext.elapsed_ms = 1000;
+        CHECK(advance.PollMission(
+            &advanceContext, advanceMission, advanceMission.battle_generation,
+            advanceMission.room_object, 22, kPilotId, input));
+        CHECK(g_moveHeld && !g_fireHeld && !g_lockHeld);
+        advanceContext.elapsed_ms = 4000;
+        CHECK(advance.PollMission(
+            &advanceContext, advanceMission, advanceMission.battle_generation,
+            advanceMission.room_object, 22, kPilotId, input));
+        CHECK(g_moveHeld && !g_fireHeld && !g_lockHeld);
+
+        g_unit[0x31E9] = 0;
+        advanceContext.elapsed_ms = 4500;
+        CHECK(advance.PollMission(
+            &advanceContext, advanceMission, advanceMission.battle_generation,
+            advanceMission.room_object, 22, kPilotId, input));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 0) == 0 &&
+              g_heldDetour(g_nativeInput, nullptr, 9) == 0);
+        g_unit[0x31E9] = 1;
+        advanceContext.elapsed_ms = 6000;
+        CHECK(advance.PollMission(
+            &advanceContext, advanceMission, advanceMission.battle_generation,
+            advanceMission.room_object, 22, kPilotId, input));
+        CHECK(!g_moveHeld && !g_fireHeld);
+        advanceContext.elapsed_ms = 6200;
+        CHECK(advance.PollMission(
+            &advanceContext, advanceMission, advanceMission.battle_generation,
+            advanceMission.room_object, 22, kPilotId, input));
+        CHECK(!g_moveHeld && g_fireHeld);
+        advance.Stop(input);
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 0) == 0 &&
+              g_heldDetour(g_nativeInput, nullptr, 9) == 0 &&
+              g_heldDetour(g_nativeInput, nullptr, 10) == 0);
+        advance.Finish(&advanceContext, input);
+
+        ResetNativeWorld();
+        g_missionAdvanceSetting = 1;
+        g_missionAdvanceDurationSetting = 5000;
+        g_continuousSetting = 1;
+        Put(g_node, 0x6C, 1.0f);
+        Put(g_node, 0x74, 0.0f);
+        NativePlayerCombatProbe returnToField;
+        CHECK(returnToField.Install(&api, nullptr));
+        auto returnMission = MissionSnapshot();
+        auto returnContext = Context(0);
+        const auto routeHp = Get<int32_t>(g_unit, 0x38);
+        CHECK(returnToField.PollMission(&returnContext, returnMission,
+            returnMission.battle_generation, returnMission.room_object, 22, kPilotId, input));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 3) == 1);
+        CHECK(!g_fireHeld && !g_lockHeld);
+        // Fixture physics places the observed node after the outward lease.
+        // The production probe is allowed to choose keys, never write that pose.
+        Put(g_node, 0x90, 5000.0f);
+        returnContext.elapsed_ms = 6000;
+        CHECK(returnToField.PollMission(&returnContext, returnMission,
+            returnMission.battle_generation, returnMission.room_object, 22, kPilotId, input));
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 2) == 1);
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 3) == 0);
+        CHECK(Get<float>(g_node, 0x90) == 5000.0f && !g_fireHeld && !g_lockHeld);
+        Put(g_node, 0x90, 3000.0f);
+        returnContext.elapsed_ms = 7000;
+        CHECK(returnToField.PollMission(&returnContext, returnMission,
+            returnMission.battle_generation, returnMission.room_object, 22, kPilotId, input));
+        CHECK(g_moveHeld && !g_fireHeld && !g_lockHeld);
+        CHECK(g_heldDetour(g_nativeInput, nullptr, 2) == 0);
+        Put(g_node, 0x88, 2500.0f);
+        returnContext.elapsed_ms = 8000;
+        CHECK(returnToField.PollMission(&returnContext, returnMission,
+            returnMission.battle_generation, returnMission.room_object, 22, kPilotId, input));
+        CHECK(!g_moveHeld && g_fireHeld);
+        CHECK(Get<float>(g_node, 0x88) == 2500.0f && Get<float>(g_node, 0x90) == 3000.0f);
+        CHECK(Get<int32_t>(g_unit, 0x38) == routeHp);
+        returnToField.Stop(input);
+
+        ResetNativeWorld();
+        NativePlayerCombatProbe pvpAdvanceDisabled;
+        CHECK(pvpAdvanceDisabled.Install(&api, nullptr));
+        auto pvpSnapshot = Snapshot();
+        auto pvpStatus = StartStatus();
+        auto pvpContext = Context(0);
+        CHECK(pvpAdvanceDisabled.Poll(
+            &pvpContext, pvpSnapshot, pvpStatus, input));
+        CHECK(g_moveHeld && !g_fireHeld);
+        pvpContext.elapsed_ms = 1000;
+        CHECK(pvpAdvanceDisabled.Poll(
+            &pvpContext, pvpSnapshot, pvpStatus, input));
+        CHECK(!g_moveHeld && g_fireHeld);
+        pvpAdvanceDisabled.Finish(&pvpContext, input);
+
+        g_missionAdvanceSetting = 0;
+        g_missionAdvanceDurationSetting = 0;
         g_secondarySetting = 0;
         g_continuousSetting = 0;
     }

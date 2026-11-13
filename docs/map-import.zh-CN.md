@@ -33,7 +33,11 @@
 6. 点「**检查服务端**」查看将新增、更新的行和冲突；没有冲突时点「**应用到服务端**」，再「读回服务端」确认。
 7. 重启 World/Battle 服务和客户端后生效。
 
-**示例地图。** 「**示例地图**」卡片会从框架公开仓库下载《双谷要塞 · 奥德萨作战》，按其 `map.json` 中的 SHA-256 逐个校验文件后，像普通地图包一样登记；之后照常编译、安装并应用。地图包含南谷对战场、山脊上带闸门的要塞防线和北谷矿区基地，并附一个 8 阶段 PvE 任务（开场、中途和通关过场、机体图片横幅、首领小队与倒计时）。文件也在仓库的 [`examples/maps/twin-valley-fortress`](../examples/maps/twin-valley-fortress) 下，可作为编写地图包的参考；[`CREDITS.md`](../examples/maps/twin-valley-fortress/CREDITS.md) 列出贴图与扫描模型的 CC0 来源。它按名称引用游戏自带的 NPC 模板、模型、音乐和音效，因此只能在具备这些数据的客户端与服务端上编译。
+**OPEN 默认示例。** Manager 随安装包附带《双谷要塞 · 奥德萨作战》的完整公开源文件，首次打开地图导入页时校验并缓存；无需另行下载，也无需先配置游戏目录。卡片可查看全部文件路径、`map.json`、任务 JSON、导入辅助脚本和素材来源。点「登记默认副本」后才复制到可编辑工作区，之后分别编译、安装和应用服务端；查看示例不会改数据库或自动启用任务。编译后还可查看生成包的完整文件清单以及实际的 `manifest.json`、`definitions.json`、`missions.lua`。
+
+![Manager 中查看 OPEN 默认任务源码](map-open-source-demo.webp)
+
+地图包含南谷、带闸门与接触护罩的要塞防线及北谷基地，附 8 阶段 PvE 任务，展示四档难度与配对 HP、原生机体横幅、队伍行进过场、友军撤离和倒计时终局。源文件也在 [`examples/maps/twin-valley-fortress`](../examples/maps/twin-valley-fortress)，从 [`OPEN-ME.md`](../examples/maps/twin-valley-fortress/OPEN-ME.md) 开始；[`CREDITS.md`](../examples/maps/twin-valley-fortress/CREDITS.md) 列出 CC0 素材来源。示例按名称引用游戏自带资源，只能在具备相应数据的客户端与服务端上编译；服主私人图片和部署配置不随示例分发。
 
 编号在编译时自动分配：地图编号接在客户端原有地图之后，任务的各类记录接在原有任务记录之后，并且彼此连续（游戏按连续编号读取列表，中间不能留空）。因此移除或调整一张地图的顺序，会让排在后面的地图和任务重新编号；重新编译、安装并应用即可，服务端会更新并清理本工作区写入过的旧行。
 
@@ -164,7 +168,7 @@ manifest = {
 
 ![原生触边网格与光圈](map-native-boundary-demo.webp)
 
-真实双客户端画面：触边后短暂显现原生网格与光圈，由服务端确认并同步 HP；平时可把屏障材质设为透明。
+触边后短暂显现原生网格与光圈，服务端确认的扣血复用游戏原生受击流程；平时可把屏障材质设为透明。
 
 短片使用原生任务镜头展示闸门：保护期间关闭，进入后续过场前开放通道。
 
@@ -180,13 +184,14 @@ Manager 1.16.28 及更新版本会在进入阶段的过场开始前应用 `enter
 
 | 字段 | 说明 |
 | --- | --- |
-| `schema`、`schema_version` | `sdgo.map-mission`，`1`、`2`、`3` 或 `4`；机体图片横幅和立即阶段衔接需要 v2，命名物件攻击与阶段显隐需要 v3，大阶段完成横幅与地面标线选择需要 v4；旧编译器会拒绝而不会忽略新功能 |
+| `schema`、`schema_version` | `sdgo.map-mission`，`1` 至 `5`；机体图片横幅和立即阶段衔接需要 v2，命名物件攻击与阶段显隐需要 v3，大阶段横幅与地面标线选择需要 v4，队伍行进过场、目标保护与友军撤离需要 v5；旧编译器会拒绝新语义 |
 | `mission_key`、`name`、`description` | 任务标识、名称和说明 |
 | `transition_delay` | 阶段切换节奏：`native`（默认）保留原生普通阶段固定等待；`immediate` 只取消非最终阶段之间的这段固定等待。进入阶段的 `SceneTime` 过场仍完整播放，最终结算保持原生节奏 |
 | `briefing.zh` | 任务说明面板，最多 5 行、每行 49 字 |
 | `difficulties` | 每档：`level`、`required_rank`、`time_limit`（秒）、`lives` |
 | `bgm` | 任务音乐（与地图 `presentation.bgm` 写法相同） |
 | `npcs` | 登场单位：`template`（目标服务器已有的 NPC），或 `unit` + `base`（用任意机体套用一个 NPC 模板）；可改 `hp`、`boss`、`name`、`ai`（AI 脚本名，例如对战 AI 的 `VSAI_Infighter_01`）。`label` 设置单位头顶显示的名字（例如驾驶员名，最多 49 字、不含半角括号）；`attack`、`special_attack`（0.25–4）分别放大武器和必杀技的伤害（`special_attack` 默认同 `attack`）。头顶名字使用客户端展示副本；修改伤害时，编译器同时生成匹配的客户端与服务端任务机体、武器定义，并同步 NPC 与击破目标的机体编号。请应用配套服务端计划并重启 World/Battle 后再发布客户端内容 |
+| `npcs.<key>.hp_by_difficulty` | v5：按难度编号声明 HP，例如 `{"1":12500,"2":22000,"3":50000,"4":68500}`。每个已声明难度都要有一项；编译器生成配对的独立 NPC 模板和服务端定义，各难度刷怪使用自己的 HP |
 | `lines` | 人物对话：`portrait`（客户端已有头像 `sprs\\NNNN.spr`）、`speaker`、`text` |
 | `npcs.<key>.cutin` | 原生机体图片横幅：`native_sprite` 引用目标客户端已有的机体 SPR，`line` 引用本任务的对白。NPC 出场时使用游戏自带的横向机体展示、入场动画与分辨率适配，不生成文字特效；没有对应机体素材时不能用另一台机体代替 |
 | `banners` | 场景内图片特效：`image`（512×128 PNG）；与原生机体图片横幅分开 |
@@ -217,6 +222,8 @@ Manager 1.16.28 及更新版本会在进入阶段的过场开始前应用 `enter
 | `enter` | 进入本阶段时：`cutscene`（过场）、`lines`（对话）、`sector`（带传送的区域切换）、`area`（不传送，只改活动范围）；第一阶段请使用 `opening` 和任务的 `area` |
 | `reward` | 阶段奖励 `points`、`unit_exp` |
 | `next` | 下一阶段（默认按顺序） |
+| `damage_gates` | v5：`[{"target":"objective","requires_defeat":["guardian"],"warning":"blocked"}]`。目标与守卫必须在本阶段作为敌方刷出；所有声明的守卫都真正被击破后才开放目标伤害。`warning` 可选，引用 `lines` 中的原生指挥官提醒，提前攻击时显示并限制频率 |
+| `retreat_allies` | v5：本阶段友军 key 列表。在原生阶段成功清理通知中，仍存活的指定友军使用安静撤离呈现；正常战斗死亡和失败流程保留原样 |
 
 **过场**（`cutscenes{}`）：`length`（1..60 秒），`actors`（演员：`npc`、`at`、`facing`；`hold: true` 让演员每帧保持在 `at`，用于悬浮的舰船等，否则游戏会让它落到地面；演员默认属于玩家一方，AI 僚机不会攻击它们，`side: "enemy"` 可设为敌方），`camera`（从 `t=0` 开始的关键帧 `pos`/`look`，编译成平滑曲线，镜头每帧沿曲线移动），以及 `events`：
 
@@ -232,6 +239,14 @@ Manager 1.16.28 及更新版本会在进入阶段的过场开始前应用 `enter
 
 过场期间玩家不可操作，结束后自动交还控制。
 
+**队伍行进过场**（v5）：在阶段入口过场中增加 `party`，声明 `from`、`via`、`to` 三组等长的 1..8 个位置、可选 `facing` 和 `include_wingmen`（默认 `true`）。本阶段同时声明 `enter.sector`，其 `warp` 必须与 `party.to` 完全相同。运行时使用真人当前外观的原生替身与僚机当前 NPC 模板，隐藏原单位并播放原生路点动作。演员准备完成后按 `length` 的实际秒数计时，帧率不会缩短时长；正常完成和跳过都清理演员、恢复原单位，再按同一原生阶段落点交还控制。这个类型用于阶段入口，不能用作 `opening` 或 `ending`。
+
+![队伍沿原生路点通过基地闸门](map-party-walk-demo.webp)
+
+目标保护在服务端的本体与部件伤害入口执行，同时清除强制致死伤害；缺席、消失或仅破坏部件不算击破守卫。客户端显示原生护盾效果和原生人物对话，不改写目标 HP。阶段 `time_limit` 是整个阶段的总时限，击破守卫不会重新计时。
+
+v5 功能需要客户端 `map_catalog >= 0.7.0`；目标保护还需要服务端 `map_catalog_server >= 0.3.0`。新客户端包使用清单 v2 并声明最低程序版本，安装器在写入内容或移除旧文件前拒绝不配套程序；带保护目标的服务端计划在所需 Battle 程序就绪前拒绝写入任务数据。非致命边界扣血复用游戏原生受击动作，保留服务端已确认的 HP，不伪造攻击者或击破，也不额外叠加身体粒子与单独音效。
+
 机体图片横幅在对应 NPC 的 `cutin` 中声明，由原生 NPC 出场流程播放。可用 `image`（包内 PNG／JPEG）替代 `native_sprite`；默认图片为 1024×156。其他尺寸声明 `crop: [左,上,右,下]`：原生 SPR 选取该像素区域，保留其逻辑比例，位置与分辨率缩放使用原生界面规则。图片宽高最多 2048，裁剪后的逻辑高度为 64..512。两种来源只能选一个，并且都需要 `line`。汉字标题图片不能代替机体图片横幅。
 
 有部件伸出横幅边缘时，使用透明 PNG 保留这些部件；`crop` 只选取显示范围，不会自动移除背景。
@@ -240,7 +255,7 @@ Manager 1.16.28 及更新版本会在进入阶段的过场开始前应用 `enter
 
 ## 生效与兼容
 
-- 需要启用客户端 Mod `map_catalog` 和 Battle 服务端 Mod `map_catalog_server`，并在两端安装同一版本的发布物；只更新一端会出现地图或任务缺失。新编译器生成 `sdgo.map-import-server-plan/3`，包含配对的命名物件定义和放置行。v1/v2 计划仍可读取；v2 继续支持节奏策略及配对机体/武器表，v1 不能声明这些内容。编译器把声明 `transition_delay: "immediate"` 的任务 MissionID 排序写入 `server-plan.json` 的 `runtime_policy.immediate_transition_missions`，并把策略纳入发布 revision。Manager 应用服务端计划时，只在每个已安装 `map_catalog_server` 的 BattleServer 写入该名单并保留其他配置；缺少模块时明确显示“等待部署程序”，继续使用原生等待，不会假报已激活。写入并读回配置只表示 `configured`；重启后仍需原生运行观察才能证明策略实际加载。公开框架包不携带任何服务器专用编号。
+- 需要启用客户端 Mod `map_catalog` 和 Battle 服务端 Mod `map_catalog_server`，并在两端安装同一版本的发布物；只更新一端会出现地图或任务缺失。新编译器生成 `sdgo.map-import-server-plan/4`，包含配对的命名物件定义和放置行。v1/v2/v3 计划仍可读取；v3 保留命名物件与边界声明，v2 保留节奏策略及配对机体/武器表，v1 不能声明这些内容。目标保护使用 v4 计划。编译器把声明 `transition_delay: "immediate"` 的任务 MissionID 排序写入 `server-plan.json` 的 `runtime_policy.immediate_transition_missions`，并把策略纳入发布 revision。Manager 应用服务端计划时，只在每个已安装 `map_catalog_server` 的 BattleServer 写入该名单并保留其他配置；缺少模块时明确显示“等待部署程序”，继续使用原生等待，不会假报已激活。写入并读回配置只表示 `configured`；重启后仍需原生运行观察才能证明策略实际加载。公开框架包不携带任何服务器专用编号。
 - 服务端表在服务启动时读取，应用后需重启 World/Battle 服务；客户端包安装后重启客户端。
 - 导入任务在任务房间中以原生任务模式运行，人物对话使用游戏自带的人物对话框（带头像和名字）；设置了 `loading` 海报的任务在进入战斗的读取画面显示该海报。
 - NPC 注册属于任务协议：`npcs` 中的单位会成为该任务的服务端 NPC 数据和客户端 NPC 模板，不需要单独的 Mod。
@@ -254,5 +269,5 @@ Manager 1.16.28 及更新版本会在进入阶段的过场开始前应用 `enter
 - 开启 Bloom（HDR）后地图整体发白：请用 Manager 1.16.16 或更新版本重新编译并安装；旧版编译器把地图行的 Bloom 亮度阈值留成了 0。
 - 检查任务的活动范围：运行 GameTest 用例 `mission.import_flow`，它会在范围变化时和每 10 秒记录本机玩家的 `imported mission local area x=[…] z=[…] on=… pos=(…) inside=…`。玩家位于新范围之外时会被移到范围边缘。开启回放画面时，该用例还会把玩家在西侧边缘附近停留一次，以便在回放帧中看到地面边界线。
 - 读取画面仍是随机图时，查看 `sdgo.log` 中的 `imported mission …: mission poster loading screen`；若提示目录行不可达，说明任务目录编号有缺口，请重新编译并安装整个工作区。
-- 示例地图下载失败：请确认 Manager 能访问 `raw.githubusercontent.com`；已下载并校验通过的文件会在下次重试时直接复用。
+- 默认示例校验失败：更新或重新安装配套 Manager；示例直接来自内置文件。缓存被修改时会先保留原副本，再恢复标准缓存；已登记的可编辑工作区不受影响。
 - 「检查服务端」报告冲突时，说明目标数据库中已有同编号的非导入数据，应用会被拒绝；请确认客户端与服务端来自同一套原始数据。

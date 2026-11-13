@@ -26,14 +26,14 @@ inline bool ReadPvpRoomTitle(const std::wstring& job, const char* nonce, bool ra
 }
 
 inline bool ReadMissionRoomTitle(const std::wstring& job, const char* nonce,
-                                 bool infinite, bool plainMission, char (&title)[21]) {
+                                 bool infinite, bool allowDifficulty, char (&title)[21]) {
     if(!nonce || std::strlen(nonce)!=6 || std::strncmp(nonce,"gt",2) ||
        std::strspn(nonce+2,"0123456789abcdef")!=4)return false;
     wchar_t difficulty[16]{};
     GetPrivateProfileStringW(L"run",L"mission_ai_difficulty",L"",difficulty,16,job.c_str());
     const char* command="!ai3 lv2";
     if(*difficulty) {
-        if(!plainMission)return false;
+        if(!allowDifficulty)return false;
         if(!wcscmp(difficulty,L"Easy"))command="!ai easy";
         else if(!wcscmp(difficulty,L"Medium"))command="!ai medium";
         else if(!wcscmp(difficulty,L"Hard"))command="!ai hard";

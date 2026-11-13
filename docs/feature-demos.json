@@ -223,6 +223,44 @@
       "title_en": "AR growth preset: three stages in native combat excerpts",
       "guide_zh": "docs/unit-import.zh-CN.md",
       "guide_en": "docs/unit-import.md"
+    },
+    {
+      "id": "pve-ai-scoreboard",
+      "path": "docs/pve-ai-scoreboard-demo.webp",
+      "since": "1.16.38",
+      "mods": [
+        "pve_ai_scoreboard"
+      ],
+      "title_zh": "PvE TAB：AI 队友名称、血条与战绩",
+      "title_en": "PvE TAB: AI teammate names, HP bars and scores",
+      "guide_zh": "docs/pve-ai-scoreboard.zh-CN.md",
+      "guide_en": "docs/pve-ai-scoreboard.md"
+    },
+    {
+      "id": "map-open-source",
+      "path": "docs/map-open-source-demo.webp",
+      "since": "1.16.38",
+      "mods": [
+        "map_catalog",
+        "map_catalog_server"
+      ],
+      "title_zh": "OPEN 任务示例：查看源码和文件树",
+      "title_en": "OPEN mission example: browse sources and the file tree",
+      "guide_zh": "docs/map-import.zh-CN.md",
+      "guide_en": "docs/map-import.md"
+    },
+    {
+      "id": "map-party-walk",
+      "path": "docs/map-party-walk-demo.webp",
+      "since": "1.16.38",
+      "mods": [
+        "map_catalog",
+        "map_catalog_server"
+      ],
+      "title_zh": "原生队伍行进：穿过基地闸门",
+      "title_en": "Native party movement: through the base gate",
+      "guide_zh": "docs/map-import.zh-CN.md",
+      "guide_en": "docs/map-import.md"
     }
   ]
 }

@@ -41,6 +41,7 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
 from tools import game_test_unit_scenario as unit_scenarios
 from tools import game_test_capsule_package as capsule_packages
 from tools import game_test_operator_scenario as operator_scenarios
+from tools import game_test_mission_campaign as mission_campaigns
 SCHEMA_VERSION = 2
 OWNED_BUILD_ROOT=Path(__file__).resolve().parents[1]/'build'
 OWNED_PROCESS_EXIT_TIMEOUT = 30
@@ -2341,8 +2342,8 @@ def make_plan(
     )
     if mission_mode is None and mission_ai_difficulty is not None:
         raise GameTestError('mission_ai_difficulty requires --mission-mode')
-    if mission_ai_difficulty is not None and mission_game_mode_id is not None:
-        raise GameTestError('mission_ai_difficulty is limited to the plain mission smoke')
+    if mission_ai_difficulty is not None and mission_behavior_profile is not None:
+        raise GameTestError('mission_ai_difficulty cannot change a fixed behavior-profile fixture')
     if mission_mode is not None:
         if ai_allies is not None or random_teams or ai_policy is not None or ai_teams is not None:
             raise GameTestError('custom PvP AI teams cannot be used in a mission smoke plan')
@@ -2500,6 +2501,10 @@ def write_job(
     account_profile: configparser.ConfigParser | None,
     profile_path: Path | None,
 ) -> None:
+    campaign_fields = {}
+    if 'mission_campaign' in plan:
+        try:campaign_fields = mission_campaigns.run_fields(plan['mission_campaign'],plan)
+        except ValueError as error:raise GameTestError(str(error)) from error
     directory = root / "sdgo" / "gametest"
     directory.mkdir(parents=True, exist_ok=True)
     if "fps_cap" in plan:
@@ -2617,6 +2622,8 @@ def write_job(
         run['run']['oc_special'] = '1'
     if 'unit_scenario_sha256' in plan:
         run['run']['unit_scenario_sha256'] = plan['unit_scenario_sha256']
+    if 'mission_campaign' in plan:
+        run['run'].update(campaign_fields)
     if 'operator_flow' in plan:
         for field, value in operator_scenarios.run_fields(plan).items():
             run['run'][field] = value
@@ -2663,6 +2670,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
     parser = read_ini(root / "sdgo" / "gametest" / "run.ini")
     try:
         run = parser["run"]
+        if run.get("suite") == FPS_SUITE and any(key.startswith('mission_campaign')for key in run):
+            raise ValueError('mission_campaign cannot enter the FPS suite')
         if run.get("suite") == FPS_SUITE:
             if (
                 run["role"] != "client"
@@ -2867,8 +2876,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     mission_ai_difficulty = validate_ai_difficulty(mission_ai_difficulty)
                 except GameTestError as error:
                     raise ValueError(str(error)) from error
-                if behavior_mission_id is not None:
-                    raise ValueError('mission AI difficulty is limited to the plain mission smoke')
+                if behavior_profile is not None:
+                    raise ValueError('mission AI difficulty cannot change a fixed behavior-profile fixture')
             if run['retry_count'] != '1' or run['expect_first_fail'] != '0':
                 raise ValueError('mission smoke requires one existing-account login attempt')
             canonical_run_id = str(uuid.UUID(run['id']))
@@ -2925,6 +2934,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 *MISSION_BEHAVIOR_FIELDS,
                 'play_unit_uid', 'friends_only', 'network_policy',
                 *ROUTE_PLAN_FIELDS, 'quiet', 'quiet_loopback', 'review_footage',
+                *mission_campaigns.RUN_FIELDS,
             }
             unexpected = set(run.keys()) - allowed
             if unexpected:
@@ -3289,6 +3299,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
             plan['review_footage'] = True
         if operator_present:
             plan.update(operator_scenarios.read(root, run, plan))
+        campaign = mission_campaigns.read(run,plan)
+        if campaign is not None:plan['mission_campaign'] = campaign
         return plan
     except (KeyError, ValueError) as error:
         raise GameTestError(f"invalid normal-flow run.ini: {error}") from error
@@ -3567,9 +3579,32 @@ def prepare(
     login_recovery_min_retries: int | None = None,
     login_recovery_hold_after_completion: bool = False,
     operator_flow: dict | None = None,
+    mission_campaign: dict | None = None,
     _owned_client_transfer: tuple[Path, str] | None = None,
 ) -> dict:
     client_template = client_template.resolve()
+    if mission_campaign is not None:
+        campaign_context = {
+            'target_host':target_host,'mission_mode':mission_mode,
+            'mission_game_mode_id':mission_game_mode_id,'mission_ai_count':mission_ai_count,
+            'mission_behavior_profile':mission_behavior_profile,'mission_respawns':mission_respawns,
+            'bootstrap_only':bootstrap_only,'battleship_only':battleship_only,
+            'gift_requests_only':gift_requests_only,'deck_only':deck_only,'pages_only':pages_only,
+            'friends_only':friends_only,'room_titles_only':room_titles_only,
+            'collection_draw':collection_draw,'random_loadout':random_loadout,
+            'review_footage':review_footage,'unit_scenario':unit_scenario,'operator_flow':operator_flow,
+        }
+        if fps_cap is not None:campaign_context['fps_cap']=fps_cap
+        try:mission_campaign=mission_campaigns.validate(mission_campaign,campaign_context)
+        except ValueError as error:raise GameTestError(str(error)) from error
+        sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
+        match=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
+        if not match or tuple(map(int,match.groups()))<(0,1,40):
+            raise GameTestError('mission_campaign requires native observer 0.1.40 or newer')
+        if mission_campaign['tab_capture']:
+            if 'pve_ai_scoreboard' in disabled_mods:
+                raise GameTestError('mission_campaign TAB capture requires pve_ai_scoreboard enabled')
+            extra_mods=tuple(dict.fromkeys((*extra_mods,'pve_ai_scoreboard')))
     capsule_binding=None
     if capsule_package is not None:
         try:capsule_binding=capsule_packages.validate(capsule_package,stage)
@@ -4076,6 +4111,11 @@ def prepare(
                 'login_recovery_hold_after_completion': login_recovery_hold_after_completion,
             })
 
+    if mission_campaign is not None:
+        if operator_flow is not None or unit_scenario is not None:
+            raise GameTestError('mission_campaign cannot combine another native scenario')
+        try:plan['mission_campaign'] = mission_campaigns.validate(mission_campaign,plan)
+        except ValueError as error:raise GameTestError(str(error)) from error
     if operator_flow is not None:
         if unit_scenario is not None:
             raise GameTestError('operator flow cannot be combined with a native unit scenario')
@@ -4188,6 +4228,8 @@ def prepare(
         # PvP map number selected on the native room page; 0 keeps the quick-room random-map policy.
         if type(battle_map) is not int or not 0<=battle_map<=255:raise GameTestError('--battle-map must be a MapNo in 0..255')
         observer_config['settings']['BattleMap']=str(battle_map)
+        for key,value in mission_campaigns.settings(plan.get('mission_campaign')).items():
+            observer_config['settings'][key]=value
         for key,value in unit_scenarios.settings(plan.get('unit_scenario')).items():
             observer_config['settings'][key]=value
         if capture_native_frames:observer_config['settings']['CaptureNativeFrames']='1'
@@ -4487,6 +4529,15 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
         raise GameTestError("run.json lacks normal-flow plan")
     public_plan = read_public_plan(root, historical_cases=for_reuse)
     public_run = read_ini(root / "sdgo" / "gametest" / "run.ini")["run"]
+    if any(key.startswith('mission_campaign') and key!='mission_campaign' for key in plan):
+        raise GameTestError('run.json contains undeclared mission_campaign fields')
+    if ('mission_campaign' in plan)!=('mission_campaign' in public_plan):
+        raise GameTestError('run.json cannot change the sealed mission_campaign')
+    if 'mission_campaign' in plan:
+        try:canonical = mission_campaigns.validate(plan['mission_campaign'],plan)
+        except ValueError as error:raise GameTestError(str(error)) from error
+        if canonical != plan['mission_campaign'] or canonical != public_plan['mission_campaign']:
+            raise GameTestError('run.json cannot change the sealed mission_campaign')
     for field in ('unit_scenario','unit_scenario_sha256'):
         if (field in plan)!=(field in public_plan) or plan.get(field)!=public_plan.get(field):
             raise GameTestError('run.json cannot change the sealed native unit scenario')
@@ -5601,6 +5652,8 @@ def build_report(run_dir: Path) -> dict:
         native['mission_mode'] = metadata['plan']['mission_mode']
         native['mission_scope'] = metadata['plan']['mission_scope']
         native['mission_ai_count'] = metadata['plan']['mission_ai_count']
+        if 'mission_campaign' in metadata['plan']:
+            native['mission_campaign'] = metadata['plan']['mission_campaign']
         if "mission_behavior_profile" in metadata["plan"]:
             native["mission_behavior_profile"] = metadata["plan"][
                 "mission_behavior_profile"
@@ -5734,6 +5787,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         help="exact native GameModeID: a sealed mission behavior target, or an imported mission (map import range)",
     )
+    prepare_parser.add_argument('--mission-campaign',type=Path,
+        help='sealed JSON for finite input and observation in an isolated imported mission')
     prepare_parser.add_argument(
         "--mission-ai-count",
         type=int,
@@ -5866,6 +5921,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "prepare":
             preparation = reuse_prepared if args.reuse_client else prepare
+            campaign = None
+            if args.mission_campaign is not None:
+                try:campaign = mission_campaigns.load(args.mission_campaign)
+                except (OSError,ValueError) as error:raise GameTestError(str(error)) from error
             operator_flow = None
             if args.operator_flow is not None:
                 try:
@@ -5921,6 +5980,7 @@ def main(argv: list[str] | None = None) -> int:
                 shop_assertions=args.shop_assertions,
                 shop_display=args.shop_display,
                 operator_flow=operator_flow,
+                mission_campaign=campaign,
                 random_loadout=args.random_loadout,
                 network_policy=args.network_policy,
                 route_profile=args.route_profile,

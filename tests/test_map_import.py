@@ -921,10 +921,137 @@ class ExampleMapTests(unittest.TestCase):
             folder = ROOT / spec['path']
             raw = (folder / 'map.json').read_bytes()
             self.assertEqual(hashlib.sha256(raw).hexdigest(), spec['map_json'], key)
-            self.assertRegex(spec['commit'], r'^[0-9a-f]{40}$')
+            if spec.get('commit'):
+                self.assertRegex(spec['commit'], r'^[0-9a-f]{40}$')
             pkg = P.load(folder)
             for name in json.loads(raw)['files']:
                 pkg.read(name)               # every listed file is present with its digest
+
+    def test_manager_bundle_whitelists_only_manifest_members(self):
+        from manager import maps as manager_maps
+        folder = ROOT / manager_maps.EXAMPLES['twin-valley-fortress']['path']
+        manifest = json.loads((folder / 'map.json').read_text(encoding='utf-8'))
+        rows = manager_maps.bundled_example_datas(ROOT)
+        bundled = {Path(source).resolve().relative_to(folder.resolve()).as_posix() for source, _ in rows}
+        self.assertEqual(bundled, {'map.json', *manifest['files']})
+        self.assertFalse(any('__pycache__' in name or name.endswith(('.pyc', '.pyo')) for name in bundled))
+        spec = (ROOT / 'manager/SDGOModManager.spec').read_text(encoding='utf-8')
+        self.assertIn('data = bundled_example_datas(root)', spec)
+        self.assertNotIn("(str(root/'examples/maps/twin-valley-fortress')", spec)
+
+    def test_public_odessa_is_current_without_private_raster_cutins(self):
+        folder = ROOT / 'examples/maps/twin-valley-fortress'
+        manifest = json.loads((folder / 'map.json').read_text(encoding='utf-8'))
+        mission = json.loads((folder / 'missions/odessa.json').read_text(encoding='utf-8'))
+        shield = [obj for obj in manifest['objects'] if obj.get('id') == 'odessa_base_shield']
+        self.assertEqual(len(shield), 1)
+        self.assertEqual(shield[0]['model'], 'models/base-shield.gltf')
+        self.assertIn('models/base-shield-grid.png', manifest['files'])
+        self.assertEqual(mission['boundary_warning'], 'lshield')
+        self.assertEqual(mission['boundary_markings'], 'initial')
+        self.assertEqual(mission['boundary_damage']['edge'], 'top')
+        self.assertIn('lshield', mission['lines'])
+        self.assertTrue(any(block.get('block') == 'odessa_base_shield'
+                            for block in mission['phases'][4]['enter']['blocks']))
+        self.assertFalse(any('image' in npc.get('cutin', {}) for npc in mission['npcs'].values()))
+        self.assertEqual(mission['npcs']['gaia']['cutin']['native_sprite'], r'sprs\8879.spr')
+        self.assertTrue(any(p['section_clear'] for p in mission['phases']))
+        for current, following in zip(mission['phases'], mission['phases'][1:]):
+            if following.get('enter', {}).get('cutscene'):
+                self.assertFalse(current['section_clear'],
+                                 'a lingering section-clear strip must not cover the next cinematic')
+
+    def test_bundled_default_is_cached_verified_and_restorable(self):
+        from manager import maps as manager_maps
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = manager_maps.ensure_example('twin-valley-fortress', root)
+            self.assertTrue(folder.name.startswith('twin-valley-fortress-'))
+            self.assertEqual(P.load(folder).map_key, 'sdgo-sample.twin-valley-fortress')
+            self.assertIn('def add_mission', (folder / 'scripts/add_mission.py').read_text(encoding='utf-8'))
+            mission = folder / 'missions/odessa.json'
+            mission.write_text('{}', encoding='utf-8')
+            restored = manager_maps.ensure_example('twin-valley-fortress', root)
+            self.assertEqual(restored, folder)
+            self.assertEqual(json.loads(mission.read_text(encoding='utf-8'))['schema_version'], 5)
+            preserved = sorted(root.glob(folder.name + '.changed-*'))
+            self.assertEqual(len(preserved), 1)
+            self.assertEqual((preserved[0] / 'missions/odessa.json').read_text(encoding='utf-8'), '{}')
+
+    def test_public_mission_helper_adds_file_and_digest(self):
+        import importlib.util
+        script = ROOT / 'examples/maps/twin-valley-fortress/scripts/add_mission.py'
+        spec = importlib.util.spec_from_file_location('add_public_mission', script)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        with tempfile.TemporaryDirectory() as tmp:
+            package = write_package(Path(tmp) / 'package')
+            source = Path(tmp) / 'another.json'
+            source.write_text(json.dumps({'schema': 'sdgo.map-mission', 'schema_version': 5,
+                                          'mission_key': 'test.another'}), encoding='utf-8')
+            target = helper.add_mission(package, source)
+            manifest = json.loads((package / 'map.json').read_text(encoding='utf-8'))
+            self.assertEqual(manifest['files']['missions/another.json'],
+                             hashlib.sha256(target.read_bytes()).hexdigest())
+
+    def test_manager_exposes_default_source_without_registering_it(self):
+        from manager import maps as manager_maps
+        from manager.maps import Maps
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = SimpleNamespace(root=Path(tmp), mode='user', settings={'modules': {'maps': {}}})
+            provider = Maps(workspace)
+            self.assertFalse(provider.describe()['configured'])
+            self.assertTrue(provider.describe()['panel_without_configuration'])
+            state = provider.request('GET', '/api/maps', {}, {})
+            self.assertEqual(state['maps'], [])
+            self.assertTrue(state['examples'][0]['default'])
+            self.assertTrue(state['examples'][0]['cached'])
+            value = provider.request('POST', '/api/maps/examples/file',
+                                     {'id': 'twin-valley-fortress', 'file': 'scripts/add_mission.py'}, {})
+            self.assertIn('def add_mission', value['text'])
+            self.assertFalse((Path(tmp) / 'data/maps/maps.json').exists())
+            with self.assertRaisesRegex(ValueError, '不可预览'):
+                provider.request('POST', '/api/maps/examples/file',
+                                 {'id': 'twin-valley-fortress', 'file': 'images/preview.png'}, {})
+
+            provider.request('POST', '/api/maps/examples/add', {'id': 'twin-valley-fortress'}, {})
+            registered = Path(tmp) / 'data/maps/packages/sdgo-sample.twin-valley-fortress/missions/odessa.json'
+            registered.write_text('{"user_authored": true}', encoding='utf-8')
+            cache_root = Path(tmp) / 'data/maps/examples'
+            cached = manager_maps.ensure_example('twin-valley-fortress', cache_root)
+            (cached / 'missions/odessa.json').write_text('{}', encoding='utf-8')
+            manager_maps.ensure_example('twin-valley-fortress', cache_root)
+            self.assertEqual(registered.read_text(encoding='utf-8'), '{"user_authored": true}')
+
+    def test_manager_lists_and_previews_generated_publication_text(self):
+        from manager.maps import Maps
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = SimpleNamespace(root=Path(tmp), mode='user', settings={'modules': {'maps': {}}})
+            provider = Maps(workspace)
+            publication = Path(tmp) / 'data/maps/publication'
+            publication.mkdir(parents=True)
+            archive_path = publication / 'SDGO-MapImport-Client.zip'
+            files = {
+                'manifest.json': '{"revision": "fixture"}',
+                'client/sdgo/mods/map_catalog/definitions.json': '{"maps": []}',
+                'client/sdgo/mods/map_catalog/missions.lua': 'return {missions = {}}',
+            }
+            with zipfile.ZipFile(archive_path, 'w') as archive:
+                for name, content in files.items():
+                    archive.writestr(name, content)
+                archive.writestr('client/sdgo/mods/map_catalog/terrain.bin', b'\x00\xff')
+            state = provider.request('GET', '/api/maps', {}, {})
+            self.assertEqual(state['publication_files'], sorted([*files, 'client/sdgo/mods/map_catalog/terrain.bin']))
+            self.assertEqual(state['publication_previews'], sorted(files))
+            for name, content in files.items():
+                value = provider.request('POST', '/api/maps/publication/file', {'file': name}, {})
+                self.assertEqual(value['text'], content)
+            with self.assertRaisesRegex(ValueError, '不可预览'):
+                provider.request('POST', '/api/maps/publication/file',
+                                 {'file': 'client/sdgo/mods/map_catalog/terrain.bin'}, {})
+            self.assertFalse((Path(tmp) / 'data/maps/maps.json').exists())
 
     def test_example_download_is_verified_and_cached(self):
         from manager import maps as manager_maps

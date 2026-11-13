@@ -8,6 +8,7 @@
 #include "sdgo/sdgo_api.h"
 #include "policy.h"
 #include "boundary_contact.h"
+#include "damage_gate.h"
 
 #if !defined(_M_IX86)
 #error map_catalog_server requires the 32-bit BattleServer ABI
@@ -27,6 +28,7 @@ const DWORD kDefaultMxcsr = 0x1f80;
 
 MissionAllowlist g_allowlist{};
 sdgo::map_catalog_server::BoundaryContact g_boundaryContact;
+sdgo::map_catalog_server::DamageGate g_damageGate;
 void* g_deadlineOriginal = nullptr;
 volatile LONG g_accelerated = 0;
 
@@ -124,6 +126,14 @@ extern "C" __declspec(dllexport) std::uint32_t __cdecl SdgoMapCatalogServerAccel
     return static_cast<std::uint32_t>(InterlockedCompareExchange(&g_accelerated, 0, 0));
 }
 
+extern "C" __declspec(dllexport) std::uint32_t __cdecl SdgoMapCatalogServerDamageBlockedV1() {
+    return g_damageGate.Blocked();
+}
+
+extern "C" __declspec(dllexport) std::uint32_t __cdecl SdgoMapCatalogServerGuardDefeatsV1() {
+    return g_damageGate.Defeats();
+}
+
 SDGO_MOD_ENTRY {
     if (!api || !mod || api->version != SDGO_API_VERSION ||
         api->size < offsetof(SdgoApi, HookSite) + sizeof(api->HookSite) ||
@@ -139,11 +149,11 @@ SDGO_MOD_ENTRY {
                  "invalid ImmediateTransitionMissionIds; pacing hook was not installed");
         return 0;
     }
-    if (!g_boundaryContact.Install(api, mod)) return 0;
+    if (!g_boundaryContact.Install(api, mod) || !g_damageGate.Install(api, mod)) return 0;
     if (g_allowlist.count == 0) {
         api->Log(mod, SDGO_LOG_INFO,
-                 "no imported pacing IDs declared; native mission pacing retained; boundary contact=%u",
-                 g_boundaryContact.Enabled() ? 1u : 0u);
+                 "no imported pacing IDs declared; native mission pacing retained; boundary contact=%u; damage gates=%u",
+                 g_boundaryContact.Enabled() ? 1u : 0u, g_damageGate.Enabled() ? 1u : 0u);
         return 1;
     }
     if (!api->HookSite(mod, "map_catalog_server.phase_success_deadline",

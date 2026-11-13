@@ -83,6 +83,33 @@ int main() {
           !ShouldApplyHealth(0, 1000, 1) &&
           !ShouldApplyHealth(900, 1000, 1001),
           "authoritative boundary health is monotonic and cannot revive or heal");
+    std::vector<PendingBoundaryReceipt> receipts;
+    int32_t requestedBefore = 0;
+    Check(RecordBoundaryRequest(receipts, 17, 900, 1000) &&
+          ConsumeBoundaryReceipt(receipts, 17, 850, 1000, 850, 1100, 5000,
+                                 requestedBefore) &&
+          requestedBefore == 900 && receipts.empty(),
+          "a server-committed equal-HP receipt proves the pending request lost health");
+    Check(!ConsumeBoundaryReceipt(receipts, 17, 850, 1000, 850, 1101, 5000,
+                                  requestedBefore),
+          "a duplicate acknowledgement cannot replay contact feedback");
+    Check(RecordBoundaryRequest(receipts, 17, 850, 1200) &&
+          ConsumeBoundaryReceipt(receipts, 17, 850, 1000, 800, 1300, 5000,
+                                 requestedBefore) &&
+          requestedBefore == 850,
+          "a lower notice may still be applied after matching a fresh request");
+    Check(RecordBoundaryRequest(receipts, 17, 800, 1400) &&
+          !ConsumeBoundaryReceipt(receipts, 17, 750, 1000, 800, 1500, 5000,
+                                  requestedBefore) && receipts.empty(),
+          "a late higher receipt cannot heal or present after later combat damage");
+    Check(RecordBoundaryRequest(receipts, 17, 750, 1600) &&
+          !ConsumeBoundaryReceipt(receipts, 17, 750, 1000, 700, 7001, 5000,
+                                  requestedBefore) && receipts.empty(),
+          "an expired request cannot authorize delayed feedback");
+    Check(RecordBoundaryRequest(receipts, 17, 700, 7100) &&
+          !CancelBoundaryRequest(receipts, 17, 701, 7100) && receipts.size() == 1 &&
+          CancelBoundaryRequest(receipts, 17, 700, 7100) && receipts.empty(),
+          "a failed send cancels only its exact pre-transport reservation");
     const void* missionMode = reinterpret_cast<const void*>(0x1234);
     Check(MissionCombatReleased(22, missionMode, missionMode, false) &&
           !MissionCombatReleased(21, missionMode, missionMode, false) &&
@@ -94,12 +121,6 @@ int main() {
           !LocalRoomMaster(true, 0x1234, 0x5678) &&
           !LocalRoomMaster(true, 0, 0),
           "native mission host flag is bound to the real local pilot identity");
-    Check(ShouldShowContactFeedback(725, 15000, 1) &&
-          ShouldShowContactFeedback(1, 15000, 1) &&
-          !ShouldShowContactFeedback(1, 15000, 725) &&
-          !ShouldShowContactFeedback(0, 15000, 1) &&
-          !ShouldShowContactFeedback(725, 15000, 15001),
-          "contact feedback accepts damage and same nonzero acknowledgement only");
     Check(ContactFeedbackCoolingDown(1000, 1499, 500) &&
           !ContactFeedbackCoolingDown(1000, 1500, 500) &&
           !ContactFeedbackCoolingDown(0, 100, 500),

@@ -58,6 +58,7 @@ void ObserveOptionalDialogue(const SdgoGameTestContextV1* context,bool finish=fa
 }
 #include "mission_flow_actions.h"
 #include "sdgo/mission_ai_client_observer.h"
+#include "sdgo/pve_ai_scoreboard_observer.h"
 #include "sdgo/battle_ai_observer.h"
 #include "../mission_behavior/observer.h"
 #include "gift_actions.h"
@@ -76,8 +77,10 @@ void ObserveOptionalDialogue(const SdgoGameTestContextV1* context,bool finish=fa
 #include "battle_ai_behavior_probe.h"
 #include "battle_ai_performance_probe.h"
 #include "native_death_probe.h"
+#include "native_hurt_probe.h"
 #include "native_ai_lives_probe.h"
 #include "native_player_combat_probe.h"
+#include "mission_campaign_observer.h"
 #include "review_camera.h"
 #include "native_data_guard_probe.h"
 #include "native_record_lifecycle_probe.h"
@@ -243,8 +246,33 @@ SdgoAceAiGetAnnouncementSnapshotV1Fn getAceMissionAnnouncement=nullptr;
 ScoreboardActions scoreboardInput;
 BattleAiBehaviorProbe battleAiBehavior;
 NativeDeathProbe nativeDeathProbe;
+NativeHurtProbe nativeHurtProbe;
 NativeAiLivesProbe nativeAiLives;
 NativePlayerCombatProbe nativePlayerCombat;
+MissionCampaignObserver missionCampaign;
+bool missionCampaignCapture=false;
+bool missionCampaignTabCapture=false;
+uint32_t missionCampaignContactMs=0;
+SdgoPveAiScoreboardGetStatusV1Fn getPveAiScoreboardStatus=nullptr;
+bool missionCampaignTabHeld=false;
+bool missionCampaignTabRequested=false;
+bool missionCampaignTabComplete=false;
+uint32_t missionCampaignTabFrames=0;
+uint32_t missionCampaignTabQueryBaseline=0;
+uint32_t missionCampaignTabRenderBaseline=0;
+uint32_t missionCampaignTabVisibleBaseline=0;
+uint32_t missionHurtCaptureTrigger=0;
+uint32_t missionHurtCaptureFrame=0;
+bool missionHurtCaptureRequested=false;
+bool missionHurtCaptureComplete=false;
+int PollMissionHurtCapture(const SdgoGameTestContextV1* context);
+uint64_t missionHurtCaptureStartedAt=0;
+uint64_t missionHurtCaptureLastAt=0;
+void StopMissionCampaignInputs() {
+    scoreboardInput.Hold(false);
+    missionCampaignTabHeld=false;
+    nativePlayerCombat.Stop(scoreboardInput);
+}
 MapGateProbe mapGateProbe;
 uint32_t scoreboardCombatSequence = 0, scoreboardCombatChanges = 0;
 SdgoPvpAiClientScoreboardStatusV1 scoreboardLast{};
@@ -828,10 +856,60 @@ bool LoadPlan() {
         } else {
             if(!ReadMissionRoomTitle(
                     job,narrowNonce,missionRespawns==2,
-                    !missionGameModeId && !missionBehaviorProfile,roomTitle) ||
+                    !missionBehaviorProfile,roomTitle) ||
                strcpy_s(missionRoomTitle,roomTitle)!=0)return false;
         }
+        const int campaignMode=GetPrivateProfileIntW(L"run",L"mission_campaign",0,job.c_str());
+        const int campaignTarget=GetPrivateProfileIntW(L"run",L"mission_campaign_target_npc",0,job.c_str());
+        const int campaignGuard=GetPrivateProfileIntW(L"run",L"mission_campaign_guard_npc",0,job.c_str());
+        const int campaignPartyPhase=GetPrivateProfileIntW(L"run",L"mission_campaign_party_phase",6,job.c_str());
+        const int campaignSkip=GetPrivateProfileIntW(L"run",L"mission_campaign_skip",0,job.c_str());
+        const int campaignSkipDelay=GetPrivateProfileIntW(L"run",L"mission_campaign_skip_delay_ms",2000,job.c_str());
+        const int campaignCapture=GetPrivateProfileIntW(L"run",L"mission_campaign_capture",0,job.c_str());
+        const int campaignContactMs=GetPrivateProfileIntW(L"run",L"mission_campaign_contact_ms",0,job.c_str());
+        const int campaignTabCapture=GetPrivateProfileIntW(L"run",L"mission_campaign_tab_capture",0,job.c_str());
+        if(campaignMode<0 || campaignMode>2 || campaignTarget<0 || campaignGuard<0 ||
+           campaignPartyPhase<0 || campaignPartyPhase>8 || campaignSkip<0 || campaignSkip>1 ||
+           campaignSkipDelay<0 || campaignSkipDelay>5000 || campaignCapture<0 || campaignCapture>1 ||
+           campaignContactMs<0 || campaignContactMs>120000 ||
+           campaignTabCapture<0 || campaignTabCapture>1 ||
+           !missionCampaign.Configure(
+               static_cast<MissionCampaignObserver::Mode>(campaignMode),
+               static_cast<uint32_t>(campaignTarget),static_cast<uint32_t>(campaignGuard),
+               static_cast<uint32_t>(campaignPartyPhase),campaignSkip!=0,
+               static_cast<uint32_t>(campaignSkipDelay)) ||
+           !nativeHurtProbe.Configure(campaignMode==1 && campaignContactMs>0) ||
+           !nativeDeathProbe.ConfigureLocalBoundaryExport(campaignMode!=0))return false;
+        missionCampaignCapture=campaignCapture!=0;
+        missionCampaignContactMs=static_cast<uint32_t>(campaignContactMs);
+        missionCampaignTabCapture=campaignTabCapture!=0;
+        if(campaignMode) {
+            if(!missionGameModeId || missionBehaviorProfile || missionRespawns || friendsOnly ||
+               reviewFootage || !verifyQuietRuntime ||
+               (campaignMode==1 && expectedAi!=0 && expectedAi!=3) ||
+               (campaignMode==1 && campaignTabCapture && expectedAi!=3) ||
+               (campaignMode==1 && campaignTabCapture && !campaignCapture) ||
+               (campaignMode==2 && (expectedAi!=0 || campaignContactMs || campaignTabCapture)))return false;
+        } else if(campaignTarget || campaignGuard || campaignSkip || campaignCapture ||
+                  RunKeyPresent(job,L"mission_campaign_target_npc") ||
+                  RunKeyPresent(job,L"mission_campaign_guard_npc") ||
+                  RunKeyPresent(job,L"mission_campaign_party_phase") ||
+                  RunKeyPresent(job,L"mission_campaign_skip") ||
+                  RunKeyPresent(job,L"mission_campaign_skip_delay_ms") ||
+                  RunKeyPresent(job,L"mission_campaign_capture") ||
+                  RunKeyPresent(job,L"mission_campaign_contact_ms") ||
+                  RunKeyPresent(job,L"mission_campaign_tab_capture")) return false;
     }
+    if(!missionMode &&
+       (RunKeyPresent(job,L"mission_campaign") ||
+        RunKeyPresent(job,L"mission_campaign_target_npc") ||
+        RunKeyPresent(job,L"mission_campaign_guard_npc") ||
+        RunKeyPresent(job,L"mission_campaign_party_phase") ||
+        RunKeyPresent(job,L"mission_campaign_skip") ||
+        RunKeyPresent(job,L"mission_campaign_skip_delay_ms") ||
+        RunKeyPresent(job,L"mission_campaign_capture") ||
+        RunKeyPresent(job,L"mission_campaign_contact_ms") ||
+        RunKeyPresent(job,L"mission_campaign_tab_capture")))return false;
     if (!missionMode && !ReadPvpRoomTitle(job,narrowNonce,randomLoadout,expectedEnemies,expectedAllies,roomTitle)) return false;
     if (!missionMode && !ReadSealedAiTeamCounts(job,expectedAi,roomTitle,expectedAllies,expectedEnemies)) return false;
     if (roomSwitch) {
@@ -5308,11 +5386,30 @@ int __cdecl CreateMission(const SdgoGameTestContextV1* context) {
 // ending) every 4 s from the accepted start command to the natural end (not in the wait room).
 void CaptureImportedReviewFrame(const SdgoGameTestContextV1* context) {
     static uint64_t lastFrame=0;static uint32_t frames=0;
+    static uint64_t lastCampaignFastFrame=0;static uint32_t campaignVisual=0,campaignFrames=0;
     if(!missionGameModeId || missionBehaviorProfile || missionRespawns)return;
+    if(missionHurtCaptureTrigger && !missionHurtCaptureComplete)return;
     const uint64_t now=GetTickCount64();
     const uint32_t state=actions.OnboardingState().native_app_state;
     if(state==22 && rooms.BattleEndState().sequence==observedMissionEndBaseline)
         mapGateProbe.Poll(context,missionGameModeId,state);
+    if(missionCampaign.Enabled()) {
+        if(!missionCampaignCapture)return;
+        const uint32_t visual=missionCampaign.VisualSequence();
+        const bool changed=visual!=campaignVisual;
+        const bool fast=missionCampaign.FastCaptureActive() && now-lastCampaignFastFrame>=250;
+        if((state!=22 && !observedMissionStartedAt) || campaignFrames>=600 || (!changed && !fast))return;
+        const std::wstring folder=sdgo_test::directory+L"\\campaign-frames";
+        CreateDirectoryW(folder.c_str(),nullptr);
+        wchar_t label[64]{};
+        MultiByteToWideChar(CP_UTF8,0,missionCampaign.VisualLabel(),-1,label,64);
+        wchar_t name[128]{};
+        swprintf_s(name,L"\\frame-%04u-seq%04u-%ls.bmp",campaignFrames,visual,label[0]?label:L"campaign");
+        if(quietGraphics.CaptureNextFrame((folder+name).c_str())) {
+            ++campaignFrames;campaignVisual=visual;lastCampaignFastFrame=now;
+        }
+        return;
+    }
     const bool loading=observedMissionStartedAt && state!=18 && state!=6;
     if((state!=22 && !loading) || frames>=300 || now-lastFrame<4000)return;
     const std::wstring folder=sdgo_test::directory+L"\\import-frames";
@@ -5368,6 +5465,23 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
         expectedAi==0 && missionGameModeId &&
         !missionBehaviorProfile && !missionRespawns;
     if(returnedToWaitRoom || nativeResultObserved) {
+        if(missionCampaign.Enabled()) {
+            if(!nativeResultObserved || !ended.original_handler_completed || !returnedToWaitRoom)
+                return SDGO_GAME_TEST_WAIT;
+            const bool valid=observedMissionStartedAt && observedMissionGeneration &&
+                observedMissionRoom && ended.reply_opcode==0x0871;
+            char terminal[320]{};
+            sprintf_s(terminal,
+                "native campaign reached terminal handoff elapsed=%llu app=%u generation=%u room=%u end_sequence=%u/%u opcode=%04X result_raw=%u handler=%u",
+                static_cast<unsigned long long>(context->elapsed_ms),
+                player.native_app_state,observedMissionGeneration,observedMissionRoom,
+                ended.sequence,observedMissionEndBaseline,ended.reply_opcode,
+                ended.result_type,ended.original_handler_completed);
+            context->Observe(terminal);
+            context->Assert(valid,
+                "the campaign terminal handoff follows genuine battle entry, original 0871 handling and natural wait-room return");
+            return valid?SDGO_GAME_TEST_PASS:SDGO_GAME_TEST_FAIL;
+        }
         if(soloImportedMission) {
             if(!nativeResultObserved || !ended.original_handler_completed ||
                !returnedToWaitRoom)
@@ -5419,10 +5533,19 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
     }
     if(!missionSnapshotAvailable || !s.active)return SDGO_GAME_TEST_WAIT;
     if(s.room_mode!=missionMode || s.lua_pcall_error_count || s.native_exception_count){context->Assert(0,"whole native mission smoke observation remains error-free and same-mode");return SDGO_GAME_TEST_FAIL;}
+    if(!nativeDeathProbe.Observe(context))return SDGO_GAME_TEST_FAIL;
+    if(!missionCampaign.Poll(context,s,player.native_app_state,
+            player.profile_pilot_id,nativeDeathProbe))return SDGO_GAME_TEST_FAIL;
+    if(!nativeHurtProbe.Poll(context,nativeDeathProbe,
+            scoreboardInput.GameplayQueries(9),player.profile_pilot_id,
+            missionCampaign.CurrentMissionId(),missionCampaign.CurrentPhase()))
+        return SDGO_GAME_TEST_FAIL;
     if(!nativePlayerCombat.PollMission(
             context,s,observedMissionGeneration,
             observedMissionRoom,player.native_app_state,
             player.profile_pilot_id,scoreboardInput))
+        return SDGO_GAME_TEST_FAIL;
+    if(PollMissionHurtCapture(context)==SDGO_GAME_TEST_FAIL)
         return SDGO_GAME_TEST_FAIL;
     unsigned moved=0,targets=0;
     for(uint32_t i=0;i<s.ai_record_count && i<12;++i) {
@@ -5461,6 +5584,13 @@ int __cdecl ObserveMissionCombat(const SdgoGameTestContextV1* context) {
         s.human_participant_count,s.lua_pcall_error_count,s.lua_tick_count,
         soloImportedMission?1u:0u);
     context->Observe(message);
+    if(missionCampaign.Enabled()) {
+        context->Assert(s.lua_successful_tick_count>0,
+            "the native campaign advanced through successful original mission updates before the long-running flow case");
+        context->Observe(
+            "native campaign input and observers remain active through the natural imported-mission flow; no bounded-smoke finish is claimed here");
+        return SDGO_GAME_TEST_PASS;
+    }
     nativePlayerCombat.Finish(context,scoreboardInput);
     if(soloImportedMission) {
         context->Assert(s.ai_record_count==0 && s.spawned_wingman_count==0 && s.local_wingman_count==0 &&
@@ -5723,10 +5853,161 @@ int __cdecl ObserveMissionRespawns(const SdgoGameTestContextV1* context) {
     context->Assert(0,"same-run respawn probe identifies a real wingman of this exact mission");return SDGO_GAME_TEST_FAIL;
 }
 const SdgoGameTestCaseV1 missionRespawnCase={"mission.respawn",360000,&ObserveMissionRespawns};
+int PollMissionHurtCapture(const SdgoGameTestContextV1* context) {
+    if (!nativeHurtProbe.Enabled() || !context) return SDGO_GAME_TEST_PASS;
+    const uint32_t trigger = nativeHurtProbe.CaptureTriggerSequence();
+    if (trigger && trigger != missionHurtCaptureTrigger) {
+        missionHurtCaptureTrigger = trigger;
+        missionHurtCaptureFrame = 0;
+        missionHurtCaptureRequested = false;
+        missionHurtCaptureComplete = false;
+        missionHurtCaptureStartedAt = context->elapsed_ms;
+        missionHurtCaptureLastAt = 0;
+        context->Observe(
+            "fresh exact local wall HP loss observed; starting a real-backbuffer burst while the native hurt lifecycle is independently paired");
+    }
+    if (!missionHurtCaptureTrigger || missionHurtCaptureComplete)
+        return SDGO_GAME_TEST_PASS;
+    constexpr uint32_t kFrames = 24;
+    constexpr uint64_t kIntervalMs = 42;
+    if (missionHurtCaptureFrame >= kFrames) {
+        missionHurtCaptureComplete = true;
+        return SDGO_GAME_TEST_PASS;
+    }
+    if (missionHurtCaptureFrame &&
+        context->elapsed_ms - missionHurtCaptureLastAt < kIntervalMs)
+        return SDGO_GAME_TEST_WAIT;
+    if (!missionHurtCaptureRequested) {
+        const std::wstring folder = sdgo_test::directory + L"\\campaign-hurt";
+        if (!CreateDirectoryW(folder.c_str(), nullptr) &&
+            GetLastError() != ERROR_ALREADY_EXISTS) {
+            context->Assert(0, "the owned native hurt-frame output directory is writable");
+            return SDGO_GAME_TEST_FAIL;
+        }
+        wchar_t name[64]{};
+        swprintf_s(name, L"\\hurt-%02u.bmp", missionHurtCaptureFrame);
+        if (!quietGraphics.CaptureNextFrame((folder + name).c_str()))
+            return SDGO_GAME_TEST_WAIT;
+        missionHurtCaptureRequested = true;
+        return SDGO_GAME_TEST_WAIT;
+    }
+    const HRESULT result = quietGraphics.CaptureFrameResult();
+    if (result == E_PENDING) return SDGO_GAME_TEST_WAIT;
+    context->Assert(SUCCEEDED(result),
+                    "each movement-hurt frame reads the genuine native backbuffer before Present");
+    if (FAILED(result)) return SDGO_GAME_TEST_FAIL;
+    ++missionHurtCaptureFrame;
+    missionHurtCaptureRequested = false;
+    missionHurtCaptureLastAt = context->elapsed_ms;
+    if (missionHurtCaptureFrame == kFrames) {
+        missionHurtCaptureComplete = true;
+        char message[192]{};
+        sprintf_s(message,
+                  "native movement-hurt burst captured frames=%u elapsed_ms=%llu",
+                  missionHurtCaptureFrame,
+                  static_cast<unsigned long long>(
+                      context->elapsed_ms - missionHurtCaptureStartedAt));
+        context->Observe(message);
+        return SDGO_GAME_TEST_PASS;
+    }
+    return SDGO_GAME_TEST_WAIT;
+}
+// The full native campaign holds mapped TAB only long enough for the production
+// PvE roster Mod to synchronize and render the real one-human/three-AI rows.
+// The backbuffer capture is requested while TAB remains held, then input is
+// released after the capture completes. No roster row or score value is written.
+int PollMissionCampaignTab(const SdgoGameTestContextV1* context) {
+    if (!missionCampaignTabCapture || missionCampaignTabComplete)
+        return SDGO_GAME_TEST_PASS;
+    // Let the native MISSION START and the initial contact speech clear before
+    // recording the roster. Keep all game input and drawing paths unchanged.
+    if (context && context->elapsed_ms < 18000) return SDGO_GAME_TEST_WAIT;
+    if (!context || !getPveAiScoreboardStatus) {
+        StopMissionCampaignInputs();
+        if (context) context->Assert(0,
+            "the production PvE AI TAB roster observation export is available");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    SdgoPveAiScoreboardStatusV1 status{
+        sizeof(SdgoPveAiScoreboardStatusV1),
+        SDGO_PVE_AI_SCOREBOARD_STATUS_VERSION};
+    if (!getPveAiScoreboardStatus(&status) ||
+        status.size != sizeof(status) ||
+        status.version != SDGO_PVE_AI_SCOREBOARD_STATUS_VERSION) {
+        StopMissionCampaignInputs();
+        context->Assert(0,
+            "the production PvE AI TAB roster returned its exact V1 status ABI");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if (!missionCampaignTabHeld) {
+        missionCampaignTabQueryBaseline = scoreboardInput.Queries();
+        missionCampaignTabRenderBaseline = status.render_count;
+        missionCampaignTabVisibleBaseline = status.visible_render_count;
+        scoreboardInput.Hold(true);
+        missionCampaignTabHeld = true;
+        context->Observe(
+            "campaign held mapped native TAB while waiting for the production PvE roster renderer");
+        return SDGO_GAME_TEST_WAIT;
+    }
+    const bool rendered = status.active && status.human_rows == 1 &&
+        status.ai_rows == 3 && status.total_rows == 4 &&
+        status.sync_count && status.panel_visible && status.panel_state == 2 &&
+        status.render_count > missionCampaignTabRenderBaseline &&
+        status.visible_render_count > missionCampaignTabVisibleBaseline &&
+        status.visible_text_render_count && status.named_ai_rows == 3 &&
+        status.hp_resolve_count &&
+        scoreboardInput.Queries() > missionCampaignTabQueryBaseline;
+    if (!rendered) return SDGO_GAME_TEST_WAIT;
+    if (!missionCampaignTabRequested) {
+        wchar_t name[80]{};
+        if (missionCampaignTabFrames)
+            swprintf_s(name, L"\\campaign-tab-scoreboard-%02u.bmp", missionCampaignTabFrames);
+        else wcscpy_s(name, L"\\campaign-tab-scoreboard.bmp");
+        const std::wstring path = sdgo_test::directory + name;
+        if (!quietGraphics.RequestFrameCapture(path.c_str()))
+            return SDGO_GAME_TEST_WAIT;
+        missionCampaignTabRequested = true;
+        context->Observe(
+            "campaign requested a genuine backbuffer capture with one human and three rendered AI TAB rows");
+        return SDGO_GAME_TEST_WAIT;
+    }
+    HRESULT result = E_PENDING;
+    const LONG capture = quietGraphics.FrameCaptureState(&result);
+    if (capture == QuietFrameCapture::Failed) {
+        StopMissionCampaignInputs();
+        context->Assert(0,
+            "the genuine PvE TAB backbuffer capture completed successfully");
+        return SDGO_GAME_TEST_FAIL;
+    }
+    if (capture != QuietFrameCapture::Complete)
+        return SDGO_GAME_TEST_WAIT;
+    ++missionCampaignTabFrames;
+    if (missionCampaignTabFrames < 8) {
+        missionCampaignTabRequested = false;
+        return SDGO_GAME_TEST_WAIT;
+    }
+    scoreboardInput.Hold(false);
+    missionCampaignTabHeld = false;
+    missionCampaignTabComplete = SUCCEEDED(result);
+    context->Assert(missionCampaignTabComplete,
+        "the genuine PvE TAB backbuffer capture completed successfully");
+    if (!missionCampaignTabComplete) return SDGO_GAME_TEST_FAIL;
+    char message[256]{};
+    sprintf_s(message,
+        "campaign native TAB captured humans=%u ai=%u total=%u sync=%u render=%u visible=%u state=%u visible_renders=%u text=%u names=%u hp=%u input_queries=%u",
+        status.human_rows, status.ai_rows, status.total_rows,
+        status.sync_count, status.render_count, status.panel_visible,
+        status.panel_state, status.visible_render_count,
+        status.visible_text_render_count, status.named_ai_rows, status.hp_resolve_count,
+        scoreboardInput.Queries() - missionCampaignTabQueryBaseline);
+    context->Observe(message);
+    return SDGO_GAME_TEST_PASS;
+}
+
 // Imported missions: after the bounded combat smoke, follow the genuine mission to its natural
 // end (all phases, cutscenes and the native result) and the return to the wait room.
 int __cdecl ObserveImportedMissionFlow(const SdgoGameTestContextV1* context) {
-    static bool ended=false;
+    static bool ended=false,finalized=false;
     static uint64_t lastProgress=0;
     SdgoMissionAiClientSnapshotV1 s{};
     const bool snapshot=MissionSnapshot(s);
@@ -5734,10 +6015,39 @@ int __cdecl ObserveImportedMissionFlow(const SdgoGameTestContextV1* context) {
         char failure[160];sprintf_s(failure,"imported mission error lua=%u exception=%u",s.lua_pcall_error_count,s.native_exception_count);
         context->Observe(failure);
         context->Assert(0,"the imported mission runs to its end without Lua errors or native exceptions");
+        StopMissionCampaignInputs();
         return SDGO_GAME_TEST_FAIL;
     }
     const auto player=actions.OnboardingState();
     const auto end=rooms.BattleEndState();
+    if(missionCampaign.Enabled() && snapshot && s.active && player.native_app_state==22) {
+        if(!nativeDeathProbe.Observe(context)) {
+            StopMissionCampaignInputs();
+            return SDGO_GAME_TEST_FAIL;
+        }
+        if(!missionCampaign.Poll(context,s,player.native_app_state,
+                player.profile_pilot_id,nativeDeathProbe)) {
+            StopMissionCampaignInputs();
+            return SDGO_GAME_TEST_FAIL;
+        }
+        if(!nativePlayerCombat.PollMission(
+                context,s,observedMissionGeneration,observedMissionRoom,
+                player.native_app_state,player.profile_pilot_id,scoreboardInput)) {
+            StopMissionCampaignInputs();
+            return SDGO_GAME_TEST_FAIL;
+        }
+        if(!nativeHurtProbe.Poll(context,nativeDeathProbe,
+                scoreboardInput.GameplayQueries(9),player.profile_pilot_id,
+                missionCampaign.CurrentMissionId(),missionCampaign.CurrentPhase()) ||
+           PollMissionHurtCapture(context)==SDGO_GAME_TEST_FAIL) {
+            StopMissionCampaignInputs();
+            return SDGO_GAME_TEST_FAIL;
+        }
+        if(PollMissionCampaignTab(context)==SDGO_GAME_TEST_FAIL) {
+            StopMissionCampaignInputs();
+            return SDGO_GAME_TEST_FAIL;
+        }
+    }
     CaptureImportedReviewFrame(context);
     if(!ended) {
         // the movable area the mission keeps the local player in, and where the player is (logged on change)
@@ -5780,8 +6090,24 @@ int __cdecl ObserveImportedMissionFlow(const SdgoGameTestContextV1* context) {
             end.reply_opcode,end.result_type,end.native_app_state);
         context->Observe(message);
         context->Assert(end.reply_opcode==0x0871,"the original client consumes the imported mission's genuine end reply");
+        context->Assert(end.original_handler_completed,
+            "the original client completed its genuine imported-mission end handler");
+        if(missionCampaign.Enabled() && !finalized) {
+            scoreboardInput.Hold(false);
+            missionCampaign.Finish(context);
+            nativeHurtProbe.Finish(context);
+            if (nativeHurtProbe.Enabled()) context->Assert(missionHurtCaptureComplete,
+                "the exact native movement-hurt lifecycle produced the complete real-backbuffer burst");
+            nativePlayerCombat.Finish(context,scoreboardInput);
+            nativeDeathProbe.Finish(context);
+            if (missionCampaignTabCapture)
+                context->Assert(missionCampaignTabComplete,
+                    "the full campaign captured the production native TAB roster before its natural end");
+            finalized=true;
+        }
     }
     if(player.native_app_state!=18)return SDGO_GAME_TEST_WAIT;
+    if(missionCampaign.Enabled() && !finalized)return SDGO_GAME_TEST_WAIT;
     context->Observe("imported mission returned to the native wait room");
     return SDGO_GAME_TEST_PASS;
 }
@@ -6583,18 +6909,33 @@ extern "C" __declspec(dllexport) LONG __cdecl SdgoGameTestCaptureStatusV1(HRESUL
 }
 SDGO_MOD_ENTRY {
     if (!sdgo_test::Open(api, mod, "client")) return 0;
-    sdgo_test::beforeFinish=[] {PublishQuietSocketReceipt(true);};
+    sdgo_test::beforeFinish=[] {
+        StopMissionCampaignInputs();
+        PublishQuietSocketReceipt(true);
+    };
     const bool loaded = LoadPlan();
     if (!nativeRecordLifecycleIds.empty() && !nativeRecordLifecycle.Install(api,mod,
         sdgo_test::runId,sdgo_test::directory+L"\\native-record-lifecycle.json",nativeRecordLifecycleIds))return 0;
     sdgo_test::nativeShutdownAfterSuccess=!nativeRecordLifecycleIds.empty();
     if (!nativeDeathProbe.Install(api,mod)) return 0;
+    if (!nativeHurtProbe.Install(api,mod)) return 0;
     if (!nativeAiLives.Install(api,mod)) return 0;
     const int boundaryReviewSetting=api->SettingInt(mod,"BoundaryContactReview",0);
     if(boundaryReviewSetting<0 || boundaryReviewSetting>1) return 0;
     boundaryContactReview=boundaryReviewSetting!=0;
     if(boundaryContactReview && api->SettingInt(mod,"BattlePlayerCombat",0)!=1) return 0;
-    if (!nativePlayerCombat.Install(api,mod) || !mapGateProbe.Install(api,mod)) return 0;
+    if (!nativePlayerCombat.Install(api,mod) || !mapGateProbe.Install(api,mod) ||
+        !missionCampaign.Install(api,mod)) return 0;
+    if(missionCampaign.Enabled() &&
+       (!nativeDeathProbe.Enabled() ||
+        (missionCampaign.CampaignMode()==MissionCampaignObserver::kFullEight &&
+         !nativeHurtProbe.Enabled()) ||
+        !nativePlayerCombat.Enabled() ||
+        !nativePlayerCombat.ContinuousPrimaryEnabled() ||
+        nativePlayerCombat.SpecialEnabled() ||
+        (missionCampaign.CampaignMode()==MissionCampaignObserver::kFullEight &&
+         ((missionCampaignContactMs!=0) != nativePlayerCombat.MissionAdvanceEnabled() ||
+          nativePlayerCombat.MissionAdvanceDurationMs()!=missionCampaignContactMs))))return 0;
     nativePlayerCombat.SetSpecialEventSource(&ReadOcSpecialEvents);
     reviewCamera.Install(api,mod);
     if (!apsalus_probe::packetObserver.Install(api,mod)) return 0;
@@ -6714,6 +7055,15 @@ SDGO_MOD_ENTRY {
         getAceMissionAnnouncement=reinterpret_cast<SdgoAceAiGetAnnouncementSnapshotV1Fn>(
             GetProcAddress(missionAi,SDGO_ACE_AI_MISSION_ANNOUNCEMENT_EXPORT));
         if(!getMissionSnapshot)sdgo_test::Fail("production native mission observation export is unavailable");
+        if(missionCampaignTabCapture) {
+            const HMODULE roster=GetModuleHandleW(L"pve_ai_scoreboard.dll");
+            getPveAiScoreboardStatus=roster
+                ? reinterpret_cast<SdgoPveAiScoreboardGetStatusV1Fn>(
+                    GetProcAddress(roster,SDGO_PVE_AI_SCOREBOARD_STATUS_EXPORT))
+                : nullptr;
+            if(!getPveAiScoreboardStatus)
+                sdgo_test::Fail("production PvE AI TAB roster observation export is unavailable");
+        }
         if(missionBehaviorProfile) {
             getMissionBehaviorStatus=
                 reinterpret_cast<SdgoMissionBehaviorClientGetStatusV1Fn>(

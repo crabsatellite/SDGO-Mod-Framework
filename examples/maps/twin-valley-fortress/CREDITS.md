@@ -4,6 +4,8 @@ Twin Valley Fortress is an example map for the SDGO Mod Framework map import. Te
 
 The named gate leaf is authored box geometry with normals and UVs, fitted to the existing gate opening. It reuses the blast gate's existing CC0 material atlas; it adds no game-extracted model or new raster artwork.
 
+The Odessa fortress shield is authored box geometry with a generated grid texture created for this example. Its material is invisible at rest; contact uses the game's native effects. It adds no game-extracted model or private raster artwork.
+
 | Asset | License | Source |
 | --- | --- | --- |
 | Barrel_01 | CC0-1.0 | https://polyhaven.com/a/Barrel_01 |
