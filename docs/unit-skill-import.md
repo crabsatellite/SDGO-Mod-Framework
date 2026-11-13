@@ -274,7 +274,84 @@ Manager does not start or stop native services. Players install the matching cli
 client update; client installation does not execute server SQL. Restart the group and check the real name,
 description, icon, activation and removal. This does not create shop products, capsule entries or unit grants.
 
+## Special weapons and attacks after transformation
+
+A player's “special skill” may be a weapon callback rather than a kind-13 passive. Start with the live form's
+`WeaponNumber_1/2/3/FatalAttack` and its complete 1,871-byte weapon record:
+
+| Use | Required content |
+| --- | --- |
+| Ordinary ranged callback | Function at `+1569`, a `ranged` binding, the actual native function and its resources |
+| Special ranged callback | Function at `+1669`, a `special_ranged` binding and its dependencies |
+| Missile or other initializer | Function at `+1771`, an `initializer` binding and its dependencies |
+| Weapon `SpecialFeature` | Complete kind-12 / 1,559-byte record (`native-type12-1559-v1`) and effect dependencies |
+| Funnel / fang | Kind 11, paired server fields, models/animations, launch, hit/return and destruction |
+| Native fixed resources or IDs | The consumer's specific contract; see [resource bindings](resource-bindings.md) and [skill identities](skill-identity.md) |
+
+For a fictional example, the transformed form of “Example Equipment Unit” uses `example_Burst`, whose body reads
+`fxrs/example_trace.zfx`. A registered function does not prove that this effect was installed. The publication also
+needs the ZFX, its textures and mesh models, and those models' resources, or verified original bytes from the owner's
+configured compatible target. Checking visible paths in the weapon BIN alone misses resources inside script bodies.
+
+Include resources in the same publication's archive and exact hash manifest. Use independent names and update the
+actual script constants. Files left only in an author's local folder are unavailable to players. Removing the effect,
+clearing a skill or substituting an arbitrary stock effect does not establish the same behavior.
+
+`owner.units.native_programs.literal_resource_references(program_bytes)` reads complete serialized path constants
+from target Lua 5.0 bodies and excludes debug source names. `validate_resource_dependencies(bundle, weapons,
+read_resource, catalog_sha256=...)` verifies programme/weapon/catalog bindings and returns hashes of bytes read from
+the actual target. Manager batch preflight and apply check these references before SQL writes. Original reuse needs
+the configured compatible client. Computed paths, native fixed resources, action events and model nodes still need
+their own dependency contracts and runtime checks; path validation is not combat acceptance.
+
+Native acceptance follows the actual operation: commit R transformation, select the target form's slot, verify the
+bound weapon ID, complete its attack and check ammunition or melee events, effects, hits and movement. Wait for later
+segments and cleanup; then test the reverse transform, death/respawn and normal battle return. Transform/weapon-1
+checks require GameTest client 0.1.39 or newer. Earlier SDKs do not provide equivalent weapon-binding/ammunition proof.
+After changing authoring inputs, use an SDK-supported content installation input or prepare a new candidate and read
+back its sealed hashes. `reuse_prepared` retains client content and does not synchronize later author-template edits.
+
 ## When an additional adapter is needed
+
+### Ordinary skill slots and compatibility aliases
+
+A kind-13 record does not choose its actor slot. The supported client's native classifier treats IDs in
+`1–75000`, `3220001–3225000`, `3473001–3478000`, `3558001–3559000`, and `3613002–3615999` as ordinary
+skills. Other positive IDs enter the separate extra-skill path. Use `owner.units.skill_slots.ordinary(id)`;
+batch import refuses an extra-slot ID in `SkillNumber_1` or `SkillNumber_2`.
+
+For example, an author moving a fictional extra-slot skill into slot 1 allocates an unused ordinary ID, clones
+the complete record, changes its first DWORD and any explicitly mapped linked-skill field at byte 354, and
+rebinds the intended unit fields. Keep activation conditions, effect parameters, dispatch, text, icon frame and
+resource references. Check the native global tree, every installed content scope, shipped presets and server SQL
+for collisions; a free entry in `0253` alone is insufficient.
+
+For a complete, already validated 1132-byte record, the client-side clone is limited to these typed fields:
+
+```python
+import struct
+from owner.units.skill_slots import ordinary
+
+assert len(original_record) == 1132 and ordinary(allocated_id)
+clone = bytearray(original_record)
+struct.pack_into("<I", clone, 0, allocated_id)
+linked = struct.unpack_from("<I", clone, 354)[0]
+if linked in linked_id_map:
+    struct.pack_into("<I", clone, 354, linked_id_map[linked])
+ordinary_record = bytes(clone)
+```
+
+`allocated_id` and `linked_id_map` come from the checked allocation plan. This snippet changes no SQL or files and
+does not reserve IDs; complete the paired transaction and sidecar steps below before installing the clone.
+
+If the old ID may be referenced elsewhere, retain its record, server row, ledger and atlas as a compatibility
+alias. Clone the ordinary linked graph without rewriting the old graph. Regenerate the catalog, programme and
+atlas bindings, and blueprint availability. In one stopped-server transaction, insert the paired owned skill
+definitions, update the intended owned unit references and ownership hashes, and read back all changes. Reject
+unowned IDs or changed preimages, roll back on failure, and install the matching client content before restarting.
+Do not rewrite player loadouts or numerically replace arbitrary Lua constants. Any fixed-ID effect additionally
+needs its specific adapter and host authority. Native tests must observe activation in the intended ordinary slot,
+linked effects, transformation and death/respawn; record registration alone does not prove these behaviors.
 
 - Native data-driven combinations use the record/resource/server-definition route above. An independent icon needs
   a valid SPR/TXR and atlas binding.

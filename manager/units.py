@@ -183,7 +183,10 @@ class Units(Provider):
         if method == 'POST' and path == '/api/units/batch/register':
             return self.register_batch(self._batch_folder(body))
         if method == 'POST' and path == '/api/units/batch/preflight':
-            return {'preflight': batch_server.preflight(self._batch_folder(body), self._batch_server_ini()), 'changes_applied': False}
+            from owner.units.assets import Baseline
+            client=self.config.get('client')
+            return {'preflight': batch_server.preflight(self._batch_folder(body), self._batch_server_ini(),
+                    baseline=Baseline(client) if client else None), 'changes_applied': False}
         if method == 'POST' and path == '/api/units/batch/readback':
             return {'readback': batch_server.readback(self._batch_folder(body), self._batch_server_ini()), 'changes_applied': False}
         if method == 'POST' and path == '/api/units/batch/apply':

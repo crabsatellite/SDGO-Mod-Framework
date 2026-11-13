@@ -81,6 +81,21 @@ def attachment(manifest,files):
 
 
 class NativeContent(unittest.TestCase):
+    def test_complete_kind12_is_carried_as_a_typed_dependency_without_actor_authority(self):
+        manifest,files=fixture();raw=struct.pack('<I',59051)+bytes(1555)
+        member='dependencies/example-special-feature.bin';files[member]=raw
+        manifest['records'].append({'kind':12,'id':59051,'profile':'native-type12-1559-v1','member':member,'sha256':sha(raw)})
+        bindings,packed=bind(manifest,files);result=validate_project_bindings(bindings,files=packed)[0]
+        self.assertEqual(1,result['summary']['special_features']);self.assertEqual(0,result['summary']['unsupported_records'])
+        self.assertEqual('record-transport-only',result['records'][-1]['consumer_scope'])
+        self.assertFalse(result['native_registration_authorized']);self.assertFalse(result['runtime_authority_issued'])
+        for changed in (raw[:-1],raw[:4]+b'\1'+raw[5:]):
+            with self.subTest(bytes=len(changed)):
+                data=dict(files);data[member]=changed;bad=copy.deepcopy(manifest);bad['records'][-1]['sha256']=sha(changed)
+                request,payload=bind(bad,data)
+                with self.assertRaisesRegex(ValueError,'complete record/profile'):
+                    validate_project_bindings(request,files=payload)
+
     def test_complete_typed_records_and_resources_are_read_without_issuing_authority(self):
         manifest,files=fixture();bindings,files=bind(manifest,files)
         result=validate_project_bindings(bindings,files=files)[0]

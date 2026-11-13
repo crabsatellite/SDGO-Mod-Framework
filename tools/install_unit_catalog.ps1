@@ -83,10 +83,13 @@ function Assert-ResourceOverlay($Copies, $OverlayPaths) {
     $section = Get-IniSection $config 'runtime'
     $values = @{}
     foreach ($line in ($section -split "`r?`n")) {
-        if ($line -match '^([a-z_0-9]+)=(.*)$') {
+        if ($line -match '^\s*([a-z_0-9]+)\s*=(.*)$') {
             if ($values.ContainsKey($Matches[1])) { throw 'Duplicate resource overlay setting' }
             $values[$Matches[1]] = $Matches[2].Trim()
         }
+    }
+    foreach ($required in @('schema','index','archive','index_sha256','archive_sha256')) {
+        if (-not $values.ContainsKey($required)) { throw "Resource overlay setting is missing: $required" }
     }
     if ($values.schema -cne '1' -or $values.index -cne 'resources.zdx' -or
         $values.archive -cne 'resources.zpk') { throw 'Unsupported unit resource overlay configuration' }

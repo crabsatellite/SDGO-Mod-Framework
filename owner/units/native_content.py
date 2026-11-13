@@ -16,7 +16,8 @@ from .codec import scan_resource_references, _utf16
 from .profiles.skill_target_1132 import recover_source_record
 
 SCHEMA='sdgo.unit-native-content/1'
-PROFILES={13:('native-type13-1132-v1',1132),11:('native-type11-732-v1',732)}
+PROFILES={13:('native-type13-1132-v1',1132),11:('native-type11-732-v1',732),
+          12:('native-type12-1559-v1',1559)}
 PARTS={'server_skills','server_funnels','skill_atlases','skill_identities','source_evidence'}
 
 
@@ -118,7 +119,7 @@ def validate_project_bindings(value,*,files):
         records=manifest['records'];resources=manifest['resources'];evidence=manifest.get('evidence',[])
         if (not isinstance(records,list) or len(records)>4096 or not isinstance(resources,list) or len(resources)>512 or
                 not isinstance(evidence,list) or len(evidence)>512):raise ValueError('native content declaration count budget')
-        members={binding['manifest_path']};raw_records={13:{},11:{}};summaries=[];issues=[];direct_refs=set()
+        members={binding['manifest_path']};raw_records={kind:{}for kind in PROFILES};summaries=[];issues=[];direct_refs=set()
         def issue(code,message,level='required'):
             issues.append({'code':code,'message':message,'level':level,'field':'native_content'})
         for row in records:
@@ -147,6 +148,7 @@ def validate_project_bindings(value,*,files):
                     icon_frame=struct.unpack_from('<H',raw,426)[0],linked_skill=struct.unpack_from('<I',raw,354)[0])
                 if raw[1131]>3:issue('native_dispatch',f"技能 {identity} 的原生调度值 {raw[1131]} 尚未支持；原值已保留",'error')
             elif known and kind==11:entry.update(name='浮游定义 '+str(identity),funnel_prop=raw[5])
+            elif known and kind==12:entry.update(name='武器特殊效果定义 '+str(identity),consumer_scope='record-transport-only')
             else:
                 entry.update(name='待适配原生定义 '+str(identity))
                 issue('native_profile',f'原生类型 {kind}／{row["profile"]} 尚未支持；完整 {len(raw)} 字节资料已保留','error')
@@ -239,7 +241,7 @@ def validate_project_bindings(value,*,files):
         members_used.update(members)
         result.append({'binding':binding,'manifest':manifest,'members':members,'records':summaries,'resources':resource_rows,'components':parts,
             'direct_resource_refs':sorted(direct_refs),'requirements':issues,
-            'summary':{'skills':len(raw_records[13]),'funnels':len(raw_records[11]),'resources':len(resource_rows),
+            'summary':{'skills':len(raw_records[13]),'funnels':len(raw_records[11]),'special_features':len(raw_records[12]),'resources':len(resource_rows),
                 'unsupported_records':sum(not row['layout_supported'] for row in summaries),
                 'server_skills':'server_skills' in parts,'server_funnels':'server_funnels' in parts,'skill_atlases':'skill_atlases' in parts,
                 'identity_bindings':len(parts.get('skill_identities',{}).get('bindings',[]))},

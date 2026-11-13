@@ -34,6 +34,28 @@ def texture(color='red', fmt='JPEG'):
 
 
 class EffectResources(unittest.TestCase):
+    def test_known_final_emitter_eof_preserves_exact_short_source(self):
+        short=effect(emitter_type=1)[:-11]
+        parsed=texture_carriers(short)
+        self.assertEqual('native-final-emitter-subdivision-eof-v1',parsed['tail_profile'])
+        self.assertEqual(len(short),parsed['parsed_bytes'])
+        self.assertEqual([],parsed['models'])
+        output=scope_textures('example',{'fxrs/example_short.zfx':short},lambda _:texture(),lambda _:None)
+        rewritten=output['files'][output['manifest']['effects'][0]['target']]
+        self.assertEqual(len(short),len(rewritten))
+        self.assertEqual(parsed['tail_profile'],texture_carriers(rewritten)['tail_profile'])
+        for bad in (short[:-1],short+b'\0',effect(emitter_type=2,model=b'unit.mod')[:-11]):
+            with self.subTest(bytes=len(bad)),self.assertRaises(ValueError):texture_carriers(bad)
+
+    def test_source_plus_leaf_is_scoped_without_changing_public_path_grammar(self):
+        raw=effect(b'example+1.txr')
+        self.assertEqual('txrs/example+1.txr',texture_carriers(raw)['textures'][0]['texture'])
+        seen=[]
+        def read(path):seen.append(path);return texture()
+        output=scope_textures('example',{'fxrs/example_plus.zfx':raw},read,lambda _:None)
+        self.assertEqual(['txrs/example+1.txr'],seen)
+        self.assertTrue(all('+'not in path for path in output['files']))
+
     def test_typed_carrier_stops_at_first_nul_and_keeps_post_nul_evidence(self):
         raw = effect(b'2162.txr\0ignored.txr')
         carrier = texture_carriers(raw)['textures'][0]

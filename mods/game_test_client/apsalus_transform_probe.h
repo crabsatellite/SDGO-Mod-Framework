@@ -3,6 +3,7 @@
 #include "scoreboard_actions.h"
 #include "unit_transform_path.h"
 #include "native_transform_packets.h"
+#include "../battle_ai/native_capabilities.h"
 
 // Opt-in native GameTest scenario, sealed in the copied observer manifest.
 // Uses the normal, owned unit selected by
@@ -27,12 +28,14 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     // Both original input consumers take the real InputSlotSystem on stack
     // and return with RET 4; their CUnit owner is ECX.
     using InputBusiness = void(__thiscall*)(unsigned char*, void*);
+    using WeaponInput = void(__thiscall*)(unsigned char*, void*, int);
     using NativeTick = void(__thiscall*)(unsigned char*, void*);
     static auto manager = reinterpret_cast<void**>(api->Symbol(mod, "game.unit_manager"));
     static auto find = reinterpret_cast<Find>(api->Symbol(mod, "um.find_object"));
     static auto request = reinterpret_cast<Request>(api->Symbol(mod, "test.apsalus_transform_request"));
     static auto moveInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_move_input"));
     static auto fireInput = reinterpret_cast<InputBusiness>(api->Symbol(mod, "test.apsalus_primary_input"));
+    static auto weaponInput = reinterpret_cast<WeaponInput>(api->Symbol(mod, "test.player_weapon_input"));
     static unsigned issued = 0, completed = 0, initialId = 0, lastMode = ~0u, lastId = 0;
     static unsigned issuedBank = 0;
     static sdgo_test::transforms::Path path{};
@@ -40,10 +43,14 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     static uint64_t admissionAt = 0, lastRequestAt = 0, deniedObservationAt = 0;
     static unsigned controlsVerified = 0;
     static uint64_t controlAt = 0, settleAt = 0;
+    static uint64_t fireAt = 0;
+    static unsigned sampledWeapon = 0;
+    static int initialAmmo = 0, previousAmmo = 0;
+    static bool ammoSpent = false, weaponBound = false;
     static float baseline[3] = {};
     static bool moved = false, attacked = false;
     static uint32_t moveQueries = 0, fireQueries = 0;
-    if (!manager || !find || !request || !moveInput || !fireInput || !*manager) {
+    if (!manager || !find || !request || !moveInput || !fireInput || !weaponInput || !*manager) {
         context->Assert(0, "Apsalus probe requires verified native request and unit-manager bindings");
         return SDGO_GAME_TEST_FAIL;
     }
@@ -120,11 +127,46 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         if (!controlAt) {
             for (unsigned i = 0; i < 3; ++i) baseline[i] = position[i];
             moved = attacked = false; controlAt = context->elapsed_ms;
+            fireAt = 0; sampledWeapon = 0; ammoSpent = weaponBound = false;
             moveQueries = input.GameplayQueries(0); fireQueries = input.GameplayQueries(9);
         }
-        const uint64_t elapsed = context->elapsed_ms - controlAt;
-        input.HoldGameplay(0, elapsed < 1500);
-        input.HoldGameplay(9, elapsed < 1500);
+        battle_ai::native::Capabilities caps{};
+        const unsigned expectedWeapon = *reinterpret_cast<unsigned*>(spec + 585);
+        if (!battle_ai::native::ReadCapabilities(unit, caps) || caps.unitId != id ||
+            caps.selectedSlot != 0 || !caps.weapons[0].valid || caps.weapons[0].id != expectedWeapon) {
+            input.HoldGameplay(0, false); input.HoldGameplay(9, false);
+            input.HoldGameplay(14, false); input.HoldGameplay(14, true);
+            weaponInput(unit, nativeInput, 0);
+            reinterpret_cast<NativeTick>((*reinterpret_cast<void***>(attack))[1])(attack, unit + 0xdc0);
+            if (context->elapsed_ms - controlAt > 6000) {
+                input.HoldGameplay(14, false);
+                context->Assert(0,"after native R commit the original weapon-selection input did not bind the target form's weapon 1");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            return SDGO_GAME_TEST_WAIT;
+        }
+        input.HoldGameplay(14, false);
+        const std::size_t bank = caps.alternate ? 0x56c : 0x24c;
+        int16_t ammo = 0;
+        if (!battle_ai::native::detail::Read(attack, bank, ammo)) return SDGO_GAME_TEST_WAIT;
+        if (!weaponBound) {
+            weaponBound = true; sampledWeapon = expectedWeapon; initialAmmo = previousAmmo = ammo;
+            fireAt = context->elapsed_ms;
+            char message[192];sprintf_s(message,"after R native weapon 1 bound: unit=%u bank=%u slot=0 weapon=%u ammo=%d",id,unsigned(caps.alternate),sampledWeapon,initialAmmo);
+            context->Observe(message);
+        }
+        if (ammo < previousAmmo) {
+            ammoSpent = true;
+            char message[192];sprintf_s(message,"after R native weapon 1 ammunition consumed: unit=%u weapon=%u before=%d after=%d",id,sampledWeapon,previousAmmo,ammo);
+            context->Observe(message);
+        }
+        previousAmmo = ammo;
+        const uint64_t elapsed = context->elapsed_ms - fireAt;
+        // Complete the stationary primary attack before checking movement. Some
+        // beam scripts emit their last effect several animation events later;
+        // entering an attack state while moving does not prove that shot ran.
+        input.HoldGameplay(0, elapsed >= 10000 && elapsed < 11500);
+        input.HoldGameplay(9, elapsed < 8000);
         // A hidden client does not receive foreground keyboard polling. Drive
         // the same native keyboard/left-button consumers and the same FSM
         // dispatch used by CUnit's native command-0x1d path, on its real control
@@ -141,13 +183,13 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         const auto state = reinterpret_cast<uintptr_t>(*reinterpret_cast<void**>(attack + 4));
         const auto first = reinterpret_cast<uintptr_t>(attack + 0x20);
         attacked = attacked || (state > first && state < first+0x200 && input.GameplayQueries(9)>fireQueries);
-        if (elapsed < 2500) return SDGO_GAME_TEST_WAIT;
+        if (elapsed < 12500) return SDGO_GAME_TEST_WAIT;
         input.HoldGameplay(0, false); input.HoldGameplay(9, false);
-        if (!moved || !attacked) {
-            char message[192];sprintf_s(message,"Apsalus form %u native controls: moved=%u attack_state=%u move_queries=%u fire_queries=%u",id,moved,attacked,input.GameplayQueries(0)-moveQueries,input.GameplayQueries(9)-fireQueries);
+        if (!moved || !attacked || (initialAmmo > 0 && !ammoSpent)) {
+            char message[224];sprintf_s(message,"after R form %u native weapon 1: weapon=%u moved=%u attack_state=%u ammo_spent=%u initial_ammo=%d move_queries=%u fire_queries=%u",id,sampledWeapon,moved,attacked,ammoSpent,initialAmmo,input.GameplayQueries(0)-moveQueries,input.GameplayQueries(9)-fireQueries);
             context->Assert(0,message);return SDGO_GAME_TEST_FAIL;
         }
-        context->Assert(1,"after the genuine transformation, native mapped movement changed the real scene position and primary fire entered its real attack state");
+        context->Assert(1,"after native R commit, target-form weapon 1 was selected, fired through its original input/attack consumers with real ammunition where applicable, and movement remained usable");
         ++controlsVerified; controlAt=0; settleAt=context->elapsed_ms;
         return SDGO_GAME_TEST_WAIT;
     }

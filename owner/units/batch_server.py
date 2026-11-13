@@ -492,7 +492,7 @@ def _simulate_families(repo, publication: Publication, order: list[dict]) -> tup
     return problems, rows, installed
 
 
-def preflight(folder, server_ini) -> dict:
+def preflight(folder, server_ini, *, baseline=None) -> dict:
     """Read-only: validate the publication and every write it would make."""
     if not server_ini:
         raise ValueError('请先在机体导入模块配置 WorldServer INI')
@@ -500,6 +500,12 @@ def preflight(folder, server_ini) -> dict:
     publication = load_publication(folder)
     operations.require_local_database(server_ini)
     problems: list[dict] = []
+    from . import program_resources
+    try:
+        program_resources_report=program_resources.validate_publication(publication,baseline)
+    except (ValueError,OSError) as error:
+        program_resources_report={'complete':False,'actor_accepted':False}
+        problems.append({'family_key':'','error':str(error)})
     try:
         order = family_order(publication.families)
     except ValueError as error:
@@ -539,7 +545,7 @@ def preflight(folder, server_ini) -> dict:
                 warnings.append('%s 的 %s 被 Manager 设置或全局开关关闭；形态图会写入，但服务端不会加载' % (row['host'], GRAPH_MOD))
     return {'publication': publication.summary(), 'order': [family['family_key'] for family in order],
             'families_installed': installed, 'families_new': len(families) - installed, 'families': families,
-            'shared': shared, 'graph_hosts': _public_hosts(hosts), 'running_services': running,
+            'shared': shared, 'program_resources':program_resources_report, 'graph_hosts': _public_hosts(hosts), 'running_services': running,
             'servers_stopped': not running, 'problems': problems, 'warnings': warnings,
             'ready': not problems and not running, 'changes_applied': False, 'grants_units': False}
 
@@ -551,7 +557,7 @@ def verify_installed(folder,server_ini,baseline) -> bool:
     from types import SimpleNamespace
     from . import graph_preservation
     publication=load_publication(folder)
-    review=preflight(folder,server_ini)
+    review=preflight(folder,server_ini,baseline=baseline)
     if review['problems'] or not readback(publication,server_ini)['complete']:return False
     retained=graph_preservation.read(server_ini,SimpleNamespace(graph_requests=[]),baseline)
     installed={row['owner']:row for row in retained['requests']}
@@ -676,6 +682,8 @@ def apply(folder, server_ini, progress: Progress | None = None,graph_context=Non
         raise ValueError('请先在机体导入模块配置 WorldServer INI')
     from manager.operations import server_change
     publication = load_publication(folder)
+    from . import program_resources
+    program_resources.validate_publication(publication,baseline)
     order = family_order(publication.families)
     hosts = battle_hosts(server_ini) if publication.graph_requests else []
     if publication.graph_requests:

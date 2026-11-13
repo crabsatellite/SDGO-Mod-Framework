@@ -11,6 +11,10 @@ Packages prepared from any source can be submitted through the documented import
 Import a unit archive (RAR/ZIP) in SDGO Mod Manager, fill in missing definitions, generate the shop, capsule and
 encyclopedia images, then write the unit definitions to the server and build a client package for players.
 
+Batch preflight also checks complete resource paths stored inside native weapon callback bodies against the
+sealed client archive or the configured compatible client. A registered callback can still crash when its effect
+is absent. Complete the dependencies before applying the server plan; see [special weapons and skill slots](unit-skill-import.md).
+
 Single-form and two-form (reciprocal or one-way) units are supported, as are entry forms into an already published
 reciprocal pair. Self-referencing records can be preserved, but a same-ID target alone does not create an R-key
 state change; it requires the corresponding native behavior and actual runtime validation.

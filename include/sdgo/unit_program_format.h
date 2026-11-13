@@ -98,6 +98,28 @@ public:
                 prepared.push_back(std::move(candidate));
             }
             reader.require(reader.offset == bytes.size(), "native program bundle trailing bytes");
+            const std::size_t offsets[] = {1569,1669,1771};
+            for (const auto& entry : catalog.records) {
+                if (entry.kind != kWeaponType) continue;
+                for (uint32_t role = 1; role <= 3; ++role) {
+                    const auto* field = entry.bytes.data() + offsets[role-1];
+                    std::string name; bool terminated = false, ascii = true;
+                    for (std::size_t k = 0; k < 50; ++k) {
+                        const auto value = uint32_t(field[k*2]) | (uint32_t(field[k*2+1]) << 8);
+                        if (!value) { terminated = true; break; }
+                        if (value >= 128) ascii = false;
+                        if (ascii) name += static_cast<char>(value);
+                    }
+                    reader.require(terminated, "native weapon callback lacks terminator");
+                    bool owned = exports.count(name) != 0;
+                    for (const auto& owner : owners)
+                        owned = owned || name.compare(0,owner.size()+1,owner+"_") == 0;
+                    reader.require(!owned || ascii, "native owner callback export encoding");
+                    if (!ascii) continue; // Unowned native names are resolved by their original consumer.
+                    reader.require(!owned || weaponRoles.count({entry.id,role}) != 0,
+                                   "native weapon owner callback lacks a role binding");
+                }
+            }
             candidates.swap(prepared);
             return true;
         } catch (const std::exception& exception) { error = exception.what(); return false; }

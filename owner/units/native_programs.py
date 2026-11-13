@@ -36,13 +36,14 @@ def _fields(value, keys):
         raise ValueError('native program declaration fields differ')
 
 
-def inspect_chunk(raw):
+def _inspect_chunk(raw):
     """Match the native SDK's Lua 5.0 x86 closure-only registration profile."""
     if not isinstance(raw, bytes) or not 22 <= len(raw) <= MAX_PROGRAM_BYTES:
         raise ValueError('native Lua chunk byte budget')
     if raw[:14] != _HEADER or raw[14:22] != struct.pack('<d', 3.14159265358979323846e7):
         raise ValueError('native Lua 5.0 x86/double header required')
     position, items, prototypes = 22, 0, 0
+    resource_references = []
 
     def take(size):
         nonlocal position
@@ -73,7 +74,7 @@ def inspect_chunk(raw):
             raise ValueError('Lua string lacks terminator')
         return value[:-1]
 
-    def prototype(depth):
+    def prototype(depth, path=()):
         nonlocal prototypes
         prototypes += 1
         if depth > 128 or prototypes > 100_000:
@@ -86,14 +87,26 @@ def inspect_chunk(raw):
         for _ in range(count()): string(); word(); word()
         for _ in range(count()): string()
         constants = []
-        for _ in range(count()):
+        for index in range(count()):
             tag = take(1)[0]
             if tag == 3: take(8); value = None
             elif tag == 4: value = string(True)
             elif tag == 0: value = None
             else: raise ValueError('unsupported native Lua constant tag')
             constants.append(value)
-        children = [prototype(depth + 1) for _ in range(count())]
+            if value is not None and re.match(rb'(?i)^(?:gdrs|mdrs|anrs|txrs|fxrs|sprs|sdrs|scp)[\\/]',value):
+                # Directory prefixes used to construct a path are not complete
+                # resource literals. They still require a separate dependency contract.
+                if not re.search(rb'\.[A-Za-z0-9]{1,8}$',value):continue
+                from .assets import _resource_path
+                try:
+                    literal=value.decode('ascii')
+                    normalized=_resource_path(literal)
+                except (UnicodeError,ValueError) as error:
+                    raise ValueError('native program resource literal is invalid') from error
+                resource_references.append({'prototype':list(path),'constant':index,'literal':literal,'path':normalized})
+                if len(resource_references)>65536:raise ValueError('native program resource reference budget')
+        children = [prototype(depth + 1, path + (index,)) for index in range(count())]
         code = [word() for _ in range(count())]
         if any((instruction & 63) > 34 for instruction in code):
             raise ValueError('unknown native Lua opcode')
@@ -121,9 +134,61 @@ def inspect_chunk(raw):
             not names or len(used) != len(children)):
         raise ValueError('native Lua registration return/closure inventory differs')
     try:
-        return sorted(name.decode('ascii') for name in names)
+        return {'exports':sorted(name.decode('ascii') for name in names),'resource_references':resource_references}
     except UnicodeError as error:
         raise ValueError('native Lua export names must be ASCII') from error
+
+
+def inspect_chunk(raw):
+    return _inspect_chunk(raw)['exports']
+
+
+def literal_resource_references(raw):
+    """Read exact serialized Lua constants, excluding source/debug strings.
+
+    This inventory does not infer computed paths, native fixed resources or
+    model/animation semantics. Those dependencies need separate declarations.
+    """
+    return _inspect_chunk(raw)['resource_references']
+
+
+def validate_resource_dependencies(bundle, weapons, read_resource, *, catalog_sha256=None):
+    """Check every admitted program's literal paths against the actual target.
+
+    The resolver supplies published overlay bytes or compatible original bytes;
+    it must never fetch content, execute a script, or invent a missing resource.
+    Returns bounded hash witnesses, not actor/gameplay admission.
+    """
+    decoded=decode_bundle(bundle)
+    if catalog_sha256 is not None and decoded['catalog_sha256']!=catalog_sha256:
+        raise ValueError('native program resource check uses a different catalog SHA-256')
+    rebuilt=compile_bundle(decoded['manifests'],decoded['catalog_sha256'],decoded['files'],weapons)
+    if rebuilt!=bundle:raise ValueError('native program sidecar is not canonical')
+    resources={};references=[];missing=[];total=0
+    for manifest in decoded['manifests']:
+        for program in manifest['programs']:
+            for reference in literal_resource_references(decoded['files'][program['member']]):
+                path=reference['path']
+                if len(references)>=65536:raise ValueError('native program resource reference budget')
+                references.append({'owner':manifest['owner'],'program':program['resource'],
+                                   'program_sha256':program['sha256'],**reference})
+                if path in resources:continue
+                if len(resources)>=4096:raise ValueError('native program resource dependency budget')
+                try:raw=read_resource(path)
+                except FileNotFoundError:raw=None
+                if raw is None:
+                    resources[path]=None;missing.append(path);continue
+                if not isinstance(raw,bytes) or not 0<len(raw)<=64*1024*1024:
+                    raise ValueError('native program resource exceeds its byte budget: '+path)
+                total+=len(raw)
+                if total>512*1024*1024:
+                    raise ValueError('native program resource dependency budget')
+                resources[path]={'sha256':_hash(raw),'bytes':len(raw)}
+    if missing:
+        raise ValueError('native program resource is missing: '+', '.join(sorted(missing)[:8])+
+                         '; provide its complete dependencies before publication')
+    return {'programs':sum(len(row['programs'])for row in decoded['manifests']),
+            'resources':resources,'references':references,'actor_accepted':False}
 
 
 def validate_manifest(value, files, weapons):
@@ -239,6 +304,17 @@ def compile_bundle(manifests, catalog_sha256, files, weapons):
             if version == 2: word(CALLBACK_ROLES[role][0])
             payload.extend(bytes.fromhex(binding['weapon_sha256'])); text(binding['export'])
         if len(payload) > MAX_BYTES: raise ValueError('native program bundle byte budget')
+    # A declared owner function appearing in a weapon field must have its
+    # matching role approved. Merely publishing that global is insufficient.
+    for identity,record in weapons.items():
+        if not isinstance(record,bytes)or len(record)!=1871:continue
+        for role,(_,offset)in CALLBACK_ROLES.items():
+            field=record[offset:offset+100]
+            end=next((i for i in range(0,100,2)if field[i:i+2]==b'\0\0'),None)
+            if end is None:raise ValueError('native weapon callback lacks terminator')
+            name=field[:end].decode('utf-16-le')
+            if (name in exports or any(name.startswith(owner+'_')for owner in owners))and(identity,role)not in bound:
+                raise ValueError('native weapon '+str(identity)+' '+role+' callback lacks its owner binding')
     return (struct.pack('<8s4I', MAGIC, version, 64, len(manifests), len(payload)) +
             bytes.fromhex(_digest(catalog_sha256)) + bytes(8) + payload)
 

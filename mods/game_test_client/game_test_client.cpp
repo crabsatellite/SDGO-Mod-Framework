@@ -1330,8 +1330,6 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
             control.battle_start_sequence!=activeBattleStartSequence || !control.player_control_enabled)
             return SDGO_GAME_TEST_WAIT;
     }
-    const int transformProbe = apsalus_probe::Poll(context, sdgo_test::api, sdgo_test::mod, scoreboardInput);
-    if (transformProbe != SDGO_GAME_TEST_PASS) return transformProbe;
     bool ready = snapshot.bot_count == expectedAi;
     unsigned allies = 0, enemies = 0, moved = 0;
     for (unsigned i = 0; i < snapshot.bot_count && i < 12; ++i) {
@@ -1351,6 +1349,11 @@ int __cdecl AiSpawn(const SdgoGameTestContextV1* context) {
         sample = std::find_if(motionSamples.begin(), motionSamples.end(), [&](const auto& value) { return value.pilot == bot.pilot_id; });
         if (sample != motionSamples.end() && sample->moved) ++moved;
     }
+    // Keep read-only AI motion samples while a longer native transformation /
+    // complete-primary-fire probe runs. Its completion must not be the first
+    // motion sample taken after the existing AI readiness deadline.
+    const int transformProbe = apsalus_probe::Poll(context, sdgo_test::api, sdgo_test::mod, scoreboardInput);
+    if (transformProbe != SDGO_GAME_TEST_PASS) return transformProbe;
     if (context->elapsed_ms < 4000 || context->tick < 120 || ((!ready || !moved) && context->elapsed_ms < 30000)) return SDGO_GAME_TEST_WAIT;
     const int fpsResult=CheckGameplayFps(context,snapshot.received_battle_start_count);
     if (fpsResult!=SDGO_GAME_TEST_PASS)return fpsResult;

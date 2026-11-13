@@ -3666,6 +3666,11 @@ def prepare(
     if (apsalus_roundtrip or unit_transform_roundtrip) and (mode_sequence != '1' or play_unit_uid is None or any((bootstrap_only,
             battleship_only,gift_requests_only,deck_only,pages_only,friends_only)) or mission_mode is not None):
         raise GameTestError('Native transform roundtrip requires one complete ordinary battle and an existing owned unit UID')
+    if apsalus_roundtrip or unit_transform_roundtrip or unit_transform_steps is not None:
+        sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
+        parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
+        if not parsed or tuple(map(int,parsed.groups())) < (0,1,39):
+            raise GameTestError('native transform and weapon-1 checks require GameTest client 0.1.39 or newer')
     oc_allocate = validate_oc_allocate(oc_allocate)
     if oc_allocate is not None and (mode_sequence != '1' or play_unit_uid is None or fps_cap is not None or
             any((bootstrap_only,battleship_only,gift_requests_only,deck_only,pages_only,friends_only,

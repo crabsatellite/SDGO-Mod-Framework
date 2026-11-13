@@ -201,9 +201,11 @@ if(Test-NativeExport $spec.dll '_SdgoGetResourceOverlayBrokerV1'){throw 'A decor
             root=Path(directory);runner=root/'verify.ps1';runner.write_text(script,encoding='utf-8')
             index,archive,_=build_archive({'mdrs/body.mod':b'native model'},lambda _:True)
             self.write_export_fixture(root/'provider.dll')
-            def run(current_index):
+            def run(current_index, spaced=False, duplicate=False):
                 config=('[runtime]\nschema=1\nindex=resources.zdx\nindex_sha256='+hashlib.sha256(current_index).hexdigest()+
                     '\narchive=resources.zpk\narchive_sha256='+hashlib.sha256(archive).hexdigest()+'\n').encode()
+                if spaced:config=config.replace(b'=',b' = ').replace(b'schema =',b'  schema =')
+                if duplicate:config+=b'   schema = 1\n'
                 files=[]
                 for name,data in [('resource-overlay.ini',config),('resources.zdx',current_index),('resources.zpk',archive)]:
                     file=root/name;file.write_bytes(data)
@@ -213,6 +215,11 @@ if(Test-NativeExport $spec.dll '_SdgoGetResourceOverlayBrokerV1'){throw 'A decor
                     '-InputPath',str(payload)],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=45)
             accepted=run(index)
             self.assertEqual(accepted.returncode,0,accepted.stdout+accepted.stderr)
+            spaced=run(index,spaced=True)
+            self.assertEqual(spaced.returncode,0,spaced.stdout+spaced.stderr)
+            duplicate=run(index,spaced=True,duplicate=True)
+            self.assertNotEqual(0,duplicate.returncode)
+            self.assertIn('Duplicate resource overlay setting',duplicate.stderr)
             old=b''.join(struct.pack('<H',ord(c)^0xAA) for c in 'body.mod')
             new=b''.join(struct.pack('<H',ord(c)^0xAA) for c in 'base.mod')
             rejected=run(index.replace(old,new))

@@ -7,17 +7,17 @@ import subprocess
 import tempfile
 import unittest
 
-from owner.units.native_programs import compile_bundle, decode_bundle, inspect_chunk, validate_manifest, validate_project_bindings, CALLBACK_SCHEMA, CALLBACK_ROLES
+from owner.units.native_programs import compile_bundle, decode_bundle, inspect_chunk, literal_resource_references, validate_resource_dependencies, validate_manifest, validate_project_bindings, CALLBACK_SCHEMA, CALLBACK_ROLES
 
 
-def chunk(name='example_Init'):
+def chunk(name='example_Init', body_constants=(), debug_source=None):
     word = lambda value: struct.pack('<I', value)
     string = lambda value: word(len(value) + 1) + value + b'\0'
     def prototype(constants, children, code):
-        return (word(0) + word(0) + bytes([0, 0, 0, 2]) + word(0) * 3 + word(len(constants)) +
+        return ((string(debug_source) if debug_source is not None else word(0)) + word(0) + bytes([0, 0, 0, 2]) + word(0) * 3 + word(len(constants)) +
                 b''.join(b'\4' + string(item) for item in constants) + word(len(children)) + b''.join(children) +
                 word(len(code)) + b''.join(word(item) for item in code))
-    child = prototype([], [], [27 | (1 << 15)])
+    child = prototype(list(body_constants), [], [27 | (1 << 15)])
     root = prototype([name.encode()], [child], [34, 7, 27 | (1 << 15)])
     return bytes([27, 76, 117, 97, 80, 1, 4, 4, 4, 6, 8, 9, 9, 8]) + struct.pack('<d', 3.14159265358979323846e7) + root
 
@@ -55,6 +55,43 @@ def callback_fixture(owner='example', identity=90001):
 
 
 class NativePrograms(unittest.TestCase):
+    def resource_bundle(self, literals):
+        manifest,files,weapons=fixture()
+        raw=chunk(body_constants=literals);files['example.scp']=raw
+        manifest['programs'][0]['sha256']=hashlib.sha256(raw).hexdigest()
+        return compile_bundle([manifest],'a'*64,files,weapons),weapons
+
+    def test_literal_resources_come_from_typed_constants_not_debug_strings(self):
+        raw=chunk(body_constants=[b'Fxrs\\example_beam.zfx',b'fxrs/'],debug_source=b'fxrs/not_a_dependency.zfx')
+        self.assertEqual([{'prototype':[0],'constant':0,'literal':'Fxrs\\example_beam.zfx','path':'fxrs/example_beam.zfx'}],literal_resource_references(raw))
+        with self.assertRaisesRegex(ValueError,'resource literal'):
+            literal_resource_references(chunk(body_constants=[b'fxrs/../escape.zfx']))
+
+    def test_missing_script_only_resources_are_rejected_before_execution(self):
+        bundle,weapons=self.resource_bundle([b'fxrs/example_beam.zfx',b'fxrs/example_impact.zfx'])
+        with self.assertRaisesRegex(ValueError,'example_beam.zfx.*example_impact.zfx'):
+            validate_resource_dependencies(bundle,weapons,lambda path:None)
+
+    def test_resource_bytes_are_resolved_and_hashed_without_gameplay_admission(self):
+        bundle,weapons=self.resource_bundle([b'fxrs/example_beam.zfx',b'FXRS\\EXAMPLE_BEAM.ZFX'])
+        calls=[]
+        def read(path):calls.append(path);return b'non-executed resource fixture'
+        report=validate_resource_dependencies(bundle,weapons,read,catalog_sha256='a'*64)
+        self.assertEqual(['fxrs/example_beam.zfx'],calls)
+        self.assertEqual(2,len(report['references']))
+        self.assertEqual(hashlib.sha256(b'non-executed resource fixture').hexdigest(),report['resources'][calls[0]]['sha256'])
+        self.assertFalse(report['actor_accepted'])
+        with self.assertRaisesRegex(ValueError,'different catalog'):
+            validate_resource_dependencies(bundle,weapons,read,catalog_sha256='b'*64)
+
+    def test_corrupt_or_empty_resources_do_not_become_successful_witnesses(self):
+        bundle,weapons=self.resource_bundle([b'fxrs/example_beam.zfx'])
+        with self.assertRaisesRegex(ValueError,'byte budget'):
+            validate_resource_dependencies(bundle,weapons,lambda path:b'')
+        def corrupt(path):raise ValueError('native archive checksum differs')
+        with self.assertRaisesRegex(ValueError,'checksum differs'):
+            validate_resource_dependencies(bundle,weapons,corrupt)
+
     @unittest.skipUnless(os.environ.get('SDGO_UNIT_PROGRAM_VALIDATOR'), 'set the built native validator path for the cross-consumer check')
     def test_python_output_is_consumed_and_executed_by_the_native_sdk(self):
         for factory in (fixture,callback_fixture):
@@ -99,6 +136,12 @@ class NativePrograms(unittest.TestCase):
         second['weapon_callbacks']=[{'weapon_id':90001,'weapon_sha256':digest,'role':'special_ranged','export':name}]
         with self.assertRaisesRegex(ValueError,'owners share a weapon'):
             compile_bundle([manifest,second],'a'*64,{**files,**other_files},{90001:bytes(raw)})
+
+    def test_a_weapon_field_cannot_refer_to_an_unbound_owner_callback(self):
+        manifest,files,weapons=callback_fixture()
+        manifest['weapon_callbacks']=[row for row in manifest['weapon_callbacks']if row['role']!='special_ranged']
+        with self.assertRaisesRegex(ValueError,'special_ranged.*lacks its owner binding'):
+            compile_bundle([manifest],'a'*64,files,weapons)
 
     def test_installed_bundle_decodes_back_to_declarations_that_recompile_byte_identically(self):
         manifest, files, weapons = fixture()

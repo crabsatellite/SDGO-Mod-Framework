@@ -305,6 +305,17 @@ class PlayUnitPlanTests(unittest.TestCase):
         self.assertIn("--play-unit-uid", help_text)
         self.assertIn("genuinely owned", help_text)
 
+    def test_transform_checks_reject_stale_sdk_before_copying_a_client(self):
+        observer = self.stage / "client/sdgo/mods/game_test_client/mod.ini"
+        for index, flags in enumerate(({"unit_transform_roundtrip": True},
+                                       {"unit_transform_steps": 1},
+                                       {"apsalus_roundtrip": True})):
+            with self.subTest(flags=flags):
+                observer.write_text(OBSERVER_MANIFEST + "\nversion=0.1.38\n", encoding="utf-8")
+                with self.assertRaisesRegex(game_test.GameTestError, "0.1.39"):
+                    self.prepare(f"stale-transform-{index}", play_unit_uid=97175, **flags)
+                self.assertFalse((self.root / f"stale-transform-{index}").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

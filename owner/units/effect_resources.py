@@ -19,7 +19,8 @@ MAX_TOTAL_BYTES = 128 * 1024 * 1024
 MAX_EFFECTS = 128
 MAX_EMITTERS = 4096
 MAX_TEXTURE_PIXELS = 16_777_216
-_LEAF = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]*\.txr', re.I)
+_LEAF = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.+-]*\.txr', re.I)
+FINAL_EMITTER_EOF_PROFILE = 'native-final-emitter-subdivision-eof-v1'
 
 
 def _hash(raw):
@@ -84,7 +85,16 @@ def texture_carriers(raw):
         if emitter_type == 2:
             meshes.append(index)
         offset += 550
-        for stride in (8, 16, 8, 4):
+        for vector_index,stride in enumerate((8,16,8,4)):
+            # The native v5 loader initializes these counters/flags before its
+            # EOF reads. Only this exact final type-1 boundary is known; never
+            # pad the source or infer omitted mesh trailers/partial integers.
+            if (version==5 and index==count-1 and emitter_type==1 and not meshes and
+                    vector_index==3 and offset==len(raw)):
+                return {'profile':PROFILE,'tail_profile':FINAL_EMITTER_EOF_PROFILE,'version':version,
+                        'textures':carriers,'models':[],'parsed_bytes':offset,
+                        'native_defaults':{'final_subdivision_count':0,'version5_flag':0,
+                                           'final_extra_count':0,'effect_tail_flags':[0,0]}}
             offset = vector(offset, stride)
         if version > 4:
             require(offset, 1)
@@ -96,7 +106,7 @@ def texture_carriers(raw):
     if version > 2:
         for index in meshes:
             require(offset, 35)
-            model_carriers.append({'emitter': index, 'offset': offset + 3,
+            model_carriers.append({'emitter': index, 'offset': offset + 3,'flags':list(raw[offset:offset+3]),
                                    'literal': _string(raw[offset + 3:offset + 35])})
             offset += 35
     if version > 3:
