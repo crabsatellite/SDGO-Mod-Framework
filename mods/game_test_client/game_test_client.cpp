@@ -6623,6 +6623,14 @@ void RegisterPlannedCases() {
     // The OC panel check runs last, after the settled return to the lobby.
     if(playUnitUid && (ocAllocateStat>=0 || ocPanel) && !giftRequestsOnly && !battleshipOnly && !deckOnly)plannedCases.push_back(ocPanelCase);
     if(playUnitUid && ocAllocateStat>=0 && g1Room && !giftRequestsOnly && !battleshipOnly && !deckOnly)plannedCases.push_back(g1PageCase);
+    // Each directed hop verifies a complete 12.5-second original weapon/input
+    // sequence. Preserve ordinary PvP's timeout; give an explicitly sealed
+    // multi-hop probe a bounded budget for every requested form.
+    if(sdgo_test::api->SettingInt(sdgo_test::mod,"UnitDirectedTransforms",0)){
+        const int steps=sdgo_test::api->SettingInt(sdgo_test::mod,"UnitTransformSteps",3);
+        if(steps>=1&&steps<=16)for(auto& test:plannedCases)
+            if(test.poll==&AiSpawn)test.timeout_ms=60000u+15000u*static_cast<unsigned>(steps);
+    }
     provider.count = static_cast<uint32_t>(plannedCases.size());
     provider.cases = plannedCases.data();
 }

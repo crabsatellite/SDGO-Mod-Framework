@@ -471,6 +471,9 @@ def inspect_upload(
             raise ValueError(f"unit {form['id']} has no model path")
         if model not in package_resources and not _baseline_exists(baseline, model):
             raise ValueError(f"unit {form['id']} model is missing: {model}")
+        override=form.get('model_override')
+        if override and override not in package_resources and not _baseline_exists(baseline,override):
+            raise ValueError(f"unit {form['id']} model override @738 is missing: {override}")
         target = form["transform_target"]
         if target and target not in form_ids and _baseline_record(baseline, "unit", target) is None:
             raise ValueError(f"unit {form['id']} transform target is missing: {target}")

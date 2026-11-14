@@ -59,7 +59,9 @@ def build(output,baseline,repository,module_binary,recipe=None):
                 draft['assets'].append({'sha':digest,'kind':'image','source':'baseline','filename':role+'.png','bytes':len(png)})
             draft['presentation'][role]={'asset_sha':digest,'source_mode':'native','caption':'由服主配置获取途径'}
         draft['published']=copy.deepcopy(draft);state['drafts'][identity]=draft
-    core=output/'base';core.mkdir();compiled=compiler.publish(context,state,next(iter(state['drafts'])),core)
+    # This composer changes record bytes/revision below and emits its own final
+    # graph requests. Never retain an editor graph bound to the intermediate catalog.
+    core=output/'base';core.mkdir();compiled=compiler.publish(context,state,next(iter(state['drafts'])),core,include_server_graphs=False)
     with zipfile.ZipFile(compiled['client_zip']) as archive:files={name:archive.read(name) for name in archive.namelist()}
     prefix='client/sdgo/mods/unit_catalog/';records=catalog_records(files[prefix+'catalog.bin'])
     all_records={(kind,identity):raw for identity,(kind,raw) in records.items()}

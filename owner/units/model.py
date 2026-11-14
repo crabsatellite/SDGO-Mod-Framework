@@ -27,7 +27,9 @@ SKILL_REFS = ('SkillNumber_1', 'SkillNumber_2', 'SkillNumber_3')
 # reciprocal pair (the second hop needs the native form-graph runtime).
 # native-self-transform-v1: a single record whose transform target is itself.
 PROFILES = {'native-single-form-v1', 'native-linked-forms-v1', 'native-one-way-forms-v1',
-            'native-entry-forms-v1', 'native-self-transform-v1', 'native-three-stage-forms-v1'}
+            'native-entry-forms-v1', 'native-self-transform-v1', 'native-three-stage-forms-v1',
+            'native-directed-forms-v1'}
+MAX_DIRECTED_FORMS = 64
 
 
 class RevisionConflict(ValueError):

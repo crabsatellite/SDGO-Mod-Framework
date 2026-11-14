@@ -2,8 +2,19 @@
 #include <intrin.h>
 #include <cstring>
 #include <map>
+#include <vector>
+#include <utility>
+#include "sdgo/unit_form_models.h"
+#include "sdgo/unit_transform_recovery.h"
 #include "form_chain_runtime.h"
 #include "stage_runtime.h"
+
+// Static PE export for authoring compatibility checks; readers do not execute
+// the DLL. Old single-extra-model runtimes must not publish general graphs.
+extern "C" __declspec(dllexport) const struct {
+    char magic[8];std::uint32_t size,version,capacity,cached,reuse,cleanup;
+} SdgoUnitDirectedFormsCapabilityV1={{'S','D','G','O','D','I','R','1'},32,1,64,
+    static_cast<std::uint32_t>(sdgo::unit_form_models::kMaxCachedModels),1,1};
 
 namespace sdgo::unit_form_chain {
 namespace {
@@ -23,7 +34,8 @@ using WeaponTables=void(__thiscall*)(void*);
 // CUnit::CreateModel(this, record, &model): thiscall on the battle unit (it reads this+0xD4).
 using ModelCreate=void(__thiscall*)(void*,const std::uint8_t*,void**);
 
-struct Chain { std::uint32_t form=0;const std::uint8_t* record=nullptr;void* model=nullptr; };
+struct CachedModel { const std::uint8_t* record=nullptr;void* model=nullptr; };
+struct Chain { std::map<std::uint32_t,CachedModel> models; };
 
 const SdgoApi* g_api=nullptr;SdgoMod* g_mod=nullptr;
 const unit_catalog::Catalog* g_catalog=nullptr;
@@ -58,9 +70,48 @@ bool ReadHop(std::uint8_t* unit,Hop* hop){
         const auto* controller=Read<const std::uint8_t*>(unit,kMoveController);
         if(!current||!alternate||!controller)return false;
         const auto target=Read<std::uint32_t>(controller,kControllerTarget);
-        if(!target||target!=Read<std::uint32_t>(current,kRecordTransform)||target==Read<std::uint32_t>(alternate,0))return false;
+        if(!target||target==Read<std::uint32_t>(current,0)||target!=Read<std::uint32_t>(current,kRecordTransform)||target==Read<std::uint32_t>(alternate,0))return false;
         hop->current=Read<std::uint32_t>(current,0);hop->target=target;hop->unit=unit;return true;
     }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+
+struct DeckSnapshot {
+    unit_form_models::Pair pairs[unit_form_models::kMaxDeckEntries]{};
+    std::size_t count=0,selected=0;std::uint8_t* entry=nullptr;
+    void* current=nullptr;void* alternate=nullptr;
+};
+
+bool ReadDeck(std::uint8_t* unit,DeckSnapshot* output){
+    __try{
+        auto* begin=Read<std::uint8_t*>(unit,kDeckBegin);auto* end=Read<std::uint8_t*>(unit,kDeckEnd);
+        const auto first=reinterpret_cast<std::uintptr_t>(begin),last=reinterpret_cast<std::uintptr_t>(end);
+        const auto index=Read<std::int32_t>(unit,kDeckIndex);
+        if(!begin||last<first||(last-first)%kDeckEntryBytes||index<0)return false;
+        const auto count=(last-first)/kDeckEntryBytes;
+        if(!count||count>unit_form_models::kMaxDeckEntries||static_cast<std::size_t>(index)>=count)return false;
+        output->count=count;output->selected=static_cast<std::size_t>(index);
+        output->entry=begin+output->selected*kDeckEntryBytes;
+        output->current=Read<void*>(unit,kCurrentModel);output->alternate=Read<void*>(unit,kAlternateModel);
+        for(std::size_t i=0;i<count;++i){
+            output->pairs[i].base=Read<std::uintptr_t>(begin+i*kDeckEntryBytes,4);
+            output->pairs[i].alternate=Read<std::uintptr_t>(begin+i*kDeckEntryBytes,12);
+        }
+        return true;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+
+// A cycle may revisit either original form after several hops. Borrow its
+// existing deck-owned model rather than create a second owner for that form.
+void* NativeModel(std::uint8_t* unit,std::uint32_t identity){
+    DeckSnapshot snapshot;
+    if(!ReadDeck(unit,&snapshot))return nullptr;
+    __try{
+        for(const auto offset:{0u,8u}){
+            const auto* record=Read<const std::uint8_t*>(snapshot.entry,offset);
+            if(record&&Read<std::uint32_t>(record,0)==identity)return Read<void*>(snapshot.entry,offset+4);
+        }
+        return nullptr;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return nullptr;}
 }
 
 bool ApplyHop(std::uint8_t* unit,const std::uint8_t* record,void* model){
@@ -97,6 +148,20 @@ bool NormalizeAfterEntryHop(std::uint8_t* unit){
     }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
 
+bool CommittedChainTarget(const std::uint8_t* unit){
+    __try{
+        const auto* current=Read<const std::uint8_t*>(unit,kCurrentRecord);
+        const auto* alternate=Read<const std::uint8_t*>(unit,kAlternateRecord);
+        const auto* move=Read<const std::uint8_t*>(unit,kMoveController);
+        if(!current||!alternate||!move||Read<const void*>(move,0x21c)!=unit||Read<std::int32_t>(unit,0x38)<=0)return false;
+        const auto id=Read<std::uint32_t>(current,0),peer=Read<std::uint32_t>(alternate,0);
+        return id!=peer&&Read<std::uint32_t>(move,kControllerTarget)==id&&
+            Read<std::uint32_t>(alternate,kRecordTransform)==id&&
+            g_catalog->Contains(id,kUnitKind)&&g_catalog->Contains(peer,kUnitKind)&&
+            Record(id,kUnitKind)==current&&Record(peer,kUnitKind)==alternate;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+
 void __fastcall OnSwap(std::uint8_t* unit,void* edx){
     InterlockedIncrement64(&g_swapsSeen);
     Hop hop;
@@ -115,15 +180,15 @@ void __fastcall OnSwap(std::uint8_t* unit,void* edx){
             else{
                 EnterCriticalSection(&g_lock);
                 auto& chain=(*g_chains)[unit];
-                if(chain.model&&chain.form!=hop.target){ // A cached model must match the resolved chain target; reject conflicting reuse.
-                    LeaveCriticalSection(&g_lock);InterlockedExchange(&g_lastRefusal,2);InterlockedIncrement64(&g_refused);
-                    g_swap(unit,edx);return;
-                }
-                if(!chain.model){
+                const auto cached=chain.models.find(hop.target);
+                if(cached!=chain.models.end()){
+                    if(cached->second.record==record)model=cached->second.model;
+                }else model=NativeModel(unit,hop.target);
+                if(!model&&cached==chain.models.end()&&chain.models.size()<unit_form_models::kMaxCachedModels){
                     g_modelCreate(unit,record,&model);
                     g_api->Log(g_mod,SDGO_LOG_INFO,"unit form chain: model for %lu created at %p",static_cast<unsigned long>(hop.target),model);
-                    if(model){chain.form=hop.target;chain.record=record;chain.model=model;InterlockedIncrement64(&g_modelsCreated);}
-                } else model=chain.model;
+                    if(model){chain.models.emplace(hop.target,CachedModel{record,model});InterlockedIncrement64(&g_modelsCreated);}
+                }
                 LeaveCriticalSection(&g_lock);
                 if(!model){InterlockedExchange(&g_lastRefusal,2);InterlockedIncrement64(&g_refused);}
                 else if(ApplyHop(unit,record,model)){
@@ -143,44 +208,14 @@ void __fastcall OnSwap(std::uint8_t* unit,void* edx){
     }
 }
 
-// The native destructor deletes controllers before models. It skips a deck entry
-// whose base model is either live model, deletes the alternate explicitly, then
-// lets the scene-node base destructor delete the current model through unit+8.
-// Preserve a distinct live pair in the selected entry and return its detached
-// third owner for deletion only AFTER that native ordering has completed.
-enum class HandOver { not_needed, handed_over, refused };
-HandOver HandOverPair(std::uint8_t* unit,const Chain* chain,void** detached){
+bool HandOverPair(std::uint8_t* unit,const DeckSnapshot* snapshot){
     __try{
-        auto* current=Read<std::uint8_t*>(unit,kCurrentModel);auto* alternate=Read<std::uint8_t*>(unit,kAlternateModel);
-        *detached=nullptr;
-        if(!current||!alternate||current==alternate)return HandOver::refused;
-        const auto* begin=Read<const std::uint8_t*>(unit,kDeckBegin);
-        const auto* end=Read<const std::uint8_t*>(unit,kDeckEnd);
-        const auto index=Read<std::int32_t>(unit,kDeckIndex);
-        const auto first=reinterpret_cast<std::uintptr_t>(begin),last=reinterpret_cast<std::uintptr_t>(end);
-        if(!begin||last<first||(last-first)%kDeckEntryBytes||index<0||
-           static_cast<std::size_t>(index)>=(last-first)/kDeckEntryBytes)return HandOver::refused;
-        // Also validate native ownership: the entry's alternate model is the
-        // live pair form the chain did not replace, and its base is detached.
-        auto* entry=const_cast<std::uint8_t*>(begin)+static_cast<std::size_t>(index)*kDeckEntryBytes;
-        auto* deckModel=Read<std::uint8_t*>(entry,4);auto* deckAlternateModel=Read<std::uint8_t*>(entry,12);
-        if(current!=chain->model&&alternate!=chain->model){
-            // Respawn restored a native pair. Its two models retain their
-            // original owners; only our cached third model is detached.
-            if(!deckModel||!deckAlternateModel||deckModel==deckAlternateModel||
-               deckModel==chain->model||deckAlternateModel==chain->model||
-               !((current==deckModel&&alternate==deckAlternateModel)||
-                 (alternate==deckModel&&current==deckAlternateModel)))return HandOver::refused;
-            *detached=chain->model;return HandOver::not_needed;
-        }
-        auto* pairModel=current==chain->model?alternate:current;
-        if(!deckModel||deckAlternateModel!=pairModel||deckModel==current||deckModel==alternate||deckModel==chain->model)
-            return HandOver::refused;
-        // Writing pairModel here would alias both deck slots. Use the chain
-        // model as base so the entry is skipped and still names two owners.
-        Write(entry,4,chain->model);*detached=deckModel;
-        return HandOver::handed_over;
-    }__except(EXCEPTION_EXECUTE_HANDLER){return HandOver::refused;}
+        const auto& pair=snapshot->pairs[snapshot->selected];
+        if(Read<void*>(unit,kCurrentModel)!=snapshot->current||Read<void*>(unit,kAlternateModel)!=snapshot->alternate||
+           Read<std::uintptr_t>(snapshot->entry,4)!=pair.base||Read<std::uintptr_t>(snapshot->entry,12)!=pair.alternate)return false;
+        Write(snapshot->entry,4,snapshot->current);Write(snapshot->entry,12,snapshot->alternate);
+        return true;
+    }__except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
 
 void __fastcall OnDestroy(std::uint8_t* unit,void* edx){
@@ -188,19 +223,28 @@ void __fastcall OnDestroy(std::uint8_t* unit,void* edx){
     Chain chain;bool known=false;
     EnterCriticalSection(&g_lock);
     const auto found=g_chains->find(unit);
-    if(found!=g_chains->end()){chain=found->second;g_chains->erase(found);known=true;}
+    if(found!=g_chains->end()){chain=std::move(found->second);g_chains->erase(found);known=true;}
     LeaveCriticalSection(&g_lock);
-    void* detached=nullptr;HandOver result=HandOver::refused;
-    if(known&&chain.model){
-        result=HandOverPair(unit,&chain,&detached);
-        if(result==HandOver::handed_over){
+    unit_form_models::Cleanup cleanup;
+    DeckSnapshot snapshot;
+    if(known&&ReadDeck(unit,&snapshot)){
+        std::vector<unit_form_models::Pair> deck(snapshot.pairs,snapshot.pairs+snapshot.count);
+        std::vector<std::uintptr_t> cached;
+        for(const auto& entry:chain.models)cached.push_back(reinterpret_cast<std::uintptr_t>(entry.second.model));
+        cleanup=unit_form_models::Plan(deck,snapshot.selected,
+            {reinterpret_cast<std::uintptr_t>(snapshot.current),reinterpret_cast<std::uintptr_t>(snapshot.alternate)},cached);
+        if(cleanup.result==unit_form_models::Result::handed_over&&!HandOverPair(unit,&snapshot))cleanup={};
+        if(cleanup.result==unit_form_models::Result::handed_over){
             InterlockedIncrement64(&g_unitsRestored);
-            g_api->Log(g_mod,SDGO_LOG_INFO,"unit form chain: live pair with chain model %p handed to the original destructor",chain.model);
-        }else if(result==HandOver::refused)
-            g_api->Log(g_mod,SDGO_LOG_WARN,"unit form chain: deck entry did not match the live pair; destructor left unchanged");
+            g_api->Log(g_mod,SDGO_LOG_INFO,"unit form chain: live pair %p/%p handed to the original destructor; detached=%u",
+                snapshot.current,snapshot.alternate,static_cast<unsigned>(cleanup.detached.size()));
+        }
     }
+    if(known&&cleanup.result==unit_form_models::Result::refused)
+            g_api->Log(g_mod,SDGO_LOG_WARN,"unit form chain: deck entry did not match the live pair; destructor left unchanged");
     g_destroy(unit,edx);
-    if(detached){
+    for(auto address:cleanup.detached){
+        auto* detached=reinterpret_cast<void*>(address);
         // Native model deleting destructor(flag=1). Its cleanup reads model
         // fields and scene parents, not the expired unit back-reference.
         // Keep exceptions observable rather than hiding an ownership fault.
@@ -208,8 +252,7 @@ void __fastcall OnDestroy(std::uint8_t* unit,void* edx){
         const auto table=*static_cast<void***>(detached);
         reinterpret_cast<DeleteModel>(table[0])(detached,1);
         InterlockedIncrement64(&g_modelsReleased);
-        g_api->Log(g_mod,SDGO_LOG_INFO,"unit form chain: detached model %p released after native unit cleanup (chain=%p live=%u)",
-                   detached,chain.model,result==HandOver::handed_over?1u:0u);
+        g_api->Log(g_mod,SDGO_LOG_INFO,"unit form chain: detached model %p released after native unit cleanup",detached);
     }
 }
 } // namespace
@@ -220,7 +263,7 @@ bool Attach(const SdgoApi* api,SdgoMod* mod,const unit_catalog::Catalog& catalog
     g_weaponTables=reinterpret_cast<WeaponTables>(api->Symbol(mod,"unit_catalog.unit_weapon_tables"));
     g_modelCreate=reinterpret_cast<ModelCreate>(api->Symbol(mod,"unit_catalog.unit_model_create"));
     // Chains are optional: a client whose symbols differ keeps the catalog without them.
-    if(!g_weaponTables||!g_modelCreate){api->Log(mod,SDGO_LOG_WARN,"unit form chain symbols differ; third-form chains disabled");return true;}
+    if(!g_weaponTables||!g_modelCreate){api->Log(mod,SDGO_LOG_WARN,"unit form chain symbols differ; directed chains disabled");return true;}
     InitializeCriticalSection(&g_lock);
     g_chains=new std::map<std::uint8_t*,Chain>();
     if(!api->HookCode(mod,"unit_catalog.unit_transform_swap",reinterpret_cast<void*>(&OnSwap),reinterpret_cast<void**>(&g_swap))||
@@ -228,10 +271,21 @@ bool Attach(const SdgoApi* api,SdgoMod* mod,const unit_catalog::Catalog& catalog
         api->Log(mod,SDGO_LOG_ERROR,"unit form chain hooks were refused");return false;
     }
     g_installed=true;
-    api->Log(mod,SDGO_LOG_INFO,"unit form chains: third-form rebase installed");
+    api->Log(mod,SDGO_LOG_INFO,"unit form chains: directed model cache and lifecycle rebase installed");
     return true;
 }
 } // namespace sdgo::unit_form_chain
+
+extern "C" __declspec(dllexport) int __cdecl SdgoIsImportedTransformRecoveryV1(const void* actor){
+    using namespace sdgo::unit_form_chain;
+    if(!actor||!g_installed||!g_chains)return 0;
+    auto* unit=const_cast<std::uint8_t*>(static_cast<const std::uint8_t*>(actor));
+    EnterCriticalSection(&g_lock);
+    const auto found=g_chains->find(unit);
+    const bool owned=found!=g_chains->end()&&!found->second.models.empty();
+    LeaveCriticalSection(&g_lock);
+    return owned&&CommittedChainTarget(unit)?1:0;
+}
 
 extern "C" __declspec(dllexport) int __cdecl SdgoReadUnitFormChainStateV1(SdgoUnitFormChainStateV1* output){
     using namespace sdgo::unit_form_chain;

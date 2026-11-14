@@ -507,7 +507,7 @@ sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and 
              SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
 sdgo_add_mod(room_random_client DESCRIPTION "native random loadout client synchronization"
              SOURCES mods/room_random_client/room_random_client.cpp)
-sdgo_add_mod(transform_input_fix DESCRIPTION "Apsalus III missing-animation transform input recovery"
+sdgo_add_mod(transform_input_fix DESCRIPTION "Missing-animation recovery for Apsalus III and verified imported chains"
              SOURCES mods/transform_input_fix/transform_input_fix.cpp)
 sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
              SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
@@ -825,7 +825,7 @@ if(BUILD_TESTING)
     add_test(NAME unit_preview_offline COMMAND unit_preview_test)
     add_test(NAME unit_catalog_offline COMMAND unit_catalog_test)
     foreach(scenario success conflict missing_reference partial_failure index_reference_missing index_conflict
-                     skill_reference_missing funnel_reference_missing special_feature_reference_missing linked_skill_reference_missing dependency_records_success
+                     skill_reference_missing funnel_reference_missing special_feature_reference_missing linked_skill_reference_missing skill_parameter_reference_missing dependency_records_success
                      blueprint_output_missing blueprint_material_missing
                      blueprint_item_reference_missing index_blueprint_reference_missing index_blueprint_output_mismatch
                      large_catalog)
@@ -2164,6 +2164,10 @@ if(BUILD_TESTING)
     target_link_libraries(unit_form_graph_test PRIVATE sdgo_unit_form_graph)
     sdgo_strict(unit_form_graph_test)
     add_test(NAME unit_form_graph_test COMMAND unit_form_graph_test)
+    add_executable(unit_form_models_test tests/unit_form_models_test.cpp)
+    target_link_libraries(unit_form_models_test PRIVATE sdgo_api)
+    sdgo_strict(unit_form_models_test)
+    add_test(NAME unit_form_models COMMAND unit_form_models_test)
     add_executable(human_unit_capture_test tests/human_unit_capture_test.cpp)
     target_link_libraries(human_unit_capture_test PRIVATE sdgo_human_unit_capture)
     sdgo_strict(human_unit_capture_test)

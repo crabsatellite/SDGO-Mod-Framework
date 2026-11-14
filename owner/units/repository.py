@@ -617,7 +617,7 @@ def _validate_plan(
             raise ValueError(f"机体 {identity} 的 UnitModelName 不能为空")
         if row["HP"] <= 0:
             raise ValueError(f"机体 {identity} 的 HP 必须大于零")
-        if row["UnitNumber_Transform"] == identity and plan.get('behavior_profile') != 'native-self-transform-v1':
+        if row["UnitNumber_Transform"] == identity and plan.get('behavior_profile') not in ('native-self-transform-v1','native-directed-forms-v1'):
             raise ValueError(f"机体 {identity} 不能把自身作为变形目标")
     for identity, row in weapon_map.items():
         if not row["WeaponName"].strip():

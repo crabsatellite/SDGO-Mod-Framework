@@ -56,6 +56,11 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
     }
     auto* unit = LocalPlayer(*manager,find);
     if (!unit) return SDGO_GAME_TEST_WAIT;
+    if(*reinterpret_cast<const int*>(unit+0x38)<=0){
+        if(!initialId)return SDGO_GAME_TEST_WAIT;
+        context->Assert(0,"the genuine player died before completing the transform path; dead-actor model swaps cannot prove a playable transform");
+        return SDGO_GAME_TEST_FAIL;
+    }
     // Native unit command 0x1d reads unit[0x272] before calling 006D8B90.
     // unit+9CC is the attack FSM; the movement/transform FSM is unit+9C8.
     auto* move = *reinterpret_cast<unsigned char**>(unit + 0x9c8);
@@ -194,6 +199,11 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         return SDGO_GAME_TEST_WAIT;
     }
     if (issued > completed) {
+        // In the isolated input desktop, the accepted request can remain
+        // queued behind a walking state after the preceding control test.
+        // Continue the same original FSM dispatch used above; do not replace
+        // state/queue pointers or resend an already admitted request.
+        reinterpret_cast<NativeTick>((*reinterpret_cast<void***>(move))[1])(move,unit+0xdc0);
         if (mode == 0 && completed<path.steps && id == path.ids[completed+1] &&
             (path.ids[completed]!=path.ids[completed+1] || unit[0xe34]!=issuedBank)) {
             ++completed;
@@ -201,7 +211,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
             context->Observe(message);
             context->Assert(1, "original transform request committed its other form and released movement mode");
         } else if (context->elapsed_ms - issuedAt > 3000) {
-            char message[224];sprintf_s(message,"admitted native transform failed its record-derived commit after three seconds: expected=%u actual=%u mode=%u bank=%u",path.ids[completed+1],id,mode,unit[0xe34]);
+            char message[384];sprintf_s(message,"admitted native transform failed its record-derived commit after three seconds: expected=%u actual=%u mode=%u bank=%u controller_target=%u state_offset=%08X queued_offset=%08X",path.ids[completed+1],id,mode,unit[0xe34],*reinterpret_cast<unsigned*>(move+0x2b0),static_cast<unsigned>(*reinterpret_cast<uintptr_t*>(move+4)-reinterpret_cast<uintptr_t>(move)),static_cast<unsigned>(*reinterpret_cast<uintptr_t*>(move+8)-reinterpret_cast<uintptr_t>(move)));
             context->Assert(0,message);
             return SDGO_GAME_TEST_FAIL;
         }
@@ -241,7 +251,7 @@ inline int Poll(const SdgoGameTestContextV1* context, const SdgoApi* api, SdgoMo
         // Admission alone is insufficient. Require the actual form commit and
         // released movement state; never resend an admitted request each frame.
         char message[192];
-        sprintf_s(message,"apsalus probe: original transform request issued, immediate return=%u; await real form commit and release",result);
+        sprintf_s(message,"apsalus probe: original transform request issued, immediate return=%u; state=%08X queued=%08X target=%u local=%u hp=%u",result,static_cast<unsigned>(*reinterpret_cast<uintptr_t*>(move+4)-reinterpret_cast<uintptr_t>(move)),static_cast<unsigned>(*reinterpret_cast<uintptr_t*>(move+8)-reinterpret_cast<uintptr_t>(move)),*reinterpret_cast<unsigned*>(move+0x2b0),unit[0x2b65],*reinterpret_cast<unsigned*>(unit+0x38));
         context->Observe(message);
     }
     return SDGO_GAME_TEST_WAIT;

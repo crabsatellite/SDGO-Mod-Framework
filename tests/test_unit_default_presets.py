@@ -26,6 +26,26 @@ class RecipeValidation(unittest.TestCase):
                           'grants_inventory_units': False}, self.recipe['acquisition'])
         self.assertEqual({2, 10, 13}, {row['kind'] for row in self.recipe['templates']})
 
+    def test_published_directed_recipe_uses_real_schema_and_stays_nondefault(self):
+        path=Path(__file__).resolve().parents[1]/'docs/examples/unit-directed-cycle.recipe.json'
+        recipe=preset_recipe.load(path);self.assertFalse(recipe['enabled_by_default'])
+        self.assertFalse(any(recipe['acquisition'].values()))
+        family,=recipe['presets'];self.assertEqual('native-directed-forms-v1',family['profile'])
+        self.assertEqual(4,len(family['forms']));self.assertEqual([],recipe['stage_rules'])
+        forms={row['id']:row for row in family['forms']};cursor=family['root_unit_id'];seen=[]
+        for _ in range(4):seen.append(cursor);cursor=forms[cursor]['target']
+        self.assertEqual(set(forms),set(seen));self.assertEqual(family['root_unit_id'],cursor)
+        self.assertTrue(all(10001<=identity<=30000 for identity in forms))
+        self.assertNotIn('gunion',path.read_text(encoding='utf-8').lower())
+
+    def test_minimal_definitions_example_stays_in_native_unit_id_domain(self):
+        path=Path(__file__).resolve().parents[1]/'docs/examples/unit-family.example.draft.json'
+        example=json.loads(path.read_bytes())
+        from owner.units.model import definitions
+        definitions(example)
+        self.assertTrue(10001<=example['root_unit_id']<=30000)
+        self.assertTrue(all(10001<=row['UnitNumber']<=30000 for row in example['units']))
+
     def test_duplicate_new_identity_and_missing_template_are_refused(self):
         changed = copy.deepcopy(self.recipe)
         changed['presets'][1]['forms'][0]['id'] = changed['presets'][0]['root_unit_id']
@@ -122,6 +142,40 @@ class DefaultService(unittest.TestCase):
         self.assertEqual('installed', controller.state()['status'])
         self.assertEqual('r1', controller.state()['revision'])
 
+    def test_default_preset_preflight_reuses_the_selected_clients_parameter_record(self):
+        from owner.units import skill_parameters
+        module=self.root/'sdgo/mods/unit_catalog';module.mkdir(parents=True)
+        (module/'mod.ini').write_text('[mod]\nversion=0.6.2\n')
+        (module/'unit_catalog.dll').write_bytes(b'fixture programme')
+        (self.root/'GOnline.exe').write_bytes(b'fixture compatible host')
+        self.provider.config={'client':str(self.root),'server_ini':str(self.root/'world.ini')}
+        self.provider._units_root=lambda:self.root/'workspace'
+        recipe=copy.deepcopy(preset_recipe.load());recipe['host_sha256']=hashlib.sha256((self.root/'GOnline.exe').read_bytes()).hexdigest()
+        raw=bytearray(1132);struct.pack_into('<I',raw,0,74020);struct.pack_into('<I',raw,284,8000789)
+        parameter=bytearray(89);struct.pack_into('<I',parameter,0,8000789)
+        selected=SimpleNamespace(record=Mock(return_value=bytes(parameter)))
+        publication=SimpleNamespace(revision='r-parameters',records={13:{74020:bytes(raw)}})
+        def build(prepared,*args):(prepared/'publication').mkdir(parents=True)
+        def preflight(folder,ini,*,baseline=None):
+            result=skill_parameters.validate_publication(publication,baseline)
+            return {'ready':result['complete'],'problems':[]}
+        with patch('owner.units.preset_recipe.load',return_value=recipe), \
+             patch('owner.units.preset_install.verify',return_value=None), \
+             patch('owner.units.assets.Baseline',return_value=selected), \
+             patch('owner.units.repository.Repository',return_value=object()), \
+             patch('owner.units.batch_server.running_services',return_value=[]), \
+             patch('owner.units.preset_publication.build',side_effect=build), \
+             patch('owner.units.batch_server.load_publication',return_value=publication), \
+             patch('owner.units.batch_server.preflight',side_effect=preflight)as checked, \
+             patch('owner.units.batch_server.apply')as applied, \
+             patch('owner.units.preset_install.install'), \
+             patch('owner.units.batch_registry.register'):
+            controller=DefaultPresets(self.provider);controller._ensure()
+        self.assertEqual('installed',controller.state()['status'])
+        self.assertIs(checked.call_args.kwargs['baseline'],selected)
+        self.assertIs(applied.call_args.kwargs['baseline'],selected)
+        selected.record.assert_called_once_with('skill_parameter',8000789)
+
 
 class ScopedPresetInstall(unittest.TestCase):
     def setUp(self):
@@ -150,6 +204,9 @@ class ScopedPresetInstall(unittest.TestCase):
             zdx, zpk, _ = build_archive({path:b'fixture sprite'}, lambda name:True)
             (root/'resources.zdx').write_bytes(zdx)
             (root/'resources.zpk').write_bytes(zpk)
+            (root/'resource-overlay.ini').write_text(
+                '[runtime]\nschema=1\nindex=resources.zdx\narchive=resources.zpk\nindex_sha256='+
+                hashlib.sha256(zdx).hexdigest()+'\narchive_sha256='+hashlib.sha256(zpk).hexdigest()+'\n',encoding='utf-8')
         self.loaded = patch('owner.units.preset_install.load_publication', return_value=self.publication)
         self.unmapped = patch('manager.operations.unmapped_image', side_effect=lambda path:nullcontext())
         self.loaded.start()
@@ -195,6 +252,36 @@ class ScopedPresetInstall(unittest.TestCase):
         (self.source/'catalog.bin').write_bytes(self.primary)
         with self.assertRaisesRegex(ValueError,'编号冲突'):
             self.install()
+
+    def split_primary(self,*,collides=False):
+        from owner.native_archive import build_archive,CHUNK_SIZE
+        import os
+        # Two incompressible independent resources occupy different parts.
+        names=['sprs/owner.spr','sprs/demo.spr' if collides else 'sprs/owner-other.spr']
+        zdx,zpk,_=build_archive({name:os.urandom(CHUNK_SIZE) for name in names},lambda name:True)
+        chunks=struct.unpack_from('<I',zdx,8)[0]
+        extent=chunks//2;self.assertEqual(0,chunks%2)
+        boundary=extent*(CHUNK_SIZE+8)
+        (self.module/'resources.zdx').write_bytes(zdx)
+        (self.module/'resources.zpk').write_bytes(zpk[:boundary])
+        (self.module/'resources.1.zpk').write_bytes(zpk[boundary:])
+        (self.module/'resource-overlay.ini').write_text(
+            '[runtime]\nschema=1\nindex=resources.zdx\narchive=resources.zpk\nparts=2\npart_chunks='+str(extent)+
+            '\nindex_sha256='+hashlib.sha256(zdx).hexdigest()+'\narchive_sha256='+hashlib.sha256(zpk).hexdigest()+'\n',encoding='utf-8')
+        return zdx,zpk[:boundary],zpk[boundary:]
+
+    def test_split_owner_archive_preserved_and_all_parts_checked_for_collisions(self):
+        before=self.split_primary()
+        self.assertTrue(self.install()['changed'])
+        self.assertEqual(before,tuple((self.module/name).read_bytes()for name in ('resources.zdx','resources.zpk','resources.1.zpk')))
+
+    def test_split_archive_collision_or_missing_part_refuses_before_any_write(self):
+        self.split_primary(collides=True)
+        with self.assertRaisesRegex(ValueError,'重名'):self.install()
+        self.assertFalse((self.module/'presets').exists())
+        (self.module/'resources.1.zpk').unlink()
+        with self.assertRaisesRegex(ValueError,'分卷缺失'):self.install()
+        self.assertFalse((self.module/'presets').exists())
 
     def test_post_install_verification_failure_restores_previous_preset_and_settings(self):
         self.install()

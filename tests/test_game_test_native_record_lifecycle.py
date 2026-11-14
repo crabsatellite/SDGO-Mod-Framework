@@ -61,9 +61,10 @@ class NativeRecordLifecycleReceiptTests(unittest.TestCase):
             (100_002, 10, native_record(100_002, 1871, 2)),
             (100_003, 11, native_record(100_003, 732, 3)),
             (100_004, 13, native_record(100_004, 1132, 4)),
+            (100_006, 79, native_record(100_006, 89, 6)),
             (100_005, 0x21, native_record(100_005, 1197, 5)),
         ]
-        self.ids = [100_001, 100_002, 100_003, 100_004]
+        self.ids = [100_001, 100_002, 100_003, 100_004,100_006]
         self.run_id = "fixture-native-lifecycle"
         self.write_catalog(self.records)
         self.receipt = self.make_receipt()
@@ -85,12 +86,15 @@ class NativeRecordLifecycleReceiptTests(unittest.TestCase):
             kind, raw = by_id[identity]
             pointers = {}
             for name in lifecycle.POINTER_KEYS:
+                if kind==79 and name in ('hash_node','hash_value'):
+                    pointers[name]='0x00000000';continue
                 pointers[name] = f"0x{address:08x}"
                 address += 0x10
             rows.append(
                 {
                     "id": identity,
                     "kind": kind,
+                    "integrity_mode":'native-not-indexed'if kind==79 else'native-hash',
                     "record_size": len(raw),
                     "record_hex": raw.hex(),
                     "pointers": pointers,
@@ -101,12 +105,12 @@ class NativeRecordLifecycleReceiptTests(unittest.TestCase):
                         "integrity": 1,
                         "conflict": False,
                     },
-                    "free_counts": {name: 1 for name in lifecycle.POINTER_KEYS},
+                    "free_counts": {name:0 if kind==79 and name in ('hash_node','hash_value')else 1 for name in lifecycle.POINTER_KEYS},
                     "passed": True,
                 }
             )
         return {
-            "schema": "sdgo.native-record-lifecycle/1",
+            "schema": "sdgo.native-record-lifecycle/2",
             "observer_scope": lifecycle.OBSERVER_SCOPE,
             "run_id": self.run_id,
             "expected_ids": self.ids,
@@ -152,7 +156,7 @@ class NativeRecordLifecycleReceiptTests(unittest.TestCase):
         self.assertIs(result["native_actor_lifecycle_accepted"], False)
         self.assertEqual([row["id"] for row in result["records"]], self.ids)
         self.assertEqual(
-            [row["kind"] for row in result["records"]], [2, 10, 11, 13]
+            [row["kind"] for row in result["records"]], [2, 10, 11, 13,79]
         )
         self.assertEqual(
             result["receipt_sha256"],
@@ -201,6 +205,25 @@ class NativeRecordLifecycleReceiptTests(unittest.TestCase):
         self.write_receipt(changed)
         with self.assertRaisesRegex(ValueError, "aliased"):
             self.verify()
+
+    def test_unindexed_kind_requires_positive_absence_and_exact_ownership(self):
+        for field,value in [('integrity_mode','native-hash'),('hash_pointer','0x000abcde'),('hash_free',1),('integrity_capture',0)]:
+            changed=copy.deepcopy(self.receipt);row=changed['records'][-1]
+            if field=='integrity_mode':row[field]=value
+            elif field=='hash_pointer':row['pointers']['hash_node']=value
+            elif field=='hash_free':row['free_counts']['hash_node']=value
+            else:row['captures']['integrity']=value
+            self.write_receipt(changed)
+            with self.subTest(field=field),self.assertRaises(ValueError):self.verify()
+
+    def test_legacy_hashed_receipts_remain_valid_but_cannot_claim_kind79(self):
+        changed=copy.deepcopy(self.receipt);changed['schema']='sdgo.native-record-lifecycle/1'
+        for row in changed['records']:row.pop('integrity_mode')
+        self.write_receipt(changed)
+        with self.assertRaisesRegex(ValueError,'schema2'):self.verify()
+        changed['records']=changed['records'][:-1];changed['expected_ids']=changed['expected_ids'][:-1]
+        self.write_receipt(changed)
+        self.assertEqual('pass',self.verify(ids=self.ids[:-1])['status'])
 
     def test_missing_double_or_boolean_free_count_is_rejected(self):
         for value, pattern in ((None, "fields"), (2, "equal one"), (True, "integer")):

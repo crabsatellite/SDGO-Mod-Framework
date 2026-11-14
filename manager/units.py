@@ -397,6 +397,8 @@ class Units(Provider):
                         with engine.lock:
                             draft = engine._get(engine.read(), identity)
                             if draft['status'] != 'confirmed': raise ValueError('请先确认当前版本')
+                            if draft.get('release',{}).get('server_zip'):
+                                return Binary(engine.export_server(identity),'application/zip','SDGO-UnitImport-Server.zip')
                             return Binary(storage.json_bytes(engine.plan(draft)), 'application/json', 'unit-import-server-plan.json')
                     return engine.public(identity)
             expected = headers.get('X-Catalog-Revision', '')

@@ -21,8 +21,9 @@ UNIT_FILES = ("0237", "0242", "0243", "0244", "0246", "0245")
 WEAPON_FILES = ("0067", "0068", "0107", "0130", "0157", "0164", "0200", "0238", "0274")
 ITEM_FILES = ("0031",)
 RECORD_FILES = {"unit": (UNIT_FILES, codec.UNIT_SIZE), "weapon": (WEAPON_FILES, codec.WEAPON_SIZE), "item": (ITEM_FILES, 614),
-                "unit_index": (("0220",),614), "blueprint": (("0029",),1197)}
-RUNTIME_TYPES = {"unit": 2, "weapon": 10, "item": 34, "unit_index":85, "blueprint":33}
+                "unit_index": (("0220",),614), "blueprint": (("0029",),1197),
+                "skill_parameter": (("0212","0213","0214"),89)}
+RUNTIME_TYPES = {"unit": 2, "weapon": 10, "item": 34, "unit_index":85, "blueprint":33,"skill_parameter":79}
 
 MAX_RESOURCE_BYTES = 64 * 1024 * 1024
 CROP_TOLERANCE_TEXELS = 2  # authored sprite rectangles may overrun the texture by this much (native UV clamp)

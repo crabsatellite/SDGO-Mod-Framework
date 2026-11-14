@@ -42,8 +42,8 @@ MAX_PLAN_BYTES = 128 * 1024 * 1024
 MAX_CATALOG_BYTES = 64 * 1024 * 1024 + 32
 MAX_FAMILIES = 4096
 _FAMILY_FIELDS = {'family_key', 'root_unit_id', 'item_template_id', 'units', 'weapons', 'item', 'names'}
-_FAMILY_OPTIONAL = {'shared_form_ids', 'shared_weapon_ids', 'behavior_profile'}
-_RECORD_BYTES = {2: 4976, 10: 1871, 11: 732, 12: 1559, 13: 1132}
+_FAMILY_OPTIONAL = {'shared_form_ids', 'shared_weapon_ids', 'behavior_profile', 'blueprints'}
+_RECORD_BYTES = {2: 4976, 10: 1871, 11: 732, 12: 1559, 13: 1132,79:89}
 _IN_CHUNK = 500
 
 Progress = Callable[[dict], None]
@@ -127,29 +127,15 @@ def _catalog_records(root: Path) -> dict[int, dict[int, bytes]]:
         sealed = (manifest.get('files') or {}).get('client/sdgo/mods/unit_catalog/catalog.bin') if isinstance(manifest, dict) else None
         if sealed is not None and sealed != _sha(raw):
             raise ValueError('客户端机体目录与安装包清单的哈希不一致')
-    if len(raw) < 32 or raw[:8] != b'SDGOUN1\0':
-        raise ValueError('客户端机体目录容器无效')
-    version, header, count, extent, _, reserved = struct.unpack_from('<6I', raw, 8)
-    if version != 1 or header != 32 or reserved or len(raw) != 32 + extent or count > CATALOG_RECORD_LIMIT:
-        raise ValueError('客户端机体目录头部无效')
-    cursor, result = 32, {}
-    for _ in range(count):
-        if cursor + 24 > len(raw):
-            raise ValueError('客户端机体目录记录头截断')
-        kind, identity, size, _, flags, reserved = struct.unpack_from('<6I', raw, cursor)
-        cursor += 24
-        record = raw[cursor:cursor + size]
-        cursor += size
-        if flags or reserved or len(record) != size or len(record) < 5 or struct.unpack_from('<I', record)[0] != identity:
-            raise ValueError('客户端机体目录记录无效：%d' % identity)
-        expected = _RECORD_BYTES.get(kind)
-        if expected is not None and size != expected:
-            raise ValueError('客户端机体目录记录长度无效：%d' % identity)
-        if identity in result.setdefault(kind, {}):
-            raise ValueError('客户端机体目录记录重复：%d' % identity)
-        result[kind][identity] = record
-    if cursor != len(raw):
-        raise ValueError('客户端机体目录长度无效')
+    # Use the same global-ID/extent/checksum contract as client authoring.
+    # Per-kind dictionaries alone cannot detect cross-kind global collisions.
+    from .indexes import catalog_records
+    result = {}
+    for identity,(kind,record) in catalog_records(raw).items():
+        if kind==2:
+            from .codec import model_override
+            model_override(record)
+        result.setdefault(kind,{})[identity]=record
     return result
 
 
@@ -334,6 +320,8 @@ def family_plan(family: dict, revision: str, items: dict[int, dict]) -> dict:
              'item': {**{column: template[column] for column in ITEM_COLUMNS}, **family['item']}, 'names': family['names']}
     if family.get('behavior_profile'):
         value['behavior_profile'] = family['behavior_profile']
+    if family.get('blueprints'):
+        value['blueprints'] = family['blueprints']
     return value
 
 
@@ -500,7 +488,12 @@ def preflight(folder, server_ini, *, baseline=None) -> dict:
     publication = load_publication(folder)
     operations.require_local_database(server_ini)
     problems: list[dict] = []
-    from . import program_resources
+    from . import program_resources,skill_parameters
+    try:
+        skill_parameter_report=skill_parameters.validate_publication(publication,baseline)
+    except (ValueError,OSError)as error:
+        skill_parameter_report={'complete':False,'actor_accepted':False}
+        problems.append({'family_key':'','error':str(error)})
     try:
         program_resources_report=program_resources.validate_publication(publication,baseline)
     except (ValueError,OSError) as error:
@@ -545,7 +538,7 @@ def preflight(folder, server_ini, *, baseline=None) -> dict:
                 warnings.append('%s 的 %s 被 Manager 设置或全局开关关闭；形态图会写入，但服务端不会加载' % (row['host'], GRAPH_MOD))
     return {'publication': publication.summary(), 'order': [family['family_key'] for family in order],
             'families_installed': installed, 'families_new': len(families) - installed, 'families': families,
-            'shared': shared, 'program_resources':program_resources_report, 'graph_hosts': _public_hosts(hosts), 'running_services': running,
+            'shared': shared, 'program_resources':program_resources_report,'skill_parameters':skill_parameter_report, 'graph_hosts': _public_hosts(hosts), 'running_services': running,
             'servers_stopped': not running, 'problems': problems, 'warnings': warnings,
             'ready': not problems and not running, 'changes_applied': False, 'grants_units': False}
 
@@ -682,7 +675,8 @@ def apply(folder, server_ini, progress: Progress | None = None,graph_context=Non
         raise ValueError('请先在机体导入模块配置 WorldServer INI')
     from manager.operations import server_change
     publication = load_publication(folder)
-    from . import program_resources
+    from . import program_resources,skill_parameters
+    skill_parameters.validate_publication(publication,baseline)
     program_resources.validate_publication(publication,baseline)
     order = family_order(publication.families)
     hosts = battle_hosts(server_ini) if publication.graph_requests else []

@@ -1,6 +1,7 @@
 """Transactional data-only preset installation beside an existing owner catalog."""
 from __future__ import annotations
 import hashlib
+import configparser
 import json
 from pathlib import Path
 import os
@@ -16,6 +17,29 @@ ALLOWED={'catalog.bin','definitions.json','resources.zdx','resources.zpk','resou
          'skill-atlases.bin','stage-rules.bin','blueprint-availability.json','blueprint-availability.bin'}
 
 def sha(raw):return hashlib.sha256(raw).hexdigest()
+
+
+def _overlay(folder):
+    """Open the complete native archive, including declared split parts."""
+    from owner.native_archive import OverlayReader,part_paths,MAX_INDEX_BYTES
+    config=folder/'resource-overlay.ini'
+    if not config.is_file() or config.stat().st_size>64*1024:raise ValueError('机体资源归档配置缺失或超过限制')
+    parser=configparser.ConfigParser(interpolation=None,strict=True)
+    try:
+        parser.read_string(config.read_text('utf-8-sig'));section=parser['runtime']
+        if section.getint('schema')!=1 or section.get('index')!='resources.zdx' or section.get('archive')!='resources.zpk':raise ValueError()
+        parts=section.getint('parts',fallback=1);chunks=section.getint('part_chunks',fallback=0)
+        if not 1<=parts<=32 or (parts>1 and chunks<1) or chunks<0:raise ValueError()
+    except (KeyError,ValueError,configparser.Error,UnicodeError):raise ValueError('机体资源归档配置无效')from None
+    paths=[config,folder/'resources.zdx',*part_paths(folder/'resources.zpk',parts)]
+    for path in paths:
+        if not path.is_file() or path.is_symlink() or getattr(path.stat(),'st_file_attributes',0)&0x400:
+            raise ValueError('机体资源归档分卷缺失或包含链接：'+path.name)
+    index=paths[1]
+    if index.stat().st_size>MAX_INDEX_BYTES:raise ValueError('机体资源归档索引超过限制')
+    raw=index.read_bytes()
+    if sha(raw)!=section.get('index_sha256'):raise ValueError('机体资源归档索引哈希不一致')
+    return OverlayReader(raw,folder/'resources.zpk',parts,chunks)
 
 def verify(client):
     folder=Path(client)/'sdgo/mods/unit_catalog/presets';path=folder/RECEIPT
@@ -47,11 +71,9 @@ def install(client,publication,fingerprint,*,dry_run=False):
         if overlap:raise ValueError('默认预设与已有机体目录编号冲突，已保留已有内容：'+str(min(overlap)))
     # The broker keeps both archives independently; no native virtual path may
     # shadow a resource already supplied by the owner's primary bundle.
-    from owner.collection_capsule.client import ArchiveReader
     if (module/'resources.zdx').is_file():
-        original=ArchiveReader(module/'resources.zdx',module/'resources.zpk')
-        candidate=ArchiveReader(source/'resources.zdx',source/'resources.zpk')
-        overlap=set(original.entries)&set(candidate.entries)
+        with _overlay(module) as original,_overlay(source) as candidate:
+            overlap=set(original.entries)&set(candidate.entries)
         if overlap:raise ValueError('默认预设资源与已有目录重名：'+sorted(overlap)[0])
     from manager.operations import unmapped_image
     with unmapped_image(client/'GOnline.exe'):

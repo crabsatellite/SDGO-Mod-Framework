@@ -24,7 +24,7 @@
     {
       "id": "form_chains",
       "key": "FormChains",
-      "label": "三阶段与入口形态模型链（需服务端形态图授权）",
+      "label": "有向多形态模型链（需服务端形态图授权）",
       "type": "boolean",
       "default": true,
       "file": "mod.ini",
@@ -48,5 +48,16 @@
       "catalog.bin"
     ]
   },
-  "runtime_enabled_setting": "enabled"
+  "runtime_enabled_setting": "enabled",
+  "dependencies": {
+    "required": [
+      {
+        "id": "transform_input_fix",
+        "minimum": "1.1.0",
+        "capability": "unit.transform_recovery",
+        "capability_version": 1,
+        "when": {"setting": "form_chains", "equals": true}
+      }
+    ]
+  }
 }

@@ -286,7 +286,7 @@ function renderNativeContent(){
   for(const [index,group] of groups.entries()){
     const box=document.createElement("details");box.className="panel";box.style.padding="12px";box.style.marginTop="10px";
     const title=document.createElement("summary");const s=group.summary||{};
-    title.textContent="资料组 "+(index+1)+" · 技能 "+(s.skills||0)+" · 浮游 "+(s.funnels||0)+" · 武器特殊效果 "+(s.special_features||0)+" · 资源 "+(s.resources||0)+(s.unsupported_records?" · 待适配 "+s.unsupported_records:"");
+    title.textContent="资料组 "+(index+1)+" · 技能 "+(s.skills||0)+" · 技能效果参数 "+(s.skill_parameters||0)+" · 浮游 "+(s.funnels||0)+" · 武器特殊效果 "+(s.special_features||0)+" · 资源 "+(s.resources||0)+(s.unsupported_records?" · 待适配 "+s.unsupported_records:"");
     box.append(title);
     const supplied=document.createElement("p");const parts=[];
     if(s.skills)parts.push("服务端技能定义"+(s.server_skills?"已携带":"待补充"),"技能图集"+(s.skill_atlases?"已携带":"待补充"));
@@ -834,6 +834,7 @@ function renderIdentity(){
     addOption(profile,"native-one-way-forms-v1","native-one-way-forms-v1 · 原生单向形态（终态不可变回）");
     addOption(profile,"native-entry-forms-v1","native-entry-forms-v1 · 入口形态（变入已发布的双向形态）");
     addOption(profile,"native-three-stage-forms-v1","native-three-stage-forms-v1 · 三阶段形态（不可逆，需服务端绑定）");
+    addOption(profile,"native-directed-forms-v1","native-directed-forms-v1 · 有向多形态（保留循环／辅助入口，需服务端绑定）");
     addOption(profile,"native-self-transform-v1","native-self-transform-v1 · 自引用记录（R行为需配套验证）");
     addOption(profile,"native-single-form-v1","native-single-form-v1 · 原生单形态");
     if(draft.behavior_profile&&!Array.from(profile.options).some(option=>option.value===draft.behavior_profile)){

@@ -47,6 +47,15 @@ def manifest():
 
 
 class UnitImportDependenciesTests(unittest.TestCase):
+    def test_resolved_skill_parameters_need_the_exact_record_hash(self):
+        value=manifest();edge={'id':'parameters:71001','owner':'example-owner','kind':'skill-parameter-record',
+            'reference':'kind79:8000789','state':'resolved','required':True,'proof_sha256':HASH_B}
+        value['edges'].append(edge);value['records'][0]['dependency_ids'].append(edge['id'])
+        with self.assertRaisesRegex(ValueError,'record SHA-256'):dependencies.validate_manifest(value)
+        edge['sha256']=HASH_A
+        result=dependencies.validate_manifest(value)
+        self.assertTrue(result['admission']['native_registration_blocked'])
+
     def test_unknown_required_dependency_is_preserved_as_blocker(self):
         result = dependencies.validate_manifest(manifest())
 

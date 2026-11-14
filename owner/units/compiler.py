@@ -33,12 +33,18 @@ def fnv(raw):
 def native_catalog(records):
     seen=set();parts=[]
     for kind,identity,raw in sorted(records,key=lambda r:r[1]):
-        if kind not in {2,10,11,12,13,20,33,34,85} or len(raw)!={2:4976,10:1871,11:732,12:1559,13:1132,20:106,33:1197,34:614,85:614}[kind]:raise ValueError('不支持的原生记录类型或长度')
+        if kind not in {2,10,11,12,13,20,33,34,79,85} or len(raw)!={2:4976,10:1871,11:732,12:1559,13:1132,20:106,33:1197,34:614,79:89,85:614}[kind]:raise ValueError('不支持的原生记录类型或长度')
         if type(identity) is not int or identity<=0 or identity in seen or struct.unpack_from('<I',raw)[0]!=identity or raw[4]!=0:
             raise ValueError('原生记录身份、发布标记或全局编号冲突')
+        if kind==2:
+            from .codec import model_override
+            model_override(raw)
         if kind==33:
             from .blueprint_codec import decode
             decode(raw)
+        if kind==79:
+            from .profiles.skill_parameters_89 import validate_record
+            validate_record(raw,identity)
         seen.add(identity);parts.append(struct.pack('<6I',kind,identity,len(raw),fnv(raw),0,0)+raw)
     if not seen:raise ValueError('没有可以发布的机体记录')
     payload=b''.join(parts)
@@ -97,12 +103,17 @@ def _runtime_manifest(raw):
     return render(output.getvalue().encode('utf-8'),contract)
 
 
-def publish(workspace,state,selected,transaction):
+def publish(workspace,state,selected,transaction,*,include_server_graphs=True):
     from .assets import sprite_binary
     from .codec import patch_weapon,patch_unit,UNIT_FIELDS
     from .model_integrity import bind_model_digest
     from owner.native_archive import build_archive
     binary,mod_manifest,symbols,installer=_adapter_files(workspace)
+    from .runtime_capabilities import directed_forms
+    for draft in state['drafts'].values():
+        family=draft.get('published')
+        if family and family.get('behavior_profile')=='native-directed-forms-v1' and directed_forms(binary)<len(family['forms']):
+            raise ValueError('配套 unit_catalog 客户端组件未声明所需的有向多形态能力，请先更新框架程序')
     records=[];assets={};registrations=[];plans=[];published=[];blueprint_receipts=[]
     index_rows=workspace.baseline.unit_index()
     from .indexes import Allocator,installed
@@ -165,6 +176,8 @@ def publish(workspace,state,selected,transaction):
             raw=bytearray(patch_unit(source,shared))
             if len(raw)!=4976:raise ValueError('机体原始记录已改变')
             wchar(raw,612,30,row['model'].replace('/','\\'))
+            from .codec import model_override
+            wchar(raw,738,30,model_override(source).replace('/','\\'))
             model_path=row['model'].replace('\\','/').lower()
             model_bytes=assets.get(model_path)
             if model_bytes is None:model_bytes=workspace.baseline.read(model_path)
@@ -318,6 +331,8 @@ def publish(workspace,state,selected,transaction):
             '商城/扭蛋模块使用 registrations.json 中的同版原生图片路径。\n'
             '本包的静态图片预览不是实际游戏内截图。\n').encode()}
     for path,raw in assets.items():files['client/'+path]=raw
+    from . import form_publication
+    server_members=form_publication.build(published,plans,catalog,content_revision) if include_server_graphs else {}
     manifest={'module':'unit_catalog','schema_version':1,'revision':content_revision,'host':HOST,'host_sha256':HOST_SHA256,
         'files':{name:hashlib.sha256(raw).hexdigest() for name,raw in files.items()},
         'owned_paths':sorted(assets),
@@ -328,5 +343,17 @@ def publish(workspace,state,selected,transaction):
     client_zip=transaction/'SDGO-UnitImport-Client.zip';_write_zip(client_zip,files)
     server_plan=transaction/'server-plan.json'
     server_plan.write_bytes(json.dumps({'schema_version':1,'revision':content_revision,'families':plans,'credentials_included':False},ensure_ascii=False,indent=2).encode())
-    return {'revision':content_revision,'client_zip':str(client_zip),'client_zip_sha256':hashlib.sha256(client_zip.read_bytes()).hexdigest(),
+    result={'revision':content_revision,'client_zip':str(client_zip),'client_zip_sha256':hashlib.sha256(client_zip.read_bytes()).hexdigest(),
         'server_plan':str(server_plan),'families':len(published),'records':len(records),'assets':len(assets),'restart_required':True}
+    if server_members:
+        folder=transaction/'server-publication'
+        # Backend plans remain an owner-only download. They never enter the
+        # player ZIP/profile. Keep its paired client resources available to
+        # the batch validator in this independent publication folder.
+        server_members.update({'package/'+path:raw for path,raw in files.items()})
+        for path,raw in server_members.items():
+            target=folder/path;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(raw)
+        result['server_publication']=str(folder)
+        server_zip=transaction/'SDGO-UnitImport-Server.zip';_write_zip(server_zip,server_members)
+        result.update(server_zip=str(server_zip),server_zip_sha256=hashlib.sha256(server_zip.read_bytes()).hexdigest())
+    return result

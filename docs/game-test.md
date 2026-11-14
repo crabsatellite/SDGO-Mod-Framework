@@ -613,6 +613,9 @@ released movement mode, then verifies mapped movement and primary attack. Missin
 records, self loops, exhausted paths and unexpected identities fail the check.
 This test does not create form records, alter eligibility or supply reverse edges.
 The default two-form scenario still requires the original reciprocal pair.
+The player must remain alive: dead-actor model swaps are rejected as transformation evidence. On the isolated input
+desktop, the observer continues the original movement-FSM dispatch for an accepted queued request without changing
+state pointers or resending it. Directed scenarios get a bounded per-step control budget; ordinary PvP keeps its timeout.
 
 Local admission is distinct from a successful transform. The observer waits for
 normal reload/cooldown eligibility after a denied local request; it never fills

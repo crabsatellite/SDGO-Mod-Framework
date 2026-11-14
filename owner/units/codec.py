@@ -71,6 +71,7 @@ UNIT_FIELDS: dict[str, dict[str, Any]] = {
     "WeaponNumber_3": {"offset": 593, "type": "u32", "verified": True},
     "WeaponNumber_FatalAttack": {"offset": 597, "type": "u32", "verified": True},
     "model_path": {"offset": 612, "type": "utf16le", "bytes": 60, "verified": True},
+    "model_override": {"offset": 738, "type": "utf16le", "bytes": 60, "verified": True},
     "portrait_shop": {
         "offset": 4654,
         "type": "utf16le",
@@ -211,10 +212,25 @@ def _validate_common(raw: bytes, size: int, label: str) -> int:
     return identity
 
 
+def model_override(raw: bytes) -> str:
+    """The target model constructor prefers this optional 30-wide path.
+
+    Numeric/opaque bytes from another layout are not a target model filename.
+    Never erase them here: their source intent must be resolved by the author.
+    """
+    identity=_validate_common(raw,UNIT_SIZE,'unit record')
+    label=f'unit {identity} model override @738'
+    value=_virtual_path(_utf16(raw,738,60,label),label)
+    if value and (not value.startswith('mdrs/') or not value.endswith('.mod')):
+        raise ValueError(label+': expected an empty field or mdrs/*.mod path')
+    return value
+
+
 def decode_unit(raw: bytes) -> dict[str, Any]:
     identity = _validate_common(raw, UNIT_SIZE, "unit record")
     name = _utf16(raw, 5, 100, f"unit {identity} name", required=True)
     model = _virtual_path(_utf16(raw, 612, 60, f"unit {identity} model"), f"unit {identity} model")
+    override=model_override(raw)
     portraits = {
         key: _virtual_path(
             _utf16(raw, int(UNIT_FIELDS[key]["offset"]), 100, f"unit {identity} {key}"),
@@ -271,7 +287,8 @@ def decode_unit(raw: bytes) -> dict[str, Any]:
         client["WeaponNumber_FatalAttack"],
     ]
     references = set(scan_resource_references(raw, ".bin"))
-    references.update(path for path in (model, *portraits.values()) if path)
+    references.update(path for path in (model, override, *portraits.values()) if path)
+    client['model_override']=override
     return {
         "kind": "unit",
         "id": identity,
@@ -279,6 +296,7 @@ def decode_unit(raw: bytes) -> dict[str, Any]:
         "client": client,
         "raw": raw,
         "model": model,
+        "model_override": override,
         "transform_target": client["UnitNumber_Transform"],
         "weapons": weapons,
         "resource_refs": sorted(references),

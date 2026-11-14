@@ -73,7 +73,7 @@ class DefaultPresets:
             prepared.rename(output)
         loaded=batch_server.load_publication(publication)
         preset_install.install(client,publication,fingerprint,dry_run=True)
-        review=batch_server.preflight(publication,ini)
+        review=batch_server.preflight(publication,ini,baseline=baseline)
         if not review['ready']:raise ValueError('默认演示预设尚不能登记：'+str(review['problems'][:1]))
         with self.provider.lock:
             if dict(self.provider.config)!=c:self._set('waiting_configuration');return

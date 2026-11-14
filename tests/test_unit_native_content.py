@@ -81,6 +81,16 @@ def attachment(manifest,files):
 
 
 class NativeContent(unittest.TestCase):
+    def test_skill_parameter_record_is_hash_bound_and_counted_without_actor_authority(self):
+        manifest,files=fixture();raw=bytearray(89);struct.pack_into('<I',raw,0,8000789)
+        struct.pack_into('<6f',raw,65,1,1,1,1,1,1);raw=bytes(raw)
+        member='dependencies/example-skill-parameters.bin';files[member]=raw
+        manifest['records'].append({'kind':79,'id':8000789,'profile':'native-type79-89-v1','member':member,'sha256':sha(raw)})
+        bindings,packed=bind(manifest,files);result=validate_project_bindings(bindings,files=packed)[0]
+        self.assertEqual(1,result['summary']['skill_parameters']);self.assertEqual(0,result['summary']['unsupported_records'])
+        self.assertFalse(result['native_registration_authorized']);self.assertFalse(result['runtime_authority_issued'])
+        self.assertEqual([],result['requirements'])
+
     def test_complete_kind12_is_carried_as_a_typed_dependency_without_actor_authority(self):
         manifest,files=fixture();raw=struct.pack('<I',59051)+bytes(1555)
         member='dependencies/example-special-feature.bin';files[member]=raw

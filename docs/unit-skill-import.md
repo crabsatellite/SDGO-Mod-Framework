@@ -55,6 +55,27 @@ Native data-driven conditions, stats and effects can be combined when the target
 Supply linked skills, effects, textures and other referenced records, or verify the identical target versions.
 A missing ID means its dependency needs importing; it does not mean the skill should be deleted.
 
+A nonzero little-endian `u32` at byte offset `284` of a complete kind-13 skill record refers to a kind `79`,
+89-byte skill-effect parameter record. A publication may carry the complete record with profile
+`native-type79-89-v1`, or the selected paired client may supply a byte-valid compatible original with the same identity.
+The importer checks only the proven layout constraints and preserves the remaining fields as opaque native data. It does not
+invent their semantics, substitute a nearby ID or clear the reference. Do not fabricate a missing original with an arbitrary zero-filled placeholder; structural validation alone does not prove provenance or effects. Missing dependencies
+are rejected before database mutation and again by client catalog validation. Dependency closure does not prove Actor activation or gameplay.
+Preflight also rejects a published row that differs from the paired original at the same ID. Allocate an independent ID and rebind its typed references when both versions must remain available.
+The static baseline index covers the original table codecs it can read; a negative lookup is not proof of vacancy across unrecognized codecs. Check new identities against the actual native global tree before activation. The client also rejects a global-key collision before allocating the publication's records.
+
+This target client selects the first or last three entries of its six-slot weapon parameters according to the current transformation state.
+A three-slot record from another version is not proven compatible by padding, repeating its first three entries, or finding an identical first-three-slot payload.
+Verify the source and target consumers and each form's skill and weapon bindings before supplying the complete target record.
+Observe the actual effects on the affected weapons in both forms during native acceptance.
+
+For a generic example, an author verifies from both consumers that forms 0 and 1 reference separate three-weapon groups.
+If one proven property is `[0,200,0]` in form 0 and `[300,300,0]` in form 1, its target six-slot group is
+`[0,200,0,300,300,0]`. Keeping only the first group or repeating it changes the authored effect.
+A form with no parameter reference may use a default only after its native default behavior has been established.
+For additional forms or independent parameter groups, define each target node's bindings explicitly; one six-slot target record does not hold arbitrarily many groups.
+This semantic check belongs to target-record preparation. The public importer consumes the completed compatible records.
+
 The authoring attachment can contain:
 
 ```text
@@ -176,6 +197,12 @@ The attachment's root `manifest.json` uses [`sdgo.unit-native-content/1`](unit-n
     "profile": "native-type13-1132-v1",
     "member": "records/training-guard.bin",
     "sha256": "<complete-1132-byte-record-sha256>"
+  }, {
+    "kind": 79,
+    "id": 8000789,
+    "profile": "native-type79-89-v1",
+    "member": "records/training-guard-parameters.bin",
+    "sha256": "<complete-89-byte-record-sha256>"
   }],
   "resources": [{
     "path": "sprs/example_training_guard.spr",
@@ -200,6 +227,8 @@ The attachment's root `manifest.json` uses [`sdgo.unit-native-content/1`](unit-n
 `member` names a file inside the attachment; `path` names a game resource. The unit project's `native_content`
 references this manifest's member name and complete file hash. Include every referenced member.
 Both the client unit record and server unit definition refer to `74001` in `SkillNumber_1` or `SkillNumber_2`.
+This fictional example also writes `8000789` as the little-endian `u32` at offset `284` of
+`records/training-guard.bin`; the first DWORD of the kind-79 file has the same identity. Each SHA-256 binds the complete final bytes of its own record.
 Project save/reimport retains the declarations. Single-family confirmation has separate publication checks;
 accepting an attachment does not install a runtime package.
 
@@ -211,7 +240,8 @@ For package builders with prepared target-native data, the public import-side AP
 |---|---|
 | `owner.units.native_content.validate_project_bindings` | Validates attachment members, records, hashes and supporting declarations. |
 | `owner.units.server_dependencies.prepare` | Resolves full server definitions, paired fields, conflicts and ownership without SQL writes. |
-| `owner.units.compiler.native_catalog` | Combines final unit, weapon, skill and other records into `catalog.bin`; kind `13` is supported. |
+| `owner.units.compiler.native_catalog` | Combines supported final unit, weapon, skill and parameter records into `catalog.bin`, including kind `13` and kind `79`. |
+| `owner.units.skill_parameters.validate_publication` | Resolves each skill `+284` reference from the publication or paired client and rejects missing complete kind-79 records before SQL. |
 | `owner.native_archive.build_archive` / `build_archive_file` | Compiles declared resources into the native overlay index and archive. |
 | `owner.units.skill_atlases.compile_bundle` | Binds atlas declarations to the final catalog/index/archive and emits `skill-atlases.bin`. |
 | `owner.units.batch_server.load_publication` | Reads and validates the publication's server plan, client catalog and form requests; client installation separately checks its manifest and resources. |
@@ -311,6 +341,13 @@ checks require GameTest client 0.1.39 or newer. Earlier SDKs do not provide equi
 After changing authoring inputs, use an SDK-supported content installation input or prepare a new candidate and read
 back its sealed hashes. `reuse_prepared` retains client content and does not synchronize later author-template edits.
 
+When activation is absent, distinguish missing condition coverage from an import or consumer failure.
+`ActivateValue=0` does not always mean unconditional activation: some native types depend on the match mode,
+team state and a server notification. For a fictional "activate while our team is disadvantaged" skill,
+record the state and notification actually used by that mode before checking ordinary-slot activation and effects.
+Losing local HP alone does not establish that condition. Preserve the original condition and create the scenario
+through normal combat; editing the record or directly setting the active state is not an acceptance test.
+
 ## When an additional adapter is needed
 
 ### Ordinary skill slots and compatibility aliases
@@ -323,7 +360,11 @@ batch import refuses an extra-slot ID in `SkillNumber_1` or `SkillNumber_2`.
 For example, an author moving a fictional extra-slot skill into slot 1 allocates an unused ordinary ID, clones
 the complete record, changes its first DWORD and any explicitly mapped linked-skill field at byte 354, and
 rebinds the intended unit fields. Keep activation conditions, effect parameters, dispatch, text, icon frame and
-resource references. Check the native global tree, every installed content scope, shipped presets and server SQL
+resource references. The skill `+284` parameter edge and the linked-skill field at byte 354 are independent:
+relocating the skill to an ordinary ID normally preserves `+284` unchanged. Only an intentional parameter relocation updates
+the kind-79 first DWORD, skill `+284`, manifest identity and every affected digest together. Include the complete 89-byte
+record unless the paired client proves an identical compatible original; never clear, guess or substitute a nearby parameter.
+Check the native global tree, every installed content scope, shipped presets and server SQL
 for collisions; a free entry in `0253` alone is insufficient.
 
 For a complete, already validated 1132-byte record, the client-side clone is limited to these typed fields:

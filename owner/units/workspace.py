@@ -420,6 +420,7 @@ class Workspace:
         def need(code,message,field=None,level='required',accept=None):
             issues.append({'code':code,'message':message,'field':field,'level':level,**({'accept':accept} if accept else {})})
         native_groups=[]
+        model_overrides=set()
         root=draft.get('root_unit_id');forms={r['id']:r for r in draft['forms']};newweapons={r['id'] for r in draft['weapons']}
         for row in draft['weapons']:
             funnel=row['server'].get('FunnelID')
@@ -507,6 +508,24 @@ class Workspace:
         elif profile=='native-entry-forms-v1':
             if len(forms)!=1 or not any(r['transform_target'] and r['transform_target'] not in forms for r in forms.values()):
                 need('behavior_mismatch','入口形态要求单条记录，其变形目标为已发布的双向形态之一','behavior_profile','error')
+        elif profile=='native-directed-forms-v1':
+            if not 2<=len(forms)<=model.MAX_DIRECTED_FORMS:
+                need('unsupported_forms',f'有向多形态要求 2–{model.MAX_DIRECTED_FORMS} 条完整记录','behavior_profile','error')
+            if any(r['transform_target'] and r['transform_target'] not in forms for r in forms.values()):
+                need('behavior_mismatch','有向多形态的全部变形目标必须在同一项目内','behavior_profile','error')
+            if root in forms:
+                neighbors={i:set() for i in forms}
+                for i,row in forms.items():
+                    target=row['transform_target']
+                    if target in forms:neighbors[i].add(target);neighbors[target].add(i)
+                reached=set();pending=[root]
+                while pending:
+                    node=pending.pop()
+                    if node not in reached:reached.add(node);pending.extend(neighbors[node]-reached)
+                if reached!=set(forms):
+                    need('disconnected_form','不相关的形态请拆成独立项目；同一有向形态图必须连通',None,'error')
+            need('form_graph_runtime','保留原始有向边、循环和辅助入口；只有选定根形态可进入机库。发布将生成同版服务端计划与形态图，须安装配套客户端和战斗服务端组件；不会自动添加逆向变形或阶段触发器',
+                 'behavior_profile','warning')
         elif profile=='native-three-stage-forms-v1':
             if len(forms)!=3:
                 need('unsupported_forms','三阶段机体要求 3 条完整形态记录','behavior_profile','error')
@@ -539,7 +558,10 @@ class Workspace:
                 try:
                     raw=self.blob(row['source_sha'])
                     values={k:v for k,v in row['server'].items() if v is not None}
-                    if kind=='unit':patch_unit(raw,{k:v for k,v in values.items() if k in UNIT_FIELDS and UNIT_FIELDS[k]['type']!='utf16le'})
+                    if kind=='unit':
+                        from .codec import model_override
+                        override=model_override(patch_unit(raw,{k:v for k,v in values.items() if k in UNIT_FIELDS and UNIT_FIELDS[k]['type']!='utf16le'}))
+                        if override:model_overrides.add(override)
                     else:patch_weapon(raw,{k:v for k,v in values.items() if k!='WeaponName'})
                 except (ValueError,OSError) as e:need('record_encoding',f"{row['id']} 记录不能安全编码：{e}",None,'error')
                 for name in columns:
@@ -572,6 +594,7 @@ class Workspace:
                 need('skill_omitted',f"已主动移除形态 {omission['form_id']} 的技能 {omission['skill_id']}；该技能效果不会生效，客户端与服务端同时清零",
                      f"forms.{omission['form_id']}.{omission['field']}",'warning')
         required={r['recipe_sprite'] for r in draft.get('blueprints',[]) if r.get('recipe_sprite')}
+        required.update(model_overrides)
         for row in draft['forms']+draft['weapons']:required.update(row.get('resource_refs',[]))
         native_members=set().union(*(group['members'] for group in native_groups)) if native_groups else set()
         owned={f['path'].replace('\\','/').lower():f for f in draft['files']
@@ -638,6 +661,10 @@ class Workspace:
             except (ValueError,KeyError) as e:need('server_plan',str(e),None,'required',accept='.json')
         if self.publisher is None and (not self.module_binary or not self.module_binary.is_file()):
             need('runtime','缺少配套的 unit_catalog 客户端组件，不能发布',None,'error')
+        elif self.publisher is None and profile=='native-directed-forms-v1':
+            from .runtime_capabilities import directed_forms
+            if directed_forms(self.module_binary.read_bytes())<len(forms):
+                need('runtime_directed','配套客户端组件未声明所需的有向多形态能力，请先更新框架程序',None,'error')
         for warning in draft.get('parse_warnings',[]):need('scan_note',warning,None,'warning')
         need('manual_acceptance','静态预览不等于实机验收；变形条件、同步和各武器行为仍需游戏内测试',None,'warning')
         return issues
@@ -651,14 +678,18 @@ class Workspace:
             state=self.read();result={'revision':model.revision(state),
                 'capabilities':{'projects':{'protocol':'sdgo.unit-project','schema_version':1,'metadata_first':True,'bundled_media':True},
                     'form_graph':{'schema':'sdgo.unit-transform-graph/1','directed_record_report':True,
-                        'retains_other_entries':True,'infers_inventory_or_runtime_support':False},
+                        'retains_other_entries':True,'infers_inventory_or_runtime_support':False,
+                        'authoring_profile':'native-directed-forms-v1','maximum_family_forms':model.MAX_DIRECTED_FORMS,
+                        'paired_server_publication':True},
                     'native_programs':{'schema':'sdgo.unit-native-programs/1',
                         'schemas':['sdgo.unit-native-programs/1','sdgo.unit-native-programs/2'],
                         'callback_roles':['ranged','special_ranged','initializer'],'authoring':True,'native_publication':False,
                         'publication_scope':'single-family-editor','batch_import_supported':True,
                         'requires_complete_paired_publication':True,'literal_resource_preflight':True},
                     'native_content':{'schema':'sdgo.unit-native-content/1','authoring':True,'bundled_members':True,
-                        'known_record_kinds':[11,12,13],'opaque_record_retention':True,'server_field_authoring':True,
+                        'known_record_kinds':[11,12,13,79],'opaque_record_retention':True,'server_field_authoring':True,
+                        'publication_scope':'single-family-editor','batch_import_supported':True,
+                        'requires_complete_paired_publication':True,
                         'ordinary_skill_slot_ranges':[[1,75000],[3220001,3225000],[3473001,3478000],[3558001,3559000],[3613002,3615999]],
                         'partial_server_drafts':True,'native_publication':False},
                     'blueprints':{'schema_version':1,'authoring':True,
@@ -744,7 +775,16 @@ class Workspace:
             save_json(transaction/'pending.json',pending)
             try:
                 if self.repository.public_info().get('server_configured'):
-                    entry['server_result']=self.repository.apply(self.plan(entry))
+                    from .form_publication import requires_graph
+                    graph_required=any(requires_graph(d['published']) for d in candidate['drafts'].values() if d.get('published'))
+                    if graph_required:
+                        from . import batch_server
+                        folder=publication.get('server_publication')
+                        server_ini=getattr(self.repository,'server_ini',None)
+                        if not folder or not server_ini:
+                            raise ValueError('多形态发布需要同版服务端形态图计划和已配置的 WorldServer；不能只写机体定义')
+                        entry['server_result']=batch_server.apply(folder,server_ini,baseline=self.baseline)
+                    else:entry['server_result']=self.repository.apply(self.plan(entry))
                 else:entry['server_result']={'applied':False,'mode':'offline','message':'已登记到本模块目录并生成发布物；尚未写入游戏服务端'}
                 entry['published_server_result']=copy.deepcopy(entry['server_result'])
                 pending['stage']='applied';pending['state']=candidate;save_json(transaction/'pending.json',pending)
@@ -765,4 +805,16 @@ class Workspace:
             if not path.is_relative_to(self.root/'transactions'):raise ValueError('发布物路径无效')
             raw=path.read_bytes()
             if hashlib.sha256(raw).hexdigest()!=draft['release']['client_zip_sha256']:raise ValueError('已发布文件被修改')
+            return raw
+
+    def export_server(self,identity):
+        with self.lock:
+            draft=self._get(self.read(),identity)
+            if draft['status']!='confirmed' or draft.get('confirmation',{}).get('content_revision')!=model.content_revision(draft):
+                raise ValueError('只有已确认的当前版本可以导出服务端发布物')
+            release=draft.get('release',{})
+            path=Path(release.get('server_zip','')).resolve()
+            if not path.is_relative_to(self.root/'transactions') or not path.is_file():raise ValueError('服务端发布物路径无效')
+            raw=path.read_bytes()
+            if hashlib.sha256(raw).hexdigest()!=release.get('server_zip_sha256'):raise ValueError('服务端发布物被修改')
             return raw

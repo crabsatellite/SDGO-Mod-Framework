@@ -31,11 +31,13 @@ RECORD_BYTES = {
     11: 732,
     12: 1559,
     13: 1132,
+    20: 106,
+    79: 89,
     0x21: 1197,
     0x22: 614,
     0x55: 614,
 }
-CAPTURE_KINDS = frozenset((2, 10, 11, 13))
+CAPTURE_KINDS = frozenset((2, 10, 11, 13,79))
 OBSERVER_SCOPE = "registration-and-native-grid-destruction-only"
 POINTER_KEYS = ("raw", "wrapper", "node", "hash_node", "hash_value")
 CAPTURE_KEYS = ("record", "insert", "register", "integrity")
@@ -306,7 +308,7 @@ def verify_receipt(
 
     receipt_bytes = _read_bounded(client_root, RECEIPT_RELATIVE, RECEIPT_LIMIT)
     receipt = _parse_receipt(receipt_bytes)
-    if receipt["schema"] != "sdgo.native-record-lifecycle/1":
+    if receipt["schema"] not in ("sdgo.native-record-lifecycle/1","sdgo.native-record-lifecycle/2"):
         raise ValueError("native lifecycle receipt schema does not match")
     if receipt["observer_scope"] != OBSERVER_SCOPE:
         raise ValueError("native lifecycle observer scope does not match")
@@ -333,6 +335,7 @@ def verify_receipt(
     if type(rows) is not list or len(rows) != len(expected_ids):
         raise ValueError("native lifecycle receipt has the wrong record count")
     observed: dict[int, dict[str, Any]] = {}
+    version2=receipt['schema']=='sdgo.native-record-lifecycle/2'
     all_pointers: set[int] = set()
     for index, candidate in enumerate(rows):
         row = _exact_object(
@@ -346,7 +349,7 @@ def verify_receipt(
                 "captures",
                 "free_counts",
                 "passed",
-            },
+            } | ({'integrity_mode'}if version2 else set()),
             f"native lifecycle record {index}",
         )
         identity = _strict_int(row["id"], f"record {index} id")
@@ -357,6 +360,10 @@ def verify_receipt(
             raise ValueError(f"unexpected native lifecycle record id: {identity}")
         if _strict_int(row["kind"], f"record {identity} kind") != sealed.kind:
             raise ValueError(f"native lifecycle kind differs for id {identity}")
+        not_indexed=sealed.kind==79
+        mode='native-not-indexed'if not_indexed else'native-hash'
+        if not_indexed and not version2:raise ValueError('kind79 ownership requires lifecycle receipt schema2')
+        if version2 and row['integrity_mode']!=mode:raise ValueError('native lifecycle integrity mode differs from its record kind')
         if (
             _strict_int(row["record_size"], f"record {identity} size")
             != len(sealed.raw)
@@ -374,6 +381,9 @@ def verify_receipt(
             if type(pointer) is not str or not HEX_POINTER.fullmatch(pointer):
                 raise ValueError(f"record {identity} {key} pointer is not 0x8hex")
             address = int(pointer[2:], 16)
+            if not_indexed and key in ('hash_node','hash_value'):
+                if address:raise ValueError(f'record {identity} unexpectedly owns a native hash pointer')
+                continue
             if address == 0 or address in all_pointers:
                 raise ValueError(f"record {identity} {key} pointer is zero or aliased")
             all_pointers.add(address)
@@ -394,7 +404,10 @@ def verify_receipt(
             f"record {identity} free_counts",
         )
         for key in POINTER_KEYS:
-            _strict_one(free_counts[key], f"record {identity} free count {key}")
+            if not_indexed and key in ('hash_node','hash_value'):
+                if _strict_int(free_counts[key],f'record {identity} free count {key}')!=0:
+                    raise ValueError('native-not-indexed hash free count must equal zero')
+            else:_strict_one(free_counts[key], f"record {identity} free count {key}")
         if row["passed"] is not True:
             raise ValueError(f"native lifecycle row did not pass for id {identity}")
         observed[identity] = row

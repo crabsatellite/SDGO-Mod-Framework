@@ -179,6 +179,7 @@ class NativeRecordLifecycleProbe {
         case 10: return 1871;
         case 11: return 732;
         case 13: return 1132;
+        case 79: return 89;
         default: return 0;
         }
     }
@@ -286,9 +287,17 @@ class NativeRecordLifecycleProbe {
             mapFind_(integrity, &node, &rawAddress);
             if (!ReadNativePointer(
                     static_cast<std::uint8_t*>(grid) + 0x14,
-                    &sentinel) ||
-                !node || node == sentinel ||
-                !ReadNativePointer(
+                    &sentinel) || !sentinel || !node) return;
+            // Original 00414D70 hashes selected kinds, excluding primitive
+            // kind79. Positively observe its absent hash entry after register;
+            // a failed lookup/read is not evidence of this ownership profile.
+            if(node==sentinel) {
+                if(record.kind==79&&record.registerCaptures==1)
+                    InterlockedExchange(&record.integrityCaptured,1);
+                return;
+            }
+            if(record.kind==79){MarkConflict(record);return;}
+            if (!ReadNativePointer(
                     static_cast<std::uint8_t*>(node) + 0x10,
                     &value) ||
                 !value) {
@@ -386,10 +395,12 @@ class NativeRecordLifecycleProbe {
             record.raw, record.wrapper, record.node,
             record.hashNode, record.hashValue,
         };
-        for (std::size_t left = 0; left < std::size(values); ++left) {
+        const auto count=record.kind==79?size_t(3):std::size(values);
+        if(record.kind==79&&(record.hashNode||record.hashValue))return false;
+        for (std::size_t left = 0; left < count; ++left) {
             if (!values[left]) return false;
             for (std::size_t right = left + 1;
-                 right < std::size(values); ++right) {
+                 right < count; ++right) {
                 if (values[left] == values[right]) return false;
             }
         }
@@ -441,8 +452,8 @@ class NativeRecordLifecycleProbe {
             record.rawFrees == 1 &&
             record.wrapperFrees == 1 &&
             record.nodeFrees == 1 &&
-            record.hashNodeFrees == 1 &&
-            record.hashValueFrees == 1;
+            record.hashNodeFrees == (record.kind==79?0:1) &&
+            record.hashValueFrees == (record.kind==79?0:1);
     }
 
     bool Passed() const {
@@ -458,7 +469,7 @@ class NativeRecordLifecycleProbe {
     }
 
     void BuildReceipt(JsonWriter& json) const {
-        json.Text("{\"schema\":\"sdgo.native-record-lifecycle/1\",");
+        json.Text("{\"schema\":\"sdgo.native-record-lifecycle/2\",");
         json.Text("\"observer_scope\":\"registration-and-native-grid-destruction-only\",");
         json.Text("\"run_id\":");
         json.Escaped(runId_.data());
@@ -490,6 +501,8 @@ class NativeRecordLifecycleProbe {
             json.Unsigned(record.kind);
             json.Text(",\"record_size\":");
             json.Unsigned(record.recordBytes);
+            json.Text(",\"integrity_mode\":");
+            json.Escaped(record.kind==79?"native-not-indexed":"native-hash");
             json.Text(",\"record_hex\":");
             json.HexBytes(
                 record.bytes.data(),
