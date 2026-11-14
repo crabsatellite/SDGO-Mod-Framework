@@ -78,7 +78,10 @@ void* indexAfterHook = nullptr;
 void* modelResultHook = nullptr;
 void* rowResultHook = nullptr;
 void* setterReturnAddress = nullptr;
+void* hangarSetterReturnAddress = nullptr;
 StatusHook statusHook = nullptr;
+SdgoHangarPreviewGuardGetStatusV2Fn statusV2Hook = nullptr;
+bool expectMainScope = false;
 
 Scenario scenario = Scenario::Success;
 std::array<uint8_t, 0x80> rowOwner{};
@@ -210,7 +213,10 @@ void ObserveStage(uint32_t preview, uint32_t activeParser) {
     value.version = 1;
     const bool valid = statusHook && statusHook(&value) &&
         value.active_preview == preview && value.active_parser == activeParser;
-    stageCountersValid = stageCountersValid && valid;
+    SdgoHangarPreviewGuardStatusV2 scope{sizeof(scope),2};
+    const bool mainScopeValid=statusV2Hook&&statusV2Hook(&scope)&&
+        scope.active_hangar==(expectMainScope&&preview?1u:0u);
+    stageCountersValid = stageCountersValid && valid && mainScopeValid;
     if (preview) ++previewStageSamples;
     if (activeParser) ++parserStageSamples;
 }
@@ -351,6 +357,29 @@ __declspec(naked) uintptr_t __stdcall InvokeSetterWrong(void*) {
     __asm { mov esp, ebp }
     __asm { pop ebp }
     __asm { ret 4 }
+}
+
+__declspec(naked) uintptr_t __stdcall InvokeHangarSetter(void*, int) {
+    // Keep this caller distinct under release-linker identical-code folding.
+    __asm { nop }
+    __asm { push ebp }
+    __asm { mov ebp, esp }
+    __asm { cmp dword ptr [ebp+0Ch], 0 }
+    __asm { jne query_address }
+    __asm { mov ecx, [ebp+8] }
+    __asm { xor edx, edx }
+    __asm { push 22222222h }
+    __asm { push 11111111h }
+    __asm { call dword ptr [setHook] }
+after_call:
+    __asm { mov esp, ebp }
+    __asm { pop ebp }
+    __asm { ret 8 }
+query_address:
+    __asm { mov eax, offset after_call }
+    __asm { mov esp, ebp }
+    __asm { pop ebp }
+    __asm { ret 8 }
 }
 
 // The production vertex hooks read ESI, and their after sites also read EAX.
@@ -707,6 +736,7 @@ const char* missingSymbol = nullptr;
 void* Symbol(SdgoMod*, const char* key) {
     if (missingSymbol && !std::strcmp(key, missingSymbol)) return nullptr;
     if (!std::strcmp(key, "preview_guard.row_set_return")) return setterReturnAddress;
+    if (!std::strcmp(key, "preview_guard.hangar_set_return")) return hangarSetterReturnAddress;
     if (!std::strcmp(key, "preview_guard.close_source"))
         return reinterpret_cast<void*>(&CloseSource);
     if (!std::strcmp(key, "preview_guard.leave_renderer"))
@@ -839,6 +869,7 @@ void ResetFixture(Scenario next, uint32_t unit, uint16_t slot = 0) {
     closeOrderingValid = true;
     stageCountersValid = true;
     expectScopedStages = false;
+    expectMainScope = false;
     previewStageSamples = parserStageSamples = closeStageSamples = 0;
     originalLoadDepth = 0;
     parseResultSeenByLoad = nullptr;
@@ -1165,17 +1196,68 @@ void VerifyObserverValidation() {
           "V1 observer accepts only its exact size and version");
 }
 
+void RunMainHangarCases(HMODULE dll) {
+    auto statusV2 = reinterpret_cast<SdgoHangarPreviewGuardGetStatusV2Fn>(
+        GetProcAddress(dll, "SdgoHangarPreviewGuardGetStatusV2"));
+    SdgoHangarPreviewGuardStatusV2 initial{sizeof(initial), 2};
+    Check(statusV2 && statusV2(&initial), "main hangar has an additive V2 observer");
+    Check(!statusV2(nullptr), "V2 observer rejects null output");
+    SdgoHangarPreviewGuardStatusV2 invalid{sizeof(initial)-4, 2};
+    Check(!statusV2(&invalid), "V2 observer rejects a shorter structure");
+    for (const auto next : {Scenario::MissingVertex32, Scenario::FailedVertex32,
+         Scenario::NullVertex32, Scenario::MissingIndex, Scenario::FailedIndex,
+         Scenario::NullIndex, Scenario::FalseModelResult, Scenario::NullModelObject,
+         Scenario::Success}) {
+        ResetFixture(next, 73000);
+        expectScopedStages = true;
+        expectMainScope = true;
+        const auto before = Snapshot();
+        SetLastError(0x53217300);
+        const auto result = static_cast<uint8_t>(InvokeHangarSetter(renderer.data(), 0));
+        const DWORD error = GetLastError();
+        const auto after = Snapshot();
+        const bool failed = next != Scenario::Success;
+        const bool rejectedParser = failed && next != Scenario::FalseModelResult &&
+            next != Scenario::NullModelObject;
+        Check(result == kSetterAl && error == 0x53217300 &&
+              originalRows == 0 && originalSets == 1 && rendererLeaves == 0 &&
+              rowThumbnail == 0 && rowNative == 0,
+              "standalone preview preserves setter AL and leaves native caller lock/row ownership alone");
+        Check(candidateDeletes == (failed ? 1u : 0u) &&
+              rootDeletes == (rejectedParser ? 1u : 0u) &&
+              sourceCloses == (rejectedParser ? 1u : 0u) &&
+              modelCleanup == (failed ? 1 : 0) && modelNative == (failed ? 0 : 1),
+              "main hangar failure releases only its unregistered parser root, source and candidate");
+        void* remaining = nullptr; std::memcpy(&remaining, renderer.data()+0x34, sizeof(remaining));
+        Check(remaining == (failed ? nullptr : &candidate) &&
+              stageCountersValid && siteAbiPreserved && modelSiteAbiPreserved,
+              "the original hangar caller sees its null-model branch or an unchanged successful model");
+        Check(after.rows == before.rows && after.previews == before.previews &&
+              after.loaded == before.loaded && after.fallbacks == before.fallbacks &&
+              after.lock_releases == before.lock_releases && !after.active_preview &&
+              !after.active_parser && !after.active_failure,
+              "standalone scope does not claim row fallback or retain active parser state");
+    }
+    SdgoHangarPreviewGuardStatusV2 final{sizeof(final), 2};
+    Check(statusV2(&final) && final.hangar_previews == initial.hangar_previews+9 &&
+          final.hangar_failed == initial.hangar_failed+8 && final.hangar_loaded == initial.hangar_loaded+1,
+          "separate counters include eight rejected main previews and a later successful load");
+}
+
 void Run(SdgoModLoadFn entry, HMODULE dll) {
     candidateTable[0] = reinterpret_cast<void*>(&DeleteCandidate);
     rootTable[0] = reinterpret_cast<void*>(&DeleteRoot);
     vertexResourceTable[12] = reinterpret_cast<void*>(&UnlockBuffer);
     indexResourceTable[12] = reinterpret_cast<void*>(&UnlockBuffer);
     setterReturnAddress = reinterpret_cast<void*>(InvokeSetter(nullptr, 1));
+    hangarSetterReturnAddress = reinterpret_cast<void*>(InvokeHangarSetter(nullptr, 1));
     Check(setterReturnAddress != nullptr,
           "setter fixture exposes its exact stable after-call address");
 
     statusHook = reinterpret_cast<StatusHook>(
         GetProcAddress(dll, SDGO_HANGAR_PREVIEW_GUARD_STATUS_EXPORT));
+    statusV2Hook=reinterpret_cast<SdgoHangarPreviewGuardGetStatusV2Fn>(
+        GetProcAddress(dll,"SdgoHangarPreviewGuardGetStatusV2"));
     Check(statusHook != nullptr, "production DLL exports the V1 observer");
 
     SdgoApi api{};
@@ -1337,6 +1419,7 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
               observedClose == source.data(),
           "nested successful load restores the outer frame and closes only its rejected source");
 
+    RunMainHangarCases(dll);
     VerifyObserverValidation();
 }
 

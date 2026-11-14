@@ -12,3 +12,10 @@ struct SdgoHangarPreviewGuardStatusV1 {
     uint32_t last_failed_slot;
 };
 typedef int(__cdecl* SdgoHangarPreviewGuardGetStatusV1Fn)(SdgoHangarPreviewGuardStatusV1*);
+
+struct SdgoHangarPreviewGuardStatusV2 {
+    uint32_t size,version;
+    SdgoHangarPreviewGuardStatusV1 previous;
+    uint32_t hangar_previews,hangar_loaded,hangar_failed,active_hangar;
+};
+typedef int(__cdecl* SdgoHangarPreviewGuardGetStatusV2Fn)(SdgoHangarPreviewGuardStatusV2*);

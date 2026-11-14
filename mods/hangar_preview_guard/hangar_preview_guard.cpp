@@ -19,6 +19,7 @@ struct Scope {
     Scope* prior=nullptr;void* row=nullptr;void* renderer=nullptr;
     uint32_t unit=0,slot=0;Failure failure=None;unsigned setter_depth=0,parser_depth=0;
     bool candidate_discarded=false,renderer_lock_released=false;
+    bool hangar=false;
 };
 thread_local Scope* current=nullptr;
 struct LoadFrame {LoadFrame* prior=nullptr;Scope* owner=nullptr;void* source=nullptr;bool parser_rejected=false;};
@@ -45,6 +46,7 @@ RowFn original_row=nullptr;SetFn original_set=nullptr;ParseFn original_parse=nul
 LoadFn original_load=nullptr;
 CloseFn close_source=nullptr;
 LeaveFn leave_renderer=nullptr;void* row_set_return=nullptr;
+void* hangar_set_return=nullptr;
 void* vertex24_site=nullptr;void* vertex24_after_site=nullptr;
 void* vertex32_site=nullptr;void* vertex32_after_site=nullptr;
 void* index_site=nullptr;void* index_after_site=nullptr;
@@ -52,6 +54,7 @@ void* model_result_site=nullptr;void* row_result_site=nullptr;
 void* vertex24_continue=nullptr;void* vertex32_continue=nullptr;
 void* model_cleanup=nullptr;void* row_thumbnail=nullptr;
 SdgoHangarPreviewGuardStatusV1 status{};
+uint32_t hangar_previews=0,hangar_loaded=0,hangar_failed=0;
 void Count(uint32_t& value){InterlockedIncrement(reinterpret_cast<volatile LONG*>(&value));}
 bool Parsing(){return current&&current->setter_depth&&current->parser_depth;}
 void Fail(Failure reason) {
@@ -90,14 +93,9 @@ void __fastcall Row(void* self,void*,void* row) {
         SetLastError(error);
     }
 }
-uint8_t __fastcall SetModel(void* self,void*,const void* name,const void* animation) {
-    if(!current||_ReturnAddress()!=row_set_return||current->renderer) {
-        // A reentrant, unrelated preview must not inherit an outer row's GPU
-        // rejection scope. Its own original behavior and AL result are kept.
-        RestorePointer<Scope> restore{current,current};current=nullptr;
-        return original_set(self,name,animation);
-    }
-    Scope& scope=*current;scope.renderer=self;Count(status.previews);
+uint8_t ApplyModel(Scope& scope,void* self,const void* name,const void* animation) {
+    scope.renderer=self;
+    Count(scope.hangar?hangar_previews:status.previews);
     // Read the definition only after the original row has validated and used
     // it to reach this exact model-set call. Empty/2D row jobs stay untouched.
     if(scope.row) {
@@ -110,19 +108,47 @@ uint8_t __fastcall SetModel(void* self,void*,const void* name,const void* animat
     uint8_t result=0;
     {Depth depth(scope.setter_depth);result=original_set(self,name,animation);}
     if(scope.failure==None){
-        Count(status.loaded);status.last_loaded_unit=scope.unit;
-        if(scope.unit&&scope.unit==status.last_unit&&scope.slot==status.last_failed_slot)Count(status.recovered_previews);
+        if(scope.hangar)Count(hangar_loaded);
+        else {
+            Count(status.loaded);status.last_loaded_unit=scope.unit;
+            if(scope.unit&&scope.unit==status.last_unit&&scope.slot==status.last_failed_slot)Count(status.recovered_previews);
+        }
         return result;
     }
     const auto error=GetLastError();
-    // No activation was performed. The row still owns the native renderer CS.
+    // No activation was performed. The caller still owns the renderer CS.
     // On a guarded GPU error the parser returned null before registration or
     // animation instancing. Other false model-load results retain their native
     // constructed ownership and use the same destructor as the original setter.
     if(void* candidate=Read<void*>(self,0x34)) {
         NativeDelete(candidate);Write<void*>(self,0x34,nullptr);Count(status.discarded_models);
     }
-    scope.candidate_discarded=true;SetLastError(error);return result;
+    scope.candidate_discarded=true;
+    if(scope.hangar) {
+        Count(hangar_failed);
+        if(hangar_failed<=5||hangar_failed%1000==0)
+            g_api->Log(g_mod,SDGO_LOG_WARN,
+                "main hangar preview load rejected (%u); original empty-model path retained",
+                static_cast<unsigned>(scope.failure));
+    }
+    SetLastError(error);return result;
+}
+uint8_t __fastcall SetModel(void* self,void*,const void* name,const void* animation) {
+    const void* caller=_ReturnAddress();
+    if(caller==hangar_set_return) {
+        // This exact caller checks the renderer's null model and releases its
+        // own CS. It has no list-cell/thumbnail job to finish or release here.
+        Scope scope{};scope.prior=current;scope.hangar=true;
+        RestorePointer<Scope> restore{current,current};current=&scope;
+        return ApplyModel(scope,self,name,animation);
+    }
+    if(!current||caller!=row_set_return||current->renderer) {
+        // A reentrant, unrelated preview must not inherit an outer request's
+        // GPU rejection scope. Preserve its original behavior and byte result.
+        RestorePointer<Scope> restore{current,current};current=nullptr;
+        return original_set(self,name,animation);
+    }
+    return ApplyModel(*current,self,name,animation);
 }
 void* __fastcall Parse(void* self,void*,void* source,uint8_t textures) {
     if(!current||!current->setter_depth||!current_load||current_load->owner!=current)
@@ -339,11 +365,22 @@ extern "C" __declspec(dllexport) int __cdecl SdgoHangarPreviewGuardGetStatusV1(S
     copy.active_failure=current?static_cast<uint32_t>(current->failure):0u;
     copy.active_unit=current?current->unit:0u;*out=copy;return 1;
 }
+extern "C" __declspec(dllexport) int __cdecl SdgoHangarPreviewGuardGetStatusV2(SdgoHangarPreviewGuardStatusV2* out) {
+    if(!out||out->size!=sizeof(*out)||out->version!=2)return 0;
+    SdgoHangarPreviewGuardStatusV2 copy{};
+    copy.previous.size=sizeof(copy.previous);copy.previous.version=1;
+    if(!SdgoHangarPreviewGuardGetStatusV1(&copy.previous))return 0;
+    copy.size=sizeof(copy);copy.version=2;copy.hangar_previews=hangar_previews;
+    copy.hangar_loaded=hangar_loaded;copy.hangar_failed=hangar_failed;
+    copy.active_hangar=current&&current->hangar&&current->setter_depth?1u:0u;
+    *out=copy;return 1;
+}
 SDGO_MOD_ENTRY {
     if(!api||!mod||api->version!=SDGO_API_VERSION||api->size<offsetof(SdgoApi,HookSite)+sizeof(api->HookSite)||
        !api->Symbol||!api->HookCode||!api->HookSite||!api->Log||original_row)return 0;
     g_api=api;g_mod=mod;
     if(!Bind(row_set_return,"preview_guard.row_set_return")||
+       !Bind(hangar_set_return,"preview_guard.hangar_set_return")||
        !Bind(close_source,"preview_guard.close_source")||
        !Bind(leave_renderer,"preview_guard.leave_renderer")||
        !Bind(vertex24_continue,"preview_guard.vertex24_continue")||
@@ -361,6 +398,6 @@ SDGO_MOD_ENTRY {
        !Site("preview_guard.index_after",reinterpret_cast<void*>(&IndexAfter),&index_after_site)||
        !Site("preview_guard.model_result",reinterpret_cast<void*>(&ModelResultGate),&model_result_site)||
        !Site("preview_guard.row_result",reinterpret_cast<void*>(&RowResultGate),&row_result_site))return 0;
-    api->Log(mod,SDGO_LOG_INFO,"unit-row preview failures release their native candidate and renderer lock, then use the original thumbnail branch");
+    api->Log(mod,SDGO_LOG_INFO,"scoped preview failures release their native candidate; unit rows use native thumbnails and the main hangar keeps its original empty-model path");
     return 1;
 }

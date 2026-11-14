@@ -104,6 +104,8 @@ private:
 
     inline static HangarPreviewGuardFaultProbe* active_ = nullptr;
     inline static GetStatus getStatus_ = nullptr;
+    inline static SdgoHangarPreviewGuardGetStatusV2Fn getStatusV2_ = nullptr;
+    bool mainHangarOnly_ = false;
 
     inline static void* indexProxyTable_[13]{};
     inline static thread_local IndexProxy vertexProxy_{};
@@ -204,6 +206,14 @@ private:
         unsigned result = 0;
         SdgoHangarPreviewGuardStatusV1 production{};
         if (self && ReadProductionStatus(path, &production)) {
+            if (self->mainHangarOnly_) {
+                SdgoHangarPreviewGuardStatusV2 scope{};
+                scope.size=sizeof(scope);scope.version=2;
+                if (!getStatusV2_ || !getStatusV2_(&scope) || !scope.active_hangar) {
+                    SetLastError(error);
+                    return 0;
+                }
+            }
             ObservePath(self, path);
             const unsigned kind =
                 static_cast<unsigned>(ReadCounter(&self->kind_));
@@ -425,6 +435,8 @@ public:
         indexProxyTable_[11] = reinterpret_cast<void*>(&ProxyLock);
         indexProxyTable_[12] = reinterpret_cast<void*>(&ProxyUnlock);
         getStatus_ = getStatus;
+        getStatusV2_ = reinterpret_cast<SdgoHangarPreviewGuardGetStatusV2Fn>(
+            GetProcAddress(production,"SdgoHangarPreviewGuardGetStatusV2"));
         active_ = this;
 
         if (!api->HookSite(
@@ -511,6 +523,12 @@ public:
             vertex24Trampoline + 2;
         hangar_preview_guard_fault_probe_detail::vertex32CreateResume =
             vertex32Trampoline + 2;
+        return true;
+    }
+
+    bool MainHangarOnly() noexcept {
+        if (!getStatusV2_) return false;
+        mainHangarOnly_=true;
         return true;
     }
 

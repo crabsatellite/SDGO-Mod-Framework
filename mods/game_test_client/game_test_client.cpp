@@ -319,6 +319,7 @@ void PublishQuietSocketReceipt(bool force=false);
 bool battleshipOnly = false, giftRequestsOnly = false, deckOnly = false, pagesOnly = false, friendsOnly = false;
 bool hangarPagesOnly = false;
 bool previewGuardOnly=false;
+bool mainHangarFault=false;
 bool storageGiftOnly=false;
 bool capsulePagesOnly=false;
 uint64_t giftOriginUid=0,giftPlainUid=0;
@@ -1682,6 +1683,24 @@ int __cdecl Return(const SdgoGameTestContextV1* context) {
         if(!restored)return SDGO_GAME_TEST_FAIL;
     }
     context->Assert(1, "the original client consumed the real leave-room reply and returned to its lobby");
+    if(mainHangarFault) {
+        const auto fault=previewGuardFaults.State();
+        auto module=GetModuleHandleW(L"hangar_preview_guard.dll");
+        const auto get=module?reinterpret_cast<SdgoHangarPreviewGuardGetStatusV2Fn>(
+            GetProcAddress(module,"SdgoHangarPreviewGuardGetStatusV2")):nullptr;
+        SdgoHangarPreviewGuardStatusV2 preview{};preview.size=sizeof(preview);preview.version=2;
+        const bool valid=get&&get(&preview)&&fault.kind==5&&fault.hits==1&&!fault.armed&&
+            !fault.errors&&!fault.last_unit&&preview.hangar_failed==1&&preview.hangar_loaded>0&&
+            !preview.active_hangar&&preview.previous.discarded_roots>=1&&
+            preview.previous.discarded_models>=1&&preview.previous.closed_sources>=1;
+        char message[256];sprintf_s(message,
+            "main hangar fault hits=%u armed=%u errors=%u attempts=%u failed=%u loaded=%u roots=%u candidates=%u sources=%u",
+            fault.hits,fault.armed,fault.errors,preview.hangar_previews,preview.hangar_failed,
+            preview.hangar_loaded,preview.previous.discarded_roots,preview.previous.discarded_models,preview.previous.closed_sources);
+        context->Observe(message);
+        context->Assert(valid,"one genuine main-hangar VB32 failure completed native cleanup and a later original load succeeded before battle return");
+        if(!valid)return SDGO_GAME_TEST_FAIL;
+    }
     ++modeIndex;
     sameRoomRound=0;sameRoomId=0;
     channels.Reset();
@@ -6924,6 +6943,14 @@ SDGO_MOD_ENTRY {
         PublishQuietSocketReceipt(true);
     };
     const bool loaded = LoadPlan();
+    const int mainFaultSetting=api->SettingInt(mod,"MainHangarPreviewFault",0);
+    if(mainFaultSetting!=0&&mainFaultSetting!=1)return 0;
+    mainHangarFault=mainFaultSetting!=0;
+    if(mainHangarFault) {
+        if(!loaded||pagesOnly||fpsOnly||missionMode||roomTitlesOnly||previewGuardOnly||
+           !previewGuardFaults.Install(api,mod)||!previewGuardFaults.MainHangarOnly())return 0;
+        previewGuardFaults.Arm(5);
+    }
     if (!nativeRecordLifecycleIds.empty() && !nativeRecordLifecycle.Install(api,mod,
         sdgo_test::runId,sdgo_test::directory+L"\\native-record-lifecycle.json",nativeRecordLifecycleIds))return 0;
     sdgo_test::nativeShutdownAfterSuccess=!nativeRecordLifecycleIds.empty();

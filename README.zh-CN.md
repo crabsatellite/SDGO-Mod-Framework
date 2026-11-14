@@ -129,7 +129,7 @@
 | [启动崩溃修复](docs/startup-crash-fix.zh-CN.md) <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 |
 | [房间窗口初始化保护](docs/waitroom-window-fix.zh-CN.md) <!-- catalog: `waitroom_window_fix` --> | 修复建房成功后客户端偶尔直接退出 |
 | [原生数据与生命周期修复](docs/native-data-guard.zh-CN.md) <!-- catalog: `native_data_guard` --> | 修复机体数据缺失或机体管理页等待数据时的闪退，并让闪退日志记录正确现场 |
-| [机体列表三维预览加载保护](docs/hangar-preview-guard.zh-CN.md) <!-- catalog: `hangar_preview_guard` --> | 模型或图形缓冲加载失败时，退回原生二维缩略图 |
+| [机库三维预览加载保护](docs/hangar-preview-guard.zh-CN.md) <!-- catalog: `hangar_preview_guard` --> | 列表及主展示的图形加载失败时安全清理，沿用原生缩略图或空模型分支 |
 | [特殊攻击目标选择保护](docs/special-target-guard.zh-CN.md) <!-- catalog: `special_target_guard` --> | 随机目标数量非法时，使用已有原生失败结果阻止越界读取 |
 | [场景登记生命周期修复](docs/scene-lifecycle-fix.zh-CN.md) <!-- catalog: `scene_lifecycle_fix` --> | 修复场景对象切换区域后偶发的清理闪退 |
 | [多人加载同步修复](docs/loading-sync-fix.zh-CN.md) <!-- catalog: `loading_sync_fix` --> | 修复多人开局时偶发卡在加载画面（BattleServer） |
