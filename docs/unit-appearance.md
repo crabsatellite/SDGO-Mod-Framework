@@ -23,7 +23,7 @@ Do not manually install the legacy DLLs alongside this module. Explicit conflict
 
 “原生涂装” returns to native palette controls. Changing stock paint invalidates the previous RGB configuration for that unit. Colors apply in the lobby, room, battle and transformed models of the same unit. Separate instances of the same model keep separate records. Native transparency, cloaking, textures and gloss remain controlled by the original materials.
 
-RGB mode owns clicks and drags on its controls and suspends mouse handling in the covered inventory, preventing accidental item drags. Gestures retain their release event outside the controls. Native inventory input resumes after switching to native paint and releasing the mouse. The preview area remains interactive. Client 0.1.1 is compatible with World 0.1.0.
+RGB mode owns clicks and drags on its controls and suspends mouse handling in the covered inventory, preventing accidental item drags. Gestures retain their release event outside the controls. Native inventory input resumes after switching to native paint and releasing the mouse. The preview area remains interactive. Client 0.1.2 supports this input isolation alongside OC and battle stickers on reflective armor, with World 0.1.0 compatibility.
 
 ## Free surface stickers
 
@@ -34,7 +34,7 @@ RGB mode owns clicks and drags on its controls and suspends mouse handling in th
 3. Adjust sticker rotation and size. “恢复原位置” restores the selected slot's native fixed position.
 4. Select “保存位置”, review, then “确认保存位置” and wait for the server acknowledgement. “取消并返回” discards unsaved edits.
 
-Stickers attach to the selected model part. Moving joints require separate placement on each part. Replacing a stock sticker invalidates that slot's previous anchor. Incompatible model forms or geometry fall back to native placement. Cloaking, transparency, fading and other special rendering passes retain native sticker handling.
+Stickers attach to the selected model part. Moving joints require separate placement on each part. Replacing a stock sticker invalidates that slot's previous anchor. Incompatible model forms or geometry fall back to native placement. Reflective armor supports saved placements in battle; transparent materials outside the sticker's footprint do not affect it. Hidden parts, transparent or fading surfaces under the sticker, and special blend/depth passes retain native sticker handling.
 
 ## Troubleshooting and AI handoff
 
@@ -47,5 +47,7 @@ Use the feature's Copy for AI or bug-report entry. Include client/World versions
 `unit_appearance_client` keeps RGB material and sticker projection components separate internally and installs hooks only for enabled components. `unit_appearance_server` prepares all enabled components before one authenticated extension registration, then dispatches the original commands according to their switches. Unassigned commands inside the combined range return an invalid-argument result. The existing `dbo.sdgo_mod_rgb_paint` and `dbo.sdgo_mod_surface_decal` tables, wire formats, saved bytes and revision checks remain intact. Native records remain authoritative for ownership, stock colors and equipped stickers.
 
 Rooms bind complete unit identities through actual player slots, allowing fewer player slots than visual-pool entries, and apply appearance after asynchronous loading. RGB retains dormant transformed-model identities. Sticker anchors record part, geometry, triangle and barycentric coordinates; identity is never guessed from model type or sticker matches. Native controls are resolved only after page activation and dialog visibility.
+
+Battle sticker visibility checks the material groups covered by the projected triangles. The native cubemap flag does not indicate a hidden or translucent part; depth, blend and alpha overrides remain excluded. Both native-sticker suppression and projected drawing use the same eligibility check. RGB inventory input intercepts the verified virtual update slot and forwards to the native update body, preserving OC's observer on that body.
 
 Manager's `consolidates` contract maps legacy modules to registered boolean switches and requires explicit conflicts. Imports, programme updates and profile installs reuse their transactions and backups; reinstalling preserves the unified module's choices. Unshipped native probes check exact unit identity, server records, current-scene six-region materials and sustained sticker drawing. Captured frames still require inspection for occlusion and actual placement.

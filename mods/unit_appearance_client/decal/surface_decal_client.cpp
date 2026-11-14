@@ -1,5 +1,6 @@
 #include "native_ui.h"
 #include "render.h"
+#include "visibility.h"
 #include "sdgo/surface_decal_native.h"
 #include "sdgo/surface_decal_protocol.h"
 #include "sdgo/surface_decal_observer.h"
@@ -472,19 +473,19 @@ bool BattleSurfaceReady(void* owner,const Model& model,const Appearance& a,unsig
     auto** first=Read<void**>(owner,0x124);auto** end=Read<void**>(owner,0x128);
     const auto index=a.slots[slot].placement.anchor.node;
     if(!first||end<first||end-first>4096||index>=static_cast<unsigned>(end-first))return false;
-    auto* node=first[index];if(!node||Read<std::uint8_t>(node,0x108))return false;
-    // Special passes (cloak/fade/additive/depth overrides) remain entirely
-    // native. An opaque fixed-function decal must never reveal a hidden unit.
-    if(Read<unsigned>(node,0x204)&0x5d)return false;
+    auto* node=first[index];
+    if(!node||!render::OpaqueNode(Read<std::uint8_t>(node,0x108)!=0,Read<unsigned>(node,0x204)))return false;
     auto* common=Read<void*>(node,0x11c);if(!common)return false;
     const auto count=Read<unsigned>(common,0x194);const auto* groups=Read<std::uint8_t*>(common,0x198);
     if(!groups||count>256)return false;
-    for(unsigned i=0;i<count;++i){
-        const auto id=Read<unsigned>(groups,i*12+8);if(id>=7&&id<=9)continue;
-        auto* m=material(owner,id,0,1);if(!m)return false;
-        const auto alpha=Read<float>(m,0x10);if(!std::isfinite(alpha)||alpha<0.999f)return false;
-    }
-    return true;
+    const auto surface=std::find_if(model.nodes.begin(),model.nodes.end(),[&](const Node& n){return n.surface.index==index;});
+    if(surface==model.nodes.end())return false;
+    return render::OpaqueCoverage(model.patches[slot],surface->surface.triangleGroups,count,
+        [&](unsigned group,float& alpha){
+            const auto id=Read<unsigned>(groups,group*12+8);if(id>=7&&id<=9)return false;
+            auto* m=material(owner,id,0,1);if(!m)return false;
+            alpha=Read<float>(m,0x10);return true;
+        });
 }
 void RenderNode(void* self,void* entry,unsigned,bool before,bool& suppress){
     // The callback's texture bit is a state-change optimization, not visibility.

@@ -351,7 +351,7 @@ extern "C" __declspec(dllexport) int __cdecl SdgoRgbPaintSceneObserveV1(SdgoRgbP
     return sync::ObserveScene(*out)?1:0;
 }
 int LoadRgb(const SdgoApi* api, SdgoMod* mod) {
-    if(!api||!mod||!api->Symbol||!api->HookCode||!api->SettingInt||!api->SettingInt(mod,"RgbEnabled",1))return 0;
+    if(!api||!mod||!api->Symbol||!api->HookCode||!api->HookSlot||!api->SettingInt||!api->SettingInt(mod,"RgbEnabled",1))return 0;
     ownerApi=api;ownerMod=mod;if(!materials.Bind(api,mod))return 0;
     if(!sync::Bind(api,mod))return 0;
     uiBindings.add=reinterpret_cast<Bindings::Add>(api->Symbol(mod,"hangar.ui_add_button"));uiBindings.find=reinterpret_cast<Bindings::Find>(api->Symbol(mod,"hangar.ui_find_control"));
@@ -361,7 +361,9 @@ int LoadRgb(const SdgoApi* api, SdgoMod* mod) {
     inventoryTable=api->Symbol(mod,"rgb_paint.inventory_vtable");
     lockPreview=reinterpret_cast<Simple>(api->Symbol(mod,"rgb_paint.preview_lock"));unlockPreview=reinterpret_cast<Simple>(api->Symbol(mod,"rgb_paint.preview_unlock"));
     if(!uiBindings.add||!uiBindings.find||!uiBindings.text||!uiBindings.buttonVtable||!app||!services||!renderer||!factoryTable||!pageTable||!lockPreview||!unlockPreview)return 0;
-    return inventoryTable&&api->HookCode(mod,"rgb_paint.inventory_update",reinterpret_cast<void*>(&InventoryUpdateHook),reinterpret_cast<void**>(&originalInventoryUpdate))&&api->HookCode(mod,"rgb_paint.inventory_event",reinterpret_cast<void*>(&InventoryEventHook),reinterpret_cast<void**>(&originalInventoryEvent))&&api->HookCode(mod,"rgb_paint.inventory_pick",reinterpret_cast<void*>(&InventoryPickHook),reinterpret_cast<void**>(&originalInventoryPick))&&api->HookCode(mod,"rgb_paint.page_update",reinterpret_cast<void*>(&UpdateHook),reinterpret_cast<void**>(&originalUpdate))&&api->HookCode(mod,"rgb_paint.page_destroy",reinterpret_cast<void*>(&DestroyHook),reinterpret_cast<void**>(&originalDestroy))&&api->HookCode(mod,"rgb_paint.end_scene",reinterpret_cast<void*>(&EndSceneHook),reinterpret_cast<void**>(&originalEndScene));
+    // OC also observes the native update body. Intercept the inventory's virtual
+    // dispatch so forwarding still reaches that observer without claiming its code hook.
+    return inventoryTable&&api->HookSlot(mod,"rgb_paint.inventory_update",reinterpret_cast<void*>(&InventoryUpdateHook),reinterpret_cast<void**>(&originalInventoryUpdate))&&api->HookCode(mod,"rgb_paint.inventory_event",reinterpret_cast<void*>(&InventoryEventHook),reinterpret_cast<void**>(&originalInventoryEvent))&&api->HookCode(mod,"rgb_paint.inventory_pick",reinterpret_cast<void*>(&InventoryPickHook),reinterpret_cast<void**>(&originalInventoryPick))&&api->HookCode(mod,"rgb_paint.page_update",reinterpret_cast<void*>(&UpdateHook),reinterpret_cast<void**>(&originalUpdate))&&api->HookCode(mod,"rgb_paint.page_destroy",reinterpret_cast<void*>(&DestroyHook),reinterpret_cast<void**>(&originalDestroy))&&api->HookCode(mod,"rgb_paint.end_scene",reinterpret_cast<void*>(&EndSceneHook),reinterpret_cast<void**>(&originalEndScene));
 }
 
 void AbortRgbLoad(){sync::AbortLoad();}
