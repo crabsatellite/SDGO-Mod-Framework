@@ -51,7 +51,7 @@ confirmation before the purchase is committed.
    Chinese offer name and click **新增商品** (add offer). Follow the same type's preset for the sale options;
    review price, currency, validity and listing before saving and applying. The tool allocates identities.
 4. Distribute matching display resources through the server owner's client package or update.
-   Updated players reopen the original shop to view and purchase the offer on those terms.
+   Updated players restart their client and open the original shop to view and purchase the offer on those terms.
 
 These steps require no script or example ZIP. A nonempty catalog does not receive extra presets;
 use step 3 to add offers there. If a source type is missing, check that server's item registrations
@@ -73,6 +73,8 @@ the helper can apply offers immediately.
 
 ## Everyday management
 
+The list shows 50 offers per page. Search covers the entire workspace; the selected offer remains editable.
+
 Set the existing shop workspace, the `WorldServer` folder and optionally a local client folder (for
 display labels). Pick a native item and click **新增商品** (add); edit name, option label, price, GB/MB
 currency, quantity or rental days and listing, then **保存商品** (save). Changes are drafts until
@@ -80,6 +82,30 @@ currency, quantity or rental days and listing, then **保存商品** (save). Cha
 contains no credentials or local paths.
 
 After a successful apply, the selected client receives acquisition data for actually visible unit and blueprint offers, distinguishing purchases from rentals and removing unlisted sources. Distribute that data with the client update; players with [unit acquisition sources](acquisition-sources.md) enabled can see it in the encyclopedia. This integration is optional and does not affect shop purchases when the acquisition Mod is absent.
+
+## Large catalogs and identity capacity
+
+![Large-catalog paging, whole-catalog search and draft editing with neutral demonstration data](shop-catalog-capacity.webp)
+
+Catalog files and generated display profiles each use a **32 MiB byte budget**, with storage allocated for their
+actual entries rather than a shared 256-offer quota. Players retain the native shop's paging, purchases and
+gifting; expansion does not require more hangar slots.
+
+Creation prefers the existing managed range, then searches free product IDs in the same native tab and free
+SKU suffixes under the same prefix. Native, hidden, retired and other catalogs' identities remain reserved.
+A selected client also reserves original products absent from server stock. Do not clear ledgers, change
+existing identities or overwrite native offers to make room.
+
+Client display records share global keys with other tables. Registration preflights the complete required
+allocation, skips occupied keys and creates only needed records. Exhaustion refuses registration without
+overwriting another table or expanding into unknown regions. A full product tab or SKU prefix refuses only
+that domain's additions; other tabs and prefixes remain usable. Native identities are finite, regardless of file budgets.
+
+Expanded catalogs require a matching Manager, server `shop_catalog` **0.4.0+**, client `shop_localization`
+**0.4.0+** and `shop_labels` **0.2.0+**. Manager checks selected components before applying expanded catalogs
+and checks client programmes when exporting updates. With no selected client, application is server-only;
+players still need the server owner's matching client package or update. Budget, compatibility and identity
+failures roll back the complete product transaction, preserving other applied offers.
 
 ## Example: sell an already registered Training Unit
 
@@ -128,3 +154,16 @@ New product names and sale-option labels require Chinese text. Existing owner da
 fill missing names before editing or publishing. The separate [shop localization Mod](shop-localization.md)
 provides translated descriptions and shared preview names. Its **Update Chinese search** action refreshes
 only the guarded search procedure and aliases; it does not apply catalog drafts or prices.
+
+## Developer notes
+
+JSON retains `schema_version=1` and native profiles retain `Schema=1`. Product IDs, six-digit SKUs and ledger
+option IDs stay stable; retirement of omitted entries is scoped to the current `catalog_id`. Input rows use
+a temporary table with the destination database's collation and a reusable ownership-guarded transaction body,
+avoiding repeated SQL bodies and large `NOT IN` expressions.
+
+Product IDs use offsets `1..9999` in the template's tab; SKUs retain its prefix and use a nonzero five-digit
+suffix. Type `0x23` display records search global free keys only in the supported `210001..260000` interval,
+excluding other types' occupancy. Native list replies retain eight products and 24 options per page, with
+original packets, billing and delivery. Legacy 256-offer compatibility gates and GameTest assertion-batch
+limits are distinct from the matching runtime's catalog capacity.

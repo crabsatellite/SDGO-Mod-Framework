@@ -137,7 +137,8 @@ int wmain(int argc, wchar_t** argv)
     if (argc != 3) return 2;
     g_dir = argv[2];
     CreateDirectoryW(g_dir.c_str(), nullptr);
-    const std::wstring ini = L"\xFEFF[option:3806]\r\nCategory=2220001\r\nValidity=7\r\nPayment=2\r\nPrice=9900\r\nText=中文数量标签\r\n[option:1]\r\nCategory=1110549\r\nValidity=7\r\nPayment=2\r\nPrice=9900\r\nText=永久\r\n";
+    std::wstring ini = L"\xFEFF[option:3806]\r\nCategory=2220001\r\nValidity=7\r\nPayment=2\r\nPrice=9900\r\nText=中文数量标签\r\n[option:1]\r\nCategory=1110549\r\nValidity=7\r\nPayment=2\r\nPrice=9900\r\nText=永久\r\n";
+    for(int i=0;i<5000;++i)ini+=L"[option:"+std::to_wstring(700000+i)+L"]\r\nCategory=2220001\r\nValidity=7\r\nPayment=2\r\nPrice=9900\r\nText=容量标签\r\n";
     std::ofstream file(g_dir + L"\\display.ini", std::ios::binary);
     file.write(reinterpret_cast<const char*>(ini.data()), static_cast<std::streamsize>(ini.size() * sizeof(wchar_t)));
     file.close();
@@ -164,6 +165,9 @@ int wmain(int argc, wchar_t** argv)
     ok = Check(g_result[0] == L"租赁 7 天" && g_result[2] == L"native", "gift popup, truthful rental metadata and stale profile guard") && ok;
     ok = Check(std::wstring(g_convert(874, options[0].text)) == L"native", "context restored after popup") && ok;
     ok = Check(std::wstring(g_convert(65001, "UTF8")) == L"native", "other code pages preserved") && ok;
+    std::vector<Option> many(600,MakeOption(704999,2220001,7,9900,2));const auto manyBefore=many;
+    g_result.clear();Populate(many,false);
+    ok=Check(g_result.size()==600&&g_result.back()==L"容量标签"&&!memcmp(many.data(),manyBefore.data(),many.size()*sizeof(Option)),"large profile and 600-option view retain final Unicode label and all business bytes")&&ok;
     g_result.clear();
     g_tooltip(nullptr, nullptr, &options[0], 0);
     g_tooltip(nullptr, nullptr, &options[1], 1);

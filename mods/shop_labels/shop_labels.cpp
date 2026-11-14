@@ -11,6 +11,7 @@
 #include "sdgo/sdgo_api.h"
 #include "sdgo/shop_labels.h"
 #include "sdgo/native_text_decoders.h"
+#include "sdgo/shop_profile.h"
 
 namespace {SdgoNativeTextDecoderV1 g_decoders[8]{};unsigned g_decoderCount=0;}
 extern "C" __declspec(dllexport) int __cdecl SdgoRegisterNativeTextDecoderV1(const SdgoNativeTextDecoderV1* sink) {
@@ -62,7 +63,7 @@ View ReadView(uint8_t* self, size_t offset)
         result.begin = *reinterpret_cast<uintptr_t*>(self + offset);
         result.end = *reinterpret_cast<uintptr_t*>(self + offset + 4);
         if (!result.begin || result.end < result.begin ||
-            result.end - result.begin > 128 * sizeof(Option) ||
+            result.end - result.begin > sdgo::kShopProfileMaximumBytes ||
             (result.end - result.begin) % sizeof(Option) != 0)
             result = {};
     } __except (EXCEPTION_EXECUTE_HANDLER) { result = {}; }
@@ -160,11 +161,10 @@ bool LoadOverrides(const wchar_t* directory)
     const std::wstring file = std::wstring(directory) + L"\\display.ini";
     if (GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES)
         return true;
-    std::vector<wchar_t> sections(65536);
-    const DWORD count = GetPrivateProfileSectionNamesW(sections.data(), static_cast<DWORD>(sections.size()), file.c_str());
-    if (count >= sections.size() - 2)
-        return false;
-    for (const wchar_t* section = sections.data(); *section; section += wcslen(section) + 1) {
+    try {
+    const sdgo::ShopProfile profile(file.c_str());
+    for (const auto& entry:profile.sections) {
+        const wchar_t* section=entry.first.c_str();
         if (wcsncmp(section, L"option:", 7) != 0)
             continue;
         wchar_t* end = nullptr;
@@ -172,12 +172,11 @@ bool LoadOverrides(const wchar_t* directory)
         if (!id || !end || *end || id > 0x7FFFFFFF || g_overrides.count(id))
             return false;
         Override value;
-        value.category = GetPrivateProfileIntW(section, L"Category", 0, file.c_str());
-        value.validity = static_cast<int>(GetPrivateProfileIntW(section, L"Validity", 0, file.c_str()));
-        value.payment = static_cast<int>(GetPrivateProfileIntW(section, L"Payment", 0, file.c_str()));
-        value.price = static_cast<int>(GetPrivateProfileIntW(section, L"Price", -1, file.c_str()));
-        wchar_t text[256] = {};
-        const DWORD length = GetPrivateProfileStringW(section, L"Text", L"", text, 256, file.c_str());
+        value.category = profile.Number(section,L"Category");
+        value.validity = profile.Number(section,L"Validity");
+        value.payment = profile.Number(section,L"Payment");
+        value.price = profile.Number(section,L"Price",-1);
+        const auto text=profile.Value(section,L"Text");const auto length=text.size();
         if (!value.category || value.validity <= 0 || value.price < 0 ||
             (value.payment != 1 && value.payment != 2) || !length || length >= 255)
             return false;
@@ -185,6 +184,7 @@ bool LoadOverrides(const wchar_t* directory)
         g_overrides.emplace(id, std::move(value));
     }
     return true;
+    }catch(const std::exception&){return false;}
 }
 } // namespace
 

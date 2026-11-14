@@ -100,7 +100,7 @@ Edit and publish server content in SDGO Mod Manager for players to install.
 
 | Feature | Overview |
 |---|---|
-| [Shop catalog manager](docs/shop-catalog.md) <!-- catalog: `shop_catalog` --> | First-bind defaults for five editable item types; price, list and retire offers in Manager (WorldServer) |
+| [Shop catalog manager](docs/shop-catalog.md) <!-- catalog: `shop_catalog` --> | Five editable defaults, large-catalog paging and search, free identity allocation and shared-record collision protection (WorldServer) |
 | [Capsule catalog editor](docs/capsule-catalog.md) <!-- catalog: `capsule_catalog` --> | Includes 35 editable default pools; install paired client/server configuration and manage machines, prices, weights and acquisition routes |
 | [Unit family import](docs/unit-import.md) <!-- catalog: `unit_catalog`, `unit_catalog_server` --> | Import single, two-form, three-stage and directed multi-form packages, generate matching server form graphs, compose [custom skills, icons and paired effect parameters](docs/unit-skill-import.md), and check parameters and weapon callback resources; includes public AR growth and BR armor-purge demo presets |
 | [Map and mission import](docs/map-import.md) <!-- catalog: `map_catalog`, `map_catalog_server` --> | Import maps and phased missions in Manager: native party walking movies, unit strips and commander reminders; guardian-protected targets and successful ally retreats; shared player/NPC bounds, native contact hurt and nonlethal HP sync; gate collision, NPC bombardment, ground markings, loading posters and drops. Retain authored names and generate paired client content/server definitions. Includes an OPEN map and eight-phase mission source package with input-file and generated-script views |

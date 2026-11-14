@@ -12,6 +12,7 @@
 #include <vector>
 #include "sdgo/sdgo_api.h"
 #include "sdgo/shop_labels.h"
+#include "sdgo/shop_profile.h"
 
 namespace sdgo::shop_localization {
 constexpr size_t kProductBytes = 1279;
@@ -85,15 +86,14 @@ class CustomProducts {
     Make make=nullptr;Insert insert=nullptr;Register integrity=nullptr;MapFind mapFind=nullptr;
     const SdgoApi* api=nullptr;SdgoMod* mod=nullptr;
     std::map<uint32_t,CustomProduct> products;
+    std::map<uint32_t,const uint8_t*> nativeProducts;
+    bool productsScanned=false,capacityExhausted=false;
     bool installed=false;
     bool nativeFault=false;
     DWORD nativeException=0;
-    static int Number(const std::wstring& file,const wchar_t* section,const wchar_t* key)
+    static int Number(const sdgo::ShopProfile& file,const wchar_t* section,const wchar_t* key)
     {
-        wchar_t text[64]{};GetPrivateProfileStringW(section,key,L"",text,64,file.c_str());
-        wchar_t* end=nullptr;long long n=_wcstoi64(text,&end,10);
-        if(!text[0]||!end||*end||n<1||n>2147483647)throw std::runtime_error("invalid custom product display guard");
-        return static_cast<int>(n);
+        const int n=file.Number(section,key);if(n<1)throw std::runtime_error("invalid custom product display guard");return n;
     }
     bool Row(uint32_t id,uint32_t type,const uint8_t** out) const
     {
@@ -135,6 +135,15 @@ class CustomProducts {
         void* node=nullptr;void* grid=data();mapFind(grid,&node,&id);
         return node&&node!=*reinterpret_cast<void**>(static_cast<uint8_t*>(grid)+4);
     }
+    static size_t OptionCount(void* self,size_t offset)
+    {
+        __try {
+            const auto* base=static_cast<uint8_t*>(self);
+            const auto begin=*reinterpret_cast<const uintptr_t*>(base+offset),end=*reinterpret_cast<const uintptr_t*>(base+offset+4);
+            return begin&&end>=begin&&(end-begin)%sizeof(sdgo::shop::Option)==0
+                ?(end-begin)/sizeof(sdgo::shop::Option):0;
+        }__except(EXCEPTION_EXECUTE_HANDLER){return 0;}
+    }
     static bool CopyOptions(void* self,size_t offset,sdgo::shop::Option* rows,size_t capacity,size_t* count)
     {
         __try {
@@ -149,19 +158,18 @@ public:
     void Read(const wchar_t* directory)
     {
         std::wstring root=directory;const auto slash=root.find_last_of(L"\\/");if(slash==std::wstring::npos)throw std::runtime_error("invalid localization Mod directory");
-        const std::wstring file=root.substr(0,slash)+L"\\shop_labels\\display.ini";
-        if(GetFileAttributesW(file.c_str())==INVALID_FILE_ATTRIBUTES)return;
-        std::vector<wchar_t> sections(65536);
-        const auto count=GetPrivateProfileSectionNamesW(sections.data(),static_cast<DWORD>(sections.size()),file.c_str());
-        if(count>=sections.size()-2)throw std::runtime_error("custom shop display profile too large");
-        for(const wchar_t* section=sections.data();*section;section+=wcslen(section)+1) {
+        const std::wstring path=root.substr(0,slash)+L"\\shop_labels\\display.ini";
+        if(GetFileAttributesW(path.c_str())==INVALID_FILE_ATTRIBUTES)return;
+        const sdgo::ShopProfile file(path.c_str());
+        for(const auto& entry:file.sections) {
+            const wchar_t* section=entry.first.c_str();
             if(wcsncmp(section,L"product:",8))continue;
             wchar_t* end=nullptr;const auto id=wcstoul(section+8,&end,10);
-            if(!end||*end||id<=1000000||id>=2000000||products.count(id)||products.size()>=256)throw std::runtime_error("invalid custom product identity");
+            if(!end||*end||id<=1000000||id>=2000000||products.count(id))throw std::runtime_error("invalid custom product identity");
             CustomProduct p;p.id=id;p.templateId=Number(file,section,L"TemplateId");p.category=Number(file,section,L"Category");
             p.price=Number(file,section,L"Price");p.payment=Number(file,section,L"Payment");p.validity=Number(file,section,L"Validity");
-            wchar_t name[128]{};const auto len=GetPrivateProfileStringW(section,L"Name",L"",name,128,file.c_str());p.name=name;
-            if(!len||len>50||!Chinese(p.name)||(p.payment!=1&&p.payment!=2))throw std::runtime_error("custom product needs a Chinese title and valid display guards");
+            p.name=file.Value(section,L"Name");
+            if(p.name.empty()||p.name.size()>50||!Chinese(p.name)||(p.payment!=1&&p.payment!=2))throw std::runtime_error("custom product needs a Chinese title and valid display guards");
             products.emplace(p.id,std::move(p));
         }
     }
@@ -181,14 +189,23 @@ public:
     bool InstallUnsafe()
     {
         if(installed||Empty())return true;
-        std::map<uint32_t,const uint8_t*> native;
+        if(capacityExhausted)return false;
+        // Native record IDs are shared with other table kinds. Discover existing
+        // product rows across the supported interval; never assume a gap is ours.
+        if(!productsScanned) {
+            const uint8_t* first=nullptr;if(!Row(210001,0x23,&first))return false;
+            for(uint32_t id=210001;id<260001;++id){const uint8_t* row=nullptr;if(Row(id,0x23,&row))nativeProducts.emplace(Read32(row+5),row);}
+            productsScanned=true;
+        }
+        const auto& native=nativeProducts;
+        if(native.empty())return false;
         uint32_t next=210001;
-        for(;next<260001;++next){const uint8_t* row=nullptr;if(!Row(next,0x23,&row))break;native.emplace(Read32(row+5),row);}
-        if(next==210001||next>=260001)return false;
         std::vector<std::pair<uint32_t,std::array<uint8_t,kProductBytes>>> additions;
         for(const auto& entry:products) {
             if(native.count(entry.first))continue;
-            if(Occupied(next)||!native.count(entry.second.templateId))return false;
+            while(next<260001&&Occupied(next))++next;
+            if(next>=260001){capacityExhausted=true;api->Log(mod,SDGO_LOG_ERROR,"no free supported shop display record IDs; all existing table records preserved");return false;}
+            if(!native.count(entry.second.templateId))return false;
             std::array<std::wstring,2> art{};bool replace=false;
             if(!OperatorArt(entry.second,&art,&replace))return false;
             additions.emplace_back(next,ProductRecord(next,entry.second,native.at(entry.second.templateId),replace?&art:nullptr));++next;
@@ -228,8 +245,11 @@ public:
     }
     void Observe(void* self,size_t offset=0x88) const
     {
-        verified.clear();sdgo::shop::Option rows[512]{};size_t count=0;
-        if(CopyOptions(self,offset,rows,512,&count))ObserveRows(rows,count);
+        verified.clear();
+        const size_t count=OptionCount(self,offset);
+        if(!count||count>sdgo::kShopProfileMaximumBytes/sizeof(sdgo::shop::Option))return;
+        std::vector<sdgo::shop::Option> rows(count);size_t copied=0;
+        if(CopyOptions(self,offset,rows.data(),rows.size(),&copied))ObserveRows(rows.data(),copied);
     }
     void ObservePopup(void* self) const
     {

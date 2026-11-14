@@ -107,6 +107,32 @@ class ShopClientPackageTests(unittest.TestCase):
         self.workspace.services.close()
         self.temp.cleanup()
 
+    def test_player_display_export_has_no_shared_256_offer_quota(self):
+        from manager.shop import _validate_display
+        raw = '[shop]\nRevision=fixture\n'
+        for i in range(1500):
+            raw += (f'[product:{1011000+i}]\nName=通用商品\nTemplateId=1010001\n'
+                    'Category=1120001\nValidity=1\nPayment=1\nPrice=500\n')
+        _validate_display(raw.encode('utf-16'))
+
+    def test_original_client_only_product_ids_are_reserved(self):
+        from manager.shop import _native_product_ids
+        raw = bytearray(1279);raw[5:9] = (1010002).to_bytes(4, 'little')
+        with patch('manager.shop.native_assets.Assets') as assets:
+            assets.return_value.records.return_value = {210001:bytes(raw)}
+            self.assertEqual(_native_product_ids(self.client), [1010002])
+            assets.return_value.records.assert_called_once_with('gdrs/0038.gdt',1279)
+
+    def test_large_profile_cannot_be_exported_with_legacy_client_programmes(self):
+        from manager.shop import client_package
+        raw = '[shop]\nRevision=' + PUBLISHED_REVISION + '\n'
+        for i in range(300):
+            raw += (f'[product:{1019000+i}]\nName=通用商品\nTemplateId=1010001\n'
+                    'Category=1120001\nValidity=1\nPayment=1\nPrice=500\n')
+        (self.client/'sdgo/mods/shop_labels/display.ini').write_bytes(raw.encode('utf-16'))
+        with self.assertRaisesRegex(ValueError,'shop_localization 0.4.0'):
+            client_package(str(self.client),REVISION,[],'store_billing_visible_readback',preflight_only=True)
+
     def export(self):
         result = self.provider.request('GET', '/api/shop/client-package', {}, {'X-Shop-Revision': REVISION})
         self.assertEqual(result.mime, 'application/zip')

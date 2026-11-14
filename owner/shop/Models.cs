@@ -70,9 +70,12 @@ namespace Sdgo.Shop
     }
     public static class Model
     {
-        public static JavaScriptSerializer Json() { return new JavaScriptSerializer { MaxJsonLength=32*1024*1024, RecursionLimit=100 }; }
+        public const int MaximumCatalogBytes=32*1024*1024;
+        // API states contain both the catalog and its status rows. Keep this
+        // envelope separate from the smaller, independently checked file budget.
+        public static JavaScriptSerializer Json() { return new JavaScriptSerializer { MaxJsonLength=128*1024*1024, RecursionLimit=100 }; }
         public static T Clone<T>(T value) { return Json().Deserialize<T>(Json().Serialize(value)); }
-        public static T Read<T>(string file) { return Json().Deserialize<T>(File.ReadAllText(file,Encoding.UTF8)); }
+        public static T Read<T>(string file) { if(new FileInfo(file).Length>MaximumCatalogBytes)throw new InvalidOperationException("商品配置超过 32 MiB，请按管理用途拆分工作区。");return Json().Deserialize<T>(File.ReadAllText(file,Encoding.UTF8)); }
         public static string Hash(byte[] bytes) { using(var h=SHA256.Create()) return BitConverter.ToString(h.ComputeHash(bytes)).Replace("-","").ToLowerInvariant(); }
         public static string FileHash(string file) { return File.Exists(file) ? Hash(File.ReadAllBytes(file)) : ""; }
         public static void Atomic(string file,byte[] data)
@@ -83,7 +86,7 @@ namespace Sdgo.Shop
             if(File.Exists(file)) File.Replace(pending,file,file+"."+DateTime.UtcNow.ToString("yyyyMMddTHHmmssfffffff")+".bak");
             else File.Move(pending,file);
         }
-        public static void Save<T>(string file,T data) { Atomic(file,new UTF8Encoding(false).GetBytes(Json().Serialize(data)+"\n")); }
+        public static void Save<T>(string file,T data) { var bytes=new UTF8Encoding(false).GetBytes(Json().Serialize(data)+"\n");if(bytes.Length>MaximumCatalogBytes)throw new InvalidOperationException("商品配置超过 32 MiB，请按管理用途拆分工作区。");Atomic(file,bytes); }
         public static void Text(string value)
         {
             if(String.IsNullOrEmpty(value)||value.Length>50||value.IndexOfAny(new[]{'\r','\n','\0'})>=0||value.StartsWith("\"")||value.EndsWith("\""))
@@ -112,9 +115,11 @@ namespace Sdgo.Shop
         }
         public static void Validate(Catalog catalog,Snapshot snapshot=null)
         {
-            if(catalog==null||catalog.schema_version!=1||!Key(catalog.catalog_id)||catalog.products==null||catalog.products.Count>4096)
+            if(catalog==null||catalog.schema_version!=1||!Key(catalog.catalog_id)||catalog.products==null)
                 throw new InvalidOperationException("不支持的商品配置或配置标识。");
             var ids=new HashSet<int>(); var skus=new HashSet<string>(); var keys=new HashSet<string>();
+            var items=snapshot==null?null:snapshot.Items.GroupBy(i=>i.Id).ToDictionary(g=>g.Key,g=>g.First());
+            var templates=snapshot==null?null:snapshot.Templates.ToLookup(t=>t.Id);
             foreach(var p in catalog.products)
             {
                 if(p==null||!Key(p.key)||!keys.Add(p.key)||p.product_id<=0||p.template_id<=0||p.category_id<=0||p.product_id==p.template_id||!ids.Add(p.product_id)||p.item_id==null||!Regex.IsMatch(p.item_id,@"^[0-9]{6}$")||!skus.Add(p.item_id))
@@ -124,15 +129,16 @@ namespace Sdgo.Shop
                 Text(p.name);Text(p.label);
                 if(snapshot!=null&&!p.retired)
                 {
-                    var item=snapshot.Items.FirstOrDefault(i=>i.Id==p.category_id);
-                    var template=snapshot.Templates.FirstOrDefault(t=>t.Id==p.template_id&&t.Kind==p.category_id/100000);
+                    Item item;items.TryGetValue(p.category_id,out item);
+                    var template=templates[p.template_id].FirstOrDefault(t=>t.Kind==p.category_id/100000);
                     if(item==null||template==null||p.product_id<=(template.Tab+100)*10000||p.product_id>=(template.Tab+101)*10000||p.item_id[0]!=template.Sku[0])
                         throw new InvalidOperationException("商品物品或原生模板不适用于当前区服。");
                     if(item.Kind==11&&item.TimeLimit==0&&p.validity!=1) throw new InvalidOperationException("永久机体的数量必须为 1。");
                     if(item.TimeLimit==1&&p.validity>36500) throw new InvalidOperationException("租期最多 36500 天。");
                 }
             }
-            if(catalog.products.Count(p=>!p.retired)>256) throw new InvalidOperationException("一个配置最多管理 256 件未删除商品。");
+            if(Encoding.UTF8.GetByteCount(Json().Serialize(catalog))+1>MaximumCatalogBytes)
+                throw new InvalidOperationException("商品配置超过 32 MiB，请按管理用途拆分工作区。");
         }
         public static bool Key(string key) { return key!=null&&Regex.IsMatch(key,@"^[A-Za-z0-9_.-]{1,64}$"); }
         public static Product Create(Catalog catalog,Snapshot snapshot,Item item)
@@ -145,9 +151,12 @@ namespace Sdgo.Shop
             if(t==null) throw new InvalidOperationException("这类物品尚无可用的原生单物品模板。");
             var ids=new HashSet<int>(snapshot.ProductIds.Concat(catalog.products.Select(p=>p.product_id)));
             var skus=new HashSet<string>(snapshot.Skus.Concat(catalog.products.Select(p=>p.item_id)));
-            int id=Enumerable.Range((100+t.Tab)*10000+9001,999).FirstOrDefault(n=>!ids.Contains(n));
-            string sku=Enumerable.Range(90001,9999).Select(n=>t.Sku[0]+n.ToString("D5")).FirstOrDefault(s=>!skus.Contains(s));
-            if(id==0||sku==null) throw new InvalidOperationException("本页可用的 Mod 商品编号已用完。");
+            if(t.Tab<0||t.Tab>=100||t.Tab==20)throw new InvalidOperationException("不支持的原生商城页。");
+            int start=(100+t.Tab)*10000;
+            int id=Enumerable.Range(9001,999).Concat(Enumerable.Range(1,9000)).Select(n=>start+n).FirstOrDefault(n=>!ids.Contains(n));
+            string sku=Enumerable.Range(90001,9999).Concat(Enumerable.Range(1,90000)).Select(n=>t.Sku[0]+n.ToString("D5")).FirstOrDefault(s=>!skus.Contains(s));
+            if(id==0)throw new InvalidOperationException("此原生商城页的商品编号已全部占用；其他商城页仍可新增商品。已删除商品的身份继续保留，请勿复用。");
+            if(sku==null)throw new InvalidOperationException("此原生物品前缀的 SKU 已全部占用；其他前缀仍可使用。已删除商品的身份继续保留，请勿复用。");
             return new Product {key="p-"+Guid.NewGuid().ToString("N"),product_id=id,item_id=sku,template_id=t.Id,category_id=item.Id,
                 name=name,label=item.Label(item.TimeLimit==1 ? 7 : 1),price=500,currency="GB",validity=item.TimeLimit==1 ? 7 : 1,enabled=true};
         }
@@ -189,7 +198,7 @@ namespace Sdgo.Shop
             Validate(catalog);ValidateChinese(catalog);var b=new StringBuilder("; Host-owned shop definitions. No credentials.\r\n[shop]\r\nSchema=1\r\nCatalogId="+catalog.catalog_id+"\r\nRevision="+Hash(Encoding.UTF8.GetBytes(Json().Serialize(catalog)))+"\r\n");
             foreach(var p in catalog.products.Where(x=>!x.retired))
                 b.AppendFormat("\r\n[product:{0}]\r\nProductId={1}\r\nItemId={2}\r\nTemplateId={3}\r\nCategory={4}\r\nPrice={5}\r\nCurrency={6}\r\nValidity={7}\r\nName={8}\r\nLabel={9}\r\nEnabled={10}\r\n",p.key,p.product_id,p.item_id,p.template_id,p.category_id,p.price,p.currency,p.validity,p.name,p.label,p.enabled?1:0);
-            return b.ToString();
+            string result=b.ToString();if(Encoding.Unicode.GetByteCount(result)+2>MaximumCatalogBytes)throw new InvalidOperationException("生成的商城配置超过 32 MiB，请按管理用途拆分工作区。");return result;
         }
         public static byte[] Unicode(string value) { return Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(value)).ToArray(); }
     }

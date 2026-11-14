@@ -1,11 +1,11 @@
 import {e,button,field,download} from '/panel_helpers.js';
 export async function mount(root,ctx){
  root.inert=true;
- let state, selected=null, query='';
+ let state, selected=null, query='', page=0;const pageSize=50;
  root.append(e('p','首次绑定空商城目录会自动上架永久机体、租赁机体、副官、设计图和消耗品预设，沿用本服现货的价格与期限。初始化后可在下方编辑或下架；更新不会重置你的修改。','muted'));
  const hasChinese=value=>/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(value||'');
  const automaticLabel=(product,validity)=>{const item=state.items.find(row=>row.Id===product.category_id);if(!item)return product.label;if(item.TimeLimit===1)return (item.Kind===11?'租赁 ':'有效期 ')+validity+' 天';return item.Kind===11?'永久':'数量 '+validity;};
- const controls=e('div',undefined,'actions'),search=document.createElement('input');search.placeholder='搜索商品名称或编号';search.oninput=()=>{query=search.value;render();};controls.append(search);
+ const controls=e('div',undefined,'actions'),search=document.createElement('input');search.placeholder='搜索商品名称或编号';search.oninput=()=>{query=search.value;page=0;render();};controls.append(search);
  const select=document.createElement('select');select.ariaLabel='新增商品的原生物品';
  const createName=document.createElement('input');createName.placeholder='中文商品名称（必填，可含 MSA-001 等代号）';createName.maxLength=50;createName.required=true;
  const createNameBox=e('label','新商品中文名称');createNameBox.append(createName,e('span','上方原生物品下拉保留原始名称，仅用于确认实际物品。','field-help'));
@@ -39,7 +39,10 @@ export async function mount(root,ctx){
   renderOperatorImports();
   list.replaceChildren(e('h2',state.demo?'商城商品（演示）':'商城商品'));
   const rows=state.products.filter(row=>JSON.stringify(row.product).toLowerCase().includes(query.toLowerCase()));
-  for(const row of rows){const p=row.product;list.append(button(p.name+' · '+p.price+' '+p.currency+' · '+row.status,()=>{selected=p.key;render();},ctx));}
+  const pages=Math.max(1,Math.ceil(rows.length/pageSize));page=Math.min(page,pages-1);
+  list.append(e('p',`共 ${rows.length} 件 · 第 ${page+1} / ${pages} 页，每页 ${pageSize} 件`,'muted'));
+  for(const row of rows.slice(page*pageSize,(page+1)*pageSize)){const p=row.product;list.append(button(p.name+' · '+p.price+' '+p.currency+' · '+row.status,()=>{selected=p.key;render();},ctx));}
+  if(pages>1){const navigation=e('div',undefined,'actions'),previous=button('上一页',()=>{page--;render();},ctx),next=button('下一页',()=>{page++;render();},ctx);previous.disabled=page===0;next.disabled=page===pages-1;navigation.append(previous,next);list.append(navigation);}
   if(!rows.length)list.append(e('p','还没有管理商品。选择一个原生物品，然后新增。','muted'));
   editor.replaceChildren();const product=state.catalog.products.find(p=>p.key===selected);if(!product){editor.append(e('p','选择商品查看和编辑。新增前还需要在原生物品下方填写中文商品名称。','muted'));return;}
   editor.append(e('h2',product.name),e('p','商品 '+product.product_id+' · 物品 '+product.category_id,'muted'));

@@ -122,6 +122,8 @@ jobs:
       - name: Shop default and sealed purchase contracts
         shell: pwsh
         run: |
+          & ./build/manager-services/ShopCapacityTests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_game_test_shop_plan.py" -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p "test_shop_client_package.py" -v

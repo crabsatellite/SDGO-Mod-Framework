@@ -261,6 +261,20 @@
       "title_en": "Native party movement: through the base gate",
       "guide_zh": "docs/map-import.zh-CN.md",
       "guide_en": "docs/map-import.md"
+    },
+    {
+      "id": "shop-catalog-capacity",
+      "path": "docs/shop-catalog-capacity.webp",
+      "since": "1.16.43",
+      "mods": [
+        "shop_catalog",
+        "shop_localization",
+        "shop_labels"
+      ],
+      "title_zh": "商城：大目录分页、全目录搜索和草稿编辑",
+      "title_en": "Shop: large-catalog paging, whole-catalog search and draft editing",
+      "guide_zh": "docs/shop-catalog.zh-CN.md",
+      "guide_en": "docs/shop-catalog.md"
     }
   ]
 }

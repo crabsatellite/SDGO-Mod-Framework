@@ -47,6 +47,10 @@ namespace Sdgo.Shop
                 using(var r=cmd.ExecuteReader()) while(r.Read()) {result.ProductIds.Add(Convert.ToInt32(r[0]));result.Skus.Add(Convert.ToString(r[1]).Trim());}
                 using(var cmd=Query(billing,"SELECT DISTINCT f_itemid FROM dbo.tbls_SubItems"))
                 using(var r=cmd.ExecuteReader()) while(r.Read()) result.Skus.Add(Convert.ToString(r[0]).Trim());
+                using(var cmd=Query(billing,"SELECT f_productid FROM dbo.tbls_StoreItemsPlus"))
+                using(var r=cmd.ExecuteReader()) while(r.Read()) result.ProductIds.Add(Convert.ToInt32(r[0]));
+                using(var cmd=Query(billing,"IF OBJECT_ID(N'dbo.sdgo_ShopCatalog',N'U') IS NOT NULL SELECT ProductId,ItemId FROM dbo.sdgo_ShopCatalog ELSE SELECT CAST(NULL AS int),CAST(NULL AS char(6)) WHERE 1=0"))
+                using(var r=cmd.ExecuteReader()) while(r.Read()) {result.ProductIds.Add(Convert.ToInt32(r[0]));result.Skus.Add(Convert.ToString(r[1]).Trim());}
                 bool subDisplay;
                 using(var cmd=Query(billing,"SELECT CASE WHEN COL_LENGTH(N'dbo.tbls_SubItems',N'f_display') IS NULL THEN 0 ELSE 1 END"))
                     subDisplay=Convert.ToInt32(cmd.ExecuteScalar())!=0;

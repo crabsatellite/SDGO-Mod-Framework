@@ -24,10 +24,11 @@ Use the existing framework source tools to read your own non-player configuratio
 placeholders. The input `shop.json` must be the current catalog of the destination workspace:
 
 ```powershell
-python tools/shop_catalog.py snapshot --server-ini "D:\Server\WorldServer\WorldServer.ini" --output "D:\PrivateShop\snapshot.json"
+python tools/shop_catalog.py snapshot --server-ini "D:\Server\WorldServer\WorldServer.ini" --client "D:\GameClient" --output "D:\PrivateShop\snapshot.json"
 python examples/shop/build_examples.py --snapshot "D:\PrivateShop\snapshot.json" --catalog "D:\MyShopWorkspace\shop.json" --output "D:\PrivateShop\new-examples"
 ```
 
+Use an existing matching client. `--client` reserves original products absent from server stock; omit it for a server-only snapshot.
 No original-client download, database restore or account creation is involved. Snapshots and resolved outputs
 contain target definitions and stay in the owner's workspace. Only neutral recipes, code and documentation belong
 in framework source. Output must be new. A missing item class refuses the whole generation instead of guessing

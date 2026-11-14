@@ -755,6 +755,41 @@
       "section": "settings",
       "audience": "developer",
       "activation": "restart_required"
+    },
+    {
+      "id": "main_hangar_preview_fault",
+      "key": "MainHangarPreviewFault",
+      "label": "原生主机库一次性 VB32 失败回归",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_player_mission_advance",
+      "key": "BattlePlayerMissionAdvance",
+      "label": "任务测试的有限前进输入",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required"
+    },
+    {
+      "id": "battle_player_mission_advance_ms",
+      "key": "BattlePlayerMissionAdvanceMs",
+      "label": "任务前进测试时长（关闭时为0）",
+      "type": "integer",
+      "default": 0,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "developer",
+      "activation": "restart_required",
+      "minimum": 0,
+      "maximum": 120000
     }
   ],
   "presentation": "configurable",

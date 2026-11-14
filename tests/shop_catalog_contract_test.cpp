@@ -77,6 +77,18 @@ int main()
         if (!Has(legacyUpdate, assignment)) return Fail("writable column omitted from StoreItems UPDATE");
     }
 
+    if (!Has(native, L"tbls_StoreItemsPlus WHERE f_productid=@pid") ||
+        !Has(native, L"NOT EXISTS(SELECT 1 FROM #sdgo_ShopInput i WHERE i.ProductKey=s.ProductKey)"))
+        return Fail("orphan identities or catalog ownership are not protected");
+    for (int i=1;i<5000;++i) {
+        auto p=product;p.key=L"offer-"+std::to_wstring(i);p.id=1011000+i;p.sku=std::to_wstring(130000+i);
+        catalog.products.push_back(p);
+    }
+    const auto large=sdgo::shop_catalog::ApplySql(catalog,computed);
+    if (large.size()>2000000 || Has(large,L"NOT IN(") ||
+        large.find(L"INSERT dbo.tbls_StoreItems(")!=large.rfind(L"INSERT dbo.tbls_StoreItems("))
+        return Fail("large apply must stage rows and reuse one native guarded write body");
+
     std::cout << "SHOP CATALOG CONTRACT PASS: computed and writable native layouts stay strict\n";
     return 0;
 }

@@ -23,10 +23,11 @@
 `shop.json` 必须来自准备导入的同一个商城工作区，不要拿其他服主的 catalog 身份替换它。
 
 ```powershell
-python tools/shop_catalog.py snapshot --server-ini "D:\Server\WorldServer\WorldServer.ini" --output "D:\PrivateShop\snapshot.json"
+python tools/shop_catalog.py snapshot --server-ini "D:\Server\WorldServer\WorldServer.ini" --client "D:\GameClient" --output "D:\PrivateShop\snapshot.json"
 python examples/shop/build_examples.py --snapshot "D:\PrivateShop\snapshot.json" --catalog "D:\MyShopWorkspace\shop.json" --output "D:\PrivateShop\new-examples"
 ```
 
+使用已有的匹配客户端；`--client` 预留其未在服务器销售的原生商品号，纯服务器快照可省略。
 不下载原版、不恢复数据库，也不创建账号。快照和解析后的输出含目标服务器的实际定义，只保存在服主工作区；
 公开框架只保存本目录的中性配方、代码和说明。输出目录必须尚不存在；缺少某类有效现货时整体拒绝生成，
 不猜物品编号、不补任意低价、不降级为免费商品，也不覆盖已有作者输出。

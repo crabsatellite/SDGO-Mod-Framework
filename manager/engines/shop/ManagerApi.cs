@@ -37,6 +37,16 @@ namespace Sdgo.Manager
             {
                 var request=Model.Json().Deserialize<Dictionary<string,object>>(input);string action=Text(request,"action");
                 Open(request,action!="read-effective");
+                if(request.ContainsKey("reserved_product_ids"))
+                {
+                    var reserved=request["reserved_product_ids"] as System.Collections.IEnumerable;
+                    if(reserved==null)throw new InvalidOperationException("客户端商品预留编号无效。");
+                    foreach(object identity in reserved)
+                    {
+                        if(!(identity is int)||(int)identity<=0)throw new InvalidOperationException("客户端商品预留编号无效。");
+                        service.Snapshot.ProductIds.Add((int)identity);
+                    }
+                }
                 var body=request.ContainsKey("body")?(Dictionary<string,object>)request["body"]:new Dictionary<string,object>();
                 if(action=="read"||action=="read-effective") {service.Connect(action!="read-effective");return Model.Json().Serialize(new {ok=true,value=State()});}
                 if(Text(request,"revision")!=Model.FileHash(service.CatalogFile))throw new InvalidOperationException("商城配置已改变，请刷新后重试。");

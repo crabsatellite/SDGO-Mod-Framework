@@ -25,6 +25,8 @@ if($LASTEXITCODE -ne 0){throw 'Manager shop search-index contract test build fai
 & $compiler /nologo /target:exe ("/out:"+(Join-Path $services 'ShopDefaultPresetTests.exe')) ("/r:"+$library) /r:System.Data.dll /r:System.Web.Extensions.dll (Join-Path $repo 'tests/ShopDefaultPresetTests.cs')
 if($LASTEXITCODE -ne 0){throw 'Manager shop default-preset contract test build failed'}
 $env:LIB=$oldCompilerLib
+& $compiler /nologo /target:exe ("/out:"+(Join-Path $services 'ShopCapacityTests.exe')) ("/r:"+$library) /r:System.Data.dll /r:System.Web.Extensions.dll (Join-Path $repo 'tests/ShopCapacityTests.cs')
+if($LASTEXITCODE -ne 0){throw 'Manager shop capacity contract test build failed'}
 if($ServicesOnly){Write-Output $services;return}
 $oldLibrary=$env:SDGO_MANAGER_SERVICES
 $oldCache=$env:PYINSTALLER_CONFIG_DIR

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Runtime.InteropServices;
 
 namespace Sdgo.Shop
 {
@@ -15,6 +16,15 @@ namespace Sdgo.Shop
     }
     public sealed class ShopService : IDisposable
     {
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode)] static extern uint GetPrivateProfileString(string section,string key,string fallback,StringBuilder value,uint size,string file);
+        static void RequireVersion(string root,string id,Version minimum)
+        {
+            var text=new StringBuilder(64);
+            GetPrivateProfileString("mod","version","",text,64,Path.GetFullPath(Path.Combine(root,"sdgo","mods",id,"mod.ini")));
+            Version actual;
+            if(!Version.TryParse(text.ToString().Split('-')[0],out actual)||actual<minimum)
+                throw new InvalidOperationException("扩展商城需要更新 "+id+" 至 "+minimum+" 或以上版本；请先安装配套程序，尚未写入商品数据库。");
+        }
         const long SearchIndexMaximumBytes=8L*1024*1024;
         const long SearchResultMaximumBytes=64L*1024;
         public readonly string DirectoryPath;
@@ -186,6 +196,12 @@ namespace Sdgo.Shop
                 throw new InvalidOperationException("所选客户端没有安装商城汉化 Mod（shop_localization.dll），请先安装玩家更新包，或清空客户端设置。");
             if(displayDir!=null&&!File.Exists(Path.Combine(displayDir,"shop_labels.dll")))
                 throw new InvalidOperationException("所选客户端没有安装显示补丁，请重新选择客户端，或清空客户端设置。");
+            bool expanded=Catalog.products.Count(p=>!p.retired)>256||Catalog.products.Any(p=>!p.retired&&(p.product_id%10000<9001||Int32.Parse(p.item_id.Substring(1))<90001));
+            if(!Demo&&expanded)
+            {
+                RequireVersion(Settings.WorldDirectory,"shop_catalog",new Version(0,4,0));
+                if(displayDir!=null){RequireVersion(Settings.ClientDirectory,"shop_localization",new Version(0,4,0));RequireVersion(Settings.ClientDirectory,"shop_labels",new Version(0,2,0));}
+            }
             if(Demo)
             {
                 Applied=Catalog.products.Where(p=>!p.retired).Select(p=>new Applied {Id=p.product_id,Sku=p.item_id,Category=p.category_id,Price=p.price,Validity=p.validity,Currency=p.currency,Visible=p.enabled,Label=p.label,Name=p.name}).ToList();demoRepository.Applied=Applied;
@@ -204,7 +220,8 @@ namespace Sdgo.Shop
             using(var process=Process.Start(start))
             {
                 var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();
-                if(!process.WaitForExit(60000)) throw new InvalidOperationException("应用工具仍在处理，结果尚未确认。请稍后刷新服务器状态，勿重复应用。记录目录："+run);
+                int timeout=(int)Math.Min(900000L,120000L+Catalog.products.Count*100L);
+                if(!process.WaitForExit(timeout)) throw new InvalidOperationException("应用工具仍在处理，结果尚未确认。请稍后刷新服务器状态，勿重复应用。记录目录："+run);
                 output=stdout.Result;error=stderr.Result;exit=process.ExitCode;
             }
             File.WriteAllText(Path.Combine(run,"result.txt"),output+error,Encoding.UTF8);

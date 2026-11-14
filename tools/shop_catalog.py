@@ -11,20 +11,26 @@ import copy
 import datetime
 import hashlib
 import json
+from itertools import chain
 from pathlib import Path
 import re
 
 KEY = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
 CURRENCIES = {"GB": 1, "MB": 2}
+MAX_CATALOG_BYTES = 32 * 1024 * 1024
 
 
 def load(path):
+    if Path(path).stat().st_size > MAX_CATALOG_BYTES:
+        raise ValueError("Shop configuration exceeds the 32 MiB workspace budget")
     return json.loads(Path(path).read_text(encoding="utf-8-sig"))
 
 
 def save(path, value):
     path = Path(path)
     raw = (json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    if len(raw) > MAX_CATALOG_BYTES:
+        raise ValueError("Shop configuration exceeds the 32 MiB workspace budget")
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         previous = path.read_bytes()
@@ -55,10 +61,15 @@ def text(value, name):
 def validate(catalog, snapshot=None):
     if catalog.get("schema_version") != 1 or not KEY.fullmatch(catalog.get("catalog_id", "")):
         raise ValueError("Invalid catalog schema or identity")
-    if not isinstance(catalog.get("products"), list) or len(catalog["products"]) > 4096:
+    if not isinstance(catalog.get("products"), list):
         raise ValueError("Invalid product list")
     ids, skus, keys = set(), set(), set()
-    active = 0
+    categories = {r['CatalogueID']: r for r in snapshot['categories']} if snapshot is not None else {}
+    templates = {r['f_productid']: r for r in snapshot['products']} if snapshot is not None else {}
+    kinds = {}
+    if snapshot is not None:
+        for row in snapshot['options']:
+            kinds.setdefault(row['f_itemid'].strip(), set()).add(int(row['f_categoryNumber']) // 100000)
     for p in catalog["products"]:
         if not KEY.fullmatch(p.get("key", "")) or p["key"] in keys:
             raise ValueError("Invalid or duplicate product key")
@@ -83,10 +94,9 @@ def validate(catalog, snapshot=None):
         text(p["name"], "name")
         text(p["label"], "label")
         if not p.get("retired"):
-            active += 1
             if snapshot is not None:
-                category = next((r for r in snapshot["categories"] if r["CatalogueID"] == p["category_id"]), None)
-                template = next((r for r in snapshot["products"] if r["f_productid"] == p["template_id"]), None)
+                category = categories.get(p['category_id'])
+                template = templates.get(p['template_id'])
                 if category is None or template is None or str(template.get("f_package", "0")) != "0":
                     raise ValueError("Unknown category or native single-item template")
                 tab = int(template["f_depth1"])
@@ -94,15 +104,14 @@ def validate(catalog, snapshot=None):
                     raise ValueError("Product id is outside its native tab range")
                 if p["item_id"][0] != template["f_itemid"].strip()[0]:
                     raise ValueError("SKU kind differs from template")
-                offered = [r for r in snapshot["options"] if r["f_itemid"].strip() == template["f_itemid"].strip()]
-                if not any(int(r["f_categoryNumber"]) // 100000 == int(category["CatalogueID"]) // 100000 for r in offered):
+                if int(category['CatalogueID']) // 100000 not in kinds.get(template['f_itemid'].strip(), ()):
                     raise ValueError("Template and category have different native item kinds")
                 if category["CatalogueID"] // 100000 == 11 and int(category["TimeLimit"]) == 0 and p["validity"] != 1:
                     raise ValueError("Permanent unit validity is one item, not a lease duration")
                 if int(category["TimeLimit"]) == 1 and p["validity"] > 36500:
                     raise ValueError("Rental duration exceeds supported range")
-    if active > 256:
-        raise ValueError("Native catalog module supports at most 256 non-retired definitions")
+    if len((json.dumps(catalog, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")) > MAX_CATALOG_BYTES:
+        raise ValueError("Shop configuration exceeds the 32 MiB workspace budget")
 
 
 def create(catalog, snapshot, *, key, category_id, price, currency, validity=1, name=None, label=None):
@@ -117,14 +126,22 @@ def create(catalog, snapshot, *, key, category_id, price, currency, validity=1, 
     if not templates:
         raise ValueError("No supported native single-item template for this category kind")
     template = min(templates, key=lambda r: (str(r["f_display"]) != "1", int(r["f_productid"])))
-    used_products = {int(r["f_productid"]) for r in snapshot["products"]} | {p["product_id"] for p in result["products"]}
-    used_skus = {r["f_itemid"].strip() for r in snapshot["products"] + snapshot["options"]} | {p["item_id"] for p in result["products"]}
+    used_products = ({int(r["f_productid"]) for r in snapshot["products"]}
+                     | set(snapshot.get("reserved_product_ids", ())) | {p["product_id"] for p in result["products"]})
+    used_skus = ({r["f_itemid"].strip() for r in snapshot["products"] + snapshot["options"]}
+                 | set(snapshot.get("reserved_skus", ())) | {p["item_id"] for p in result["products"]})
     tab = int(template["f_depth1"])
-    product_id = next((i for i in range((100 + tab) * 10000 + 9001, (101 + tab) * 10000) if i not in used_products), None)
+    if not 0 <= tab < 100 or tab == 20:
+        raise ValueError("Unsupported native shop tab")
+    product_id = next(((100 + tab) * 10000 + i for i in chain(range(9001, 10000), range(1, 9001))
+                       if (100 + tab) * 10000 + i not in used_products), None)
     prefix = template["f_itemid"].strip()[0]
-    sku = next((prefix + f"{i:05d}" for i in range(90001, 100000) if prefix + f"{i:05d}" not in used_skus), None)
-    if product_id is None or sku is None:
-        raise ValueError("Managed native id range exhausted")
+    sku = next((prefix + f"{i:05d}" for i in chain(range(90001, 100000), range(1, 90001))
+                if prefix + f"{i:05d}" not in used_skus), None)
+    if product_id is None:
+        raise ValueError("This native shop tab is full; other tabs remain available. Retired identities stay reserved")
+    if sku is None:
+        raise ValueError("This native SKU prefix is full; other prefixes remain available. Retired identities stay reserved")
     if label is None:
         if int(category["TimeLimit"]) == 1:
             label = f"租赁 {validity} 天" if kind == 11 else f"有效期 {validity} 天"
@@ -174,6 +191,8 @@ def compile_catalog(catalog, path, snapshot=None):
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     data = ("\r\n".join(lines) + "\r\n").encode("utf-16")
+    if len(data) > MAX_CATALOG_BYTES:
+        raise ValueError("Compiled shop configuration exceeds the 32 MiB workspace budget")
     if out.exists() and out.read_bytes() == data:
         return revision
     pending = out.with_name(out.name + ".pending")
@@ -183,7 +202,7 @@ def compile_catalog(catalog, path, snapshot=None):
     return revision
 
 
-def snapshot(server_ini, output):
+def snapshot(server_ini, output, client=None):
     import pyodbc
     cfg = configparser.ConfigParser(interpolation=None)
     cfg.read(server_ini, encoding="utf-8-sig")
@@ -206,8 +225,20 @@ def snapshot(server_ini, output):
                 cur.execute(f"SELECT * FROM dbo.[{name}]")
                 keys = [c[0] for c in cur.description]
                 data[target] = [dict(zip(keys, row)) for row in cur.fetchall()]
+            if role == "DB StoreBilling":
+                cur.execute("SELECT f_productid FROM dbo.tbls_StoreItemsPlus")
+                data["reserved_product_ids"] = [int(row[0]) for row in cur.fetchall()]
+                cur.execute("IF OBJECT_ID(N'dbo.sdgo_ShopCatalog',N'U') IS NOT NULL SELECT ProductId,ItemId FROM dbo.sdgo_ShopCatalog ELSE SELECT CAST(NULL AS int),CAST(NULL AS char(6)) WHERE 1=0")
+                reserved = cur.fetchall()
+                data["reserved_product_ids"] = sorted(set(data["reserved_product_ids"]) | {int(row[0]) for row in reserved})
+                data["reserved_skus"] = sorted({str(row[1]).strip() for row in reserved})
         finally:
             cn.close()
+    if client is not None:
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from manager.shop import _native_product_ids
+        data['reserved_product_ids'] = sorted(set(data['reserved_product_ids']) | set(_native_product_ids(Path(client))))
     # Store configuration only; no account, balance, inventory or history tables.
     data = json.loads(json.dumps(data, ensure_ascii=False, default=str))
     save(output, data)
@@ -217,7 +248,7 @@ def snapshot(server_ini, output):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
-    cmd = sub.add_parser("snapshot"); cmd.add_argument("--server-ini", required=True); cmd.add_argument("--output", required=True)
+    cmd = sub.add_parser("snapshot"); cmd.add_argument("--server-ini", required=True); cmd.add_argument("--output", required=True);cmd.add_argument("--client", help="Matching destination client; reserves original product IDs absent from SQL")
     cmd = sub.add_parser("init"); cmd.add_argument("--id", required=True); cmd.add_argument("--file", required=True)
     cmd = sub.add_parser("items"); cmd.add_argument("--snapshot", required=True); cmd.add_argument("--search", default="")
     cmd = sub.add_parser("add")
@@ -233,7 +264,7 @@ def main():
         if name == "compile": cmd.add_argument("--output", required=True)
     args = p.parse_args()
     if args.command == "snapshot":
-        result = snapshot(args.server_ini, args.output)
+        result = snapshot(args.server_ini, args.output, args.client)
         print(json.dumps({k: len(result[k]) for k in ["products", "options", "categories", "units"]}))
         return
     if args.command == "init":

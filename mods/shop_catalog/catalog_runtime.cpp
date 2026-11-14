@@ -19,6 +19,7 @@
 #include "catalog_contract.h"
 #include "catalog_runtime.h"
 #include "search_sql.h"
+#include "sdgo/shop_profile.h"
 
 namespace sdgo::shop_catalog {
 namespace {
@@ -130,7 +131,8 @@ std::wstring WidenAscii(const std::string& value)
 {
     return {value.begin(), value.end()};
 }
-int Integer(const std::wstring& file, const wchar_t* section, const wchar_t* key, int fallback,
+std::wstring Value(const sdgo::ShopProfile& file,const wchar_t* section,const wchar_t* key,const wchar_t* fallback=L"") {return file.Value(section,key,fallback);}
+int Integer(const sdgo::ShopProfile& file, const wchar_t* section, const wchar_t* key, int fallback,
             int minimum, int maximum)
 {
     const std::wstring text = Value(file, section, key, std::to_wstring(fallback).c_str());
@@ -152,23 +154,20 @@ void Text(const std::wstring& value)
     if (value.empty() || value.size() > 50 || value.find_first_of(L"\r\n") != std::wstring::npos)
         throw std::runtime_error("catalog label must contain 1..50 UTF-16 units on one line");
 }
-Catalog Load(const std::wstring& file, bool headerOnly)
+Catalog Load(const std::wstring& path, bool headerOnly)
 {
-    if (GetFileAttributesW(file.c_str()) == INVALID_FILE_ATTRIBUTES) throw std::runtime_error("catalog.ini missing");
+    const sdgo::ShopProfile file(path.c_str());
     if (Integer(file, L"shop", L"Schema", 0, 1, 1) != 1) throw std::runtime_error("unsupported catalog schema");
     Catalog result;
     result.id = Value(file, L"shop", L"CatalogId");
     result.revision = Value(file, L"shop", L"Revision", L"manual");
     if (!Key(result.id) || !Key(result.revision)) throw std::runtime_error("invalid catalog identity");
     if (headerOnly) return result;
-    std::vector<wchar_t> sections(65536);
-    const DWORD size = GetPrivateProfileSectionNamesW(sections.data(), static_cast<DWORD>(sections.size()), file.c_str());
-    if (size >= sections.size() - 2) throw std::runtime_error("catalog section list too long");
     std::set<std::wstring> keys, skus;
     std::set<int> ids;
-    for (const wchar_t* section = sections.data(); *section; section += wcslen(section) + 1) {
+    for (const auto& entry:file.sections) {
+        const wchar_t* section=entry.first.c_str();
         if (wcsncmp(section, L"product:", 8) != 0) continue;
-        if (result.products.size() >= 256) throw std::runtime_error("catalog exceeds 256 products");
         Product product;
         product.key = section + 8;
         product.id = Integer(file, section, L"ProductId", 0, 1, 2147483647);
@@ -340,6 +339,8 @@ StoreItemsLayout StoreItemsMetadata(Database& billing)
 }
 void WriteUnicode(const std::wstring& path, const std::wstring& text)
 {
+    if(text.size()>(sdgo::kShopProfileMaximumBytes-2)/sizeof(wchar_t))
+        throw std::runtime_error("generated shop profile exceeds the 32 MiB budget");
     HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("cannot write generated Unicode profile");
     const wchar_t bom = 0xFEFF;
@@ -436,11 +437,21 @@ bool Apply(const std::wstring& hostIni, const std::wstring& catalogIni,
         WriteUnicode(temporary, L"; Preparing shop display configuration\r\n");
         if (!catalog.products.empty()) {
             Database game(hostFile, L"DB Game");
-            for (auto& product : catalog.products) Metadata(game, product);
+            std::map<int,Product> metadata;
+            for (auto& product : catalog.products) {
+                const auto found=metadata.find(product.category);
+                if(found==metadata.end()){Metadata(game,product);metadata.emplace(product.category,product);}
+                else {product.timeLimit=found->second.timeLimit;product.search1=found->second.search1;product.search2=found->second.search2;}
+                if(product.timeLimit==1&&product.validity>36500)throw std::runtime_error("rental duration exceeds supported display range");
+            }
         }
+        std::map<int,const Product*> definitions;
+        for(const auto& product:catalog.products)definitions.emplace(product.id,&product);
         Database billing(hostFile, L"DB StoreBilling");
         try {
             const StoreItemsLayout layout = StoreItemsMetadata(billing);
+            const auto seconds=(std::min)(std::size_t{600},std::size_t{20}+catalog.products.size()/16);
+            SQLSetStmtAttrW(billing.statement,SQL_ATTR_QUERY_TIMEOUT,reinterpret_cast<SQLPOINTER>(seconds),0);
             billing.Execute(ApplySql(catalog, layout));
             bool contract = false;
             std::wstring display = L"; Generated from the committed server definitions. UTF-16LE.\r\n[shop]\r\nRevision=" + catalog.revision + L"\r\n";
@@ -459,11 +470,11 @@ bool Apply(const std::wstring& hostIni, const std::wstring& catalogIni,
                         const std::wstring payment = billing.String(5);
                         const int price = billing.Number(6);
                         const std::wstring label = billing.String(7);
-                        const auto definition = std::find_if(catalog.products.begin(), catalog.products.end(), [parent](const Product& p) { return p.id == parent; });
-                        if (definition == catalog.products.end()) throw std::runtime_error("published parent product identity missing");
-                        display += L"\r\n[product:" + std::to_wstring(parent) + L"]\r\nTemplateId=" + std::to_wstring(definition->templateId) +
+                        const auto definition = definitions.find(parent);
+                        if (definition == definitions.end()) throw std::runtime_error("published parent product identity missing");
+                        display += L"\r\n[product:" + std::to_wstring(parent) + L"]\r\nTemplateId=" + std::to_wstring(definition->second->templateId) +
                             L"\r\nCategory=" + std::to_wstring(category) + L"\r\nValidity=" + std::to_wstring(validity) +
-                            L"\r\nPayment=" + payment + L"\r\nPrice=" + std::to_wstring(price) + L"\r\nName=" + definition->name + L"\r\n";
+                            L"\r\nPayment=" + payment + L"\r\nPrice=" + std::to_wstring(price) + L"\r\nName=" + definition->second->name + L"\r\n";
                         display += L"\r\n[option:" + std::to_wstring(option) + L"]\r\nCategory=" + std::to_wstring(category) +
                             L"\r\nValidity=" + std::to_wstring(validity) + L"\r\nPayment=" + payment +
                             L"\r\nPrice=" + std::to_wstring(price) + L"\r\nText=" + label + L"\r\n";

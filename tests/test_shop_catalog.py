@@ -27,6 +27,55 @@ def add(value=None, data=None, **kw):
 
 
 class ShopConfiguration(unittest.TestCase):
+    def test_large_catalog_round_trips_without_shared_active_slot_quota(self):
+        value = add()
+        base = value['products'][0]
+        value['products'] = [{**base, 'key': f'large-{i}', 'product_id': 1011000+i,
+                              'item_id': str(130000+i)} for i in range(5000)]
+        shop.validate(value, snapshot())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'catalog.ini'
+            shop.compile_catalog(value, output, snapshot())
+            parsed = configparser.ConfigParser(interpolation=None)
+            parsed.read(output, encoding='utf-16')
+            self.assertEqual(len(parsed.sections()), 5001)
+
+    def test_legacy_tail_exhaustion_uses_only_free_ids_in_same_native_pools(self):
+        data = snapshot()
+        data['reserved_product_ids'] = list(range(1019001, 1020000)) + [1010002]
+        data['reserved_skus'] = [f'1{i:05d}' for i in range(90001, 100000)] + ['100001']
+        p = add(data=data)['products'][0]
+        self.assertEqual((p['product_id'], p['item_id']), (1010003, '100002'))
+        self.assertEqual(data['products'][0]['f_productid'], 1010001)
+
+    def test_full_tab_does_not_consume_other_tab_or_recycle_retired_identity(self):
+        data = snapshot()
+        data['reserved_product_ids'] = list(range(1010001, 1020000))
+        with self.assertRaisesRegex(ValueError, 'other tabs remain available'):
+            add(data=data)
+        data['categories'].append({'CatalogueID': 1210001, 'TimeLimit': 0, 'Name': '副官'})
+        data['products'].append({'f_productid': 1030001, 'f_itemid': '300001', 'f_package': '0', 'f_depth1': 3, 'f_display': '1'})
+        data['options'].append({'f_itemid': '300001', 'f_categoryNumber': 1210001})
+        p = add(data=data, category_id=1210001)['products'][0]
+        self.assertEqual((p['product_id'], p['item_id']), (1039001, '390001'))
+        retired = shop.retire(add(), 'zaku')
+        p = add(value=retired, key='next')['products'][-1]
+        self.assertEqual((p['product_id'], p['item_id']), (1019002, '190002'))
+
+    def test_full_sku_prefix_does_not_spill_into_another_prefix(self):
+        data = snapshot()
+        data['reserved_skus'] = [f'1{i:05d}' for i in range(1, 100000)]
+        with self.assertRaisesRegex(ValueError, 'other prefixes remain available'):
+            add(data=data)
+
+    def test_oversized_input_rejected_before_json_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'catalog.json'
+            with path.open('wb') as stream:
+                stream.truncate(shop.MAX_CATALOG_BYTES + 1)
+            with self.assertRaisesRegex(ValueError, '32 MiB'):
+                shop.load(path)
+
     def test_create_respects_native_tab_and_sku_kind(self):
         p = add()["products"][0]
         self.assertEqual(p["product_id"], 1019001)

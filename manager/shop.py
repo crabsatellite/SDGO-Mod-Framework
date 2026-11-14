@@ -27,6 +27,20 @@ INT_MAX = 2147483647
 ACQUISITION_MAXIMUM_BYTES = 8 * 1024 * 1024
 
 
+def _native_product_ids(client: Path):
+    """Reserve destination-client originals; a SQL gap need not be a free product."""
+    rows = native_assets.Assets(client).records('gdrs/0038.gdt', 1279)
+    identities = set()
+    for raw in rows.values():
+        if len(raw) != 1279:
+            raise ValueError('目标客户端的原生商品记录布局不匹配')
+        identity = int.from_bytes(raw[5:9], 'little')
+        if not 0 < identity <= INT_MAX:
+            raise ValueError('目标客户端的原生商品编号无效')
+        identities.add(identity)
+    return sorted(identities)
+
+
 def _shop_category_details(client: Path):
     units = {}
     blueprints = {}
@@ -261,7 +275,6 @@ def _validate_display(raw: bytes):
         raise ValueError('显示配置尚未由商城工具生成，请先应用商城配置')
     if set(value['shop']) - {'revision', 'schema', 'catalogid'}:
         raise ValueError('显示配置包含未登记字段，未生成玩家更新包：shop')
-    product_count = 0
     for section in value.sections():
         folded = section.casefold()
         if folded == 'shop':
@@ -282,8 +295,7 @@ def _validate_display(raw: bytes):
         }
         if kind == 'product':
             limits['templateid'] = (1, INT_MAX)
-            product_count += 1
-            if product_count > 256 or not 1000000 < identity < 2000000:
+            if not 1000000 < identity < 2000000:
                 raise ValueError('显示配置中的商品编号或数量无效：' + section)
         elif identity > INT_MAX:
             raise ValueError('显示配置中的选项编号无效：' + section)
@@ -415,6 +427,13 @@ def client_package(client_value: str, shop_revision: str, active_products,
             raise ValueError('商城汉化和显示补丁不属于同一客户端版本')
         _validate_dictionary(payload['client/sdgo/mods/shop_localization/zh-CN.ini'])
         published_revision = _validate_display(payload['client/sdgo/mods/shop_labels/display.ini'])
+        display = storage.ini_values(payload['client/sdgo/mods/shop_labels/display.ini'])
+        products = [name for name in display.sections() if name.startswith('product:')]
+        if len(products) > 256 or any(int(name[8:]) % 10000 < 9001 for name in products):
+            from .updates import version
+            for identity, minimum in (('shop_localization', '0.4.0'), ('shop_labels', '0.2.0')):
+                if version(manifests[identity].get('mod','version',fallback='0.0.0')) < version(minimum):
+                    raise ValueError('扩展商城的玩家更新需要 ' + identity + ' ' + minimum + ' 或以上版本，请先安装配套程序')
         host = next(iter(hosts))
         symbols = _symbol_fragment(client, manifests, host)
         if preflight_only:
@@ -468,6 +487,15 @@ class Bridge:
     def call(self, value):
         with self.lock:
             if self.process.poll() is not None: raise ValueError('商城业务进程已退出，请刷新工作区')
+            if value.get('action') in ('create', 'initialize-presets') and value.get('client') and value.get('demo') != '1':
+                client = Path(value['client']).resolve()
+                files = [client/'GPackData.zdx', client/'GPackData.zpk', client/'gdrs/0038.gdt']
+                signature = (str(client), tuple((str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in files if p.exists()))
+                cached = getattr(self, '_native_reservations', None)
+                if cached is None or cached[0] != signature:
+                    cached = (signature, _native_product_ids(client))
+                    self._native_reservations = cached
+                value = {**value, 'reserved_product_ids': cached[1]}
             self.process.stdin.write(json.dumps(value,ensure_ascii=False)+'\n');self.process.stdin.flush()
             line = self.process.stdout.readline()
             if not line: raise ValueError('商城业务进程没有返回结果')
