@@ -834,6 +834,7 @@ function renderIdentity(){
     addOption(profile,"native-one-way-forms-v1","native-one-way-forms-v1 · 原生单向形态（终态不可变回）");
     addOption(profile,"native-entry-forms-v1","native-entry-forms-v1 · 入口形态（变入已发布的双向形态）");
     addOption(profile,"native-three-stage-forms-v1","native-three-stage-forms-v1 · 三阶段形态（不可逆，需服务端绑定）");
+    addOption(profile,"native-directed-forms-v1","native-directed-forms-v1 · 有向多形态（保留循环／辅助入口，需服务端绑定）");
     addOption(profile,"native-self-transform-v1","native-self-transform-v1 · 自引用记录（R行为需配套验证）");
     addOption(profile,"native-single-form-v1","native-single-form-v1 · 原生单形态");
     if(draft.behavior_profile&&!Array.from(profile.options).some(option=>option.value===draft.behavior_profile)){

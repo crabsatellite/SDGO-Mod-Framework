@@ -120,7 +120,7 @@ SDGO_MOD_ENTRY {
     std::memcpy(g_state.server_fingerprint,g_input.serverFingerprint.c_str(),65);g_state.installed=1;
     api->Log(mod,SDGO_LOG_INFO,"unit skill bindings installed: %lu mappings; server fingerprint %s",static_cast<DWORD>(g_state.bindings),g_state.server_fingerprint);
     }
-    if(graphs)api->Log(mod,SDGO_LOG_INFO,"unit form lifecycle/preflight prepared; Mod-authored form rebinding remains inactive");
+    if(graphs)api->Log(mod,SDGO_LOG_INFO,"unit form lifecycle and directed-edge preflight installed; uncached targets require the native composer");
     // A registered provider retains raw callback/user pointers for this process.
     // No fallible work or logging may follow this final external registration.
     return graphs?(g_capture->Attach()?1:0):1;

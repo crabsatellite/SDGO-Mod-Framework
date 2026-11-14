@@ -46,6 +46,7 @@ constexpr size_t kUnitGradeOffset = 308;
 constexpr size_t kUnitSubgradeOffset = 309;
 constexpr size_t kUnitModelPathOffset = 612;
 constexpr size_t kUnitModelPathBytes = 60;
+constexpr size_t kUnitModelOverrideOffset = 738;
 constexpr size_t kUnitPreviewPathOffsets[] = {4654, 4754, 4854};
 constexpr size_t kUnitPreviewPathBytes = 100;
 constexpr size_t kUnitTransformOffset = 316;
@@ -294,6 +295,22 @@ private:
             if (!ValidateUtf16Path(entry.bytes.data() + kUnitModelPathOffset,
                                    kUnitModelPathBytes, "mdrs\\", true)) {
                 return Fail(error, "unit model path is missing, unsafe or outside mdrs");
+            }
+            if (!ValidateUtf16Path(entry.bytes.data()+kUnitModelOverrideOffset,
+                                   kUnitModelPathBytes,"mdrs\\",false))
+                return Fail(error,("unit "+std::to_string(entry.id)+" model override @738 is unsafe or outside mdrs").c_str());
+            size_t overrideLength=0;
+            const auto* overridePath=entry.bytes.data()+kUnitModelOverrideOffset;
+            const auto word=[](const uint8_t* value){return static_cast<uint16_t>(value[0]|(static_cast<uint16_t>(value[1])<<8));};
+            while(overrideLength<kUnitModelPathBytes/2&&word(overridePath+overrideLength*2))++overrideLength;
+            if(overrideLength){
+                constexpr char suffix[]=".mod";
+                if(overrideLength<4)return Fail(error,"unit model override @738 is not a .mod path");
+                for(size_t i=0;i<4;++i){
+                    auto c=word(overridePath+(overrideLength-4+i)*2);
+                    if(c>='A'&&c<='Z')c=static_cast<uint16_t>(c-'A'+'a');
+                    if(c!=static_cast<uint16_t>(suffix[i]))return Fail(error,"unit model override @738 is not a .mod path");
+                }
             }
             for (const size_t offset : kUnitPreviewPathOffsets) {
                 if (!ValidateUtf16Path(entry.bytes.data() + offset,

@@ -17,6 +17,7 @@ alignas(8) volatile LONG64 calls=0,unmanaged=0,cached=0,uncached=0,denied=0,stal
 alignas(8) volatile LONG64 rebindAttempts=0,rebound=0;
 volatile LONG lastRoot=0,lastCurrent=0,lastTarget=0,lastStage=0,lastFault=0,lastCommit=0;
 bool installed=false,composerReady=false;
+const SdgoApi* runtimeApi=nullptr;SdgoMod* runtimeMod=nullptr;
 alignas(16) const std::uint32_t defaultMxcsr=0x1f80;
 class Lookup final:public UnitDefinitionLookup {
 public:
@@ -106,11 +107,14 @@ int __cdecl Evaluate(const Registers* registers) {
         // original handler. An identified managed human fails closed below.
         if(!ReadFrame(registers,&frame)||!graphs->hasEntry(frame.root)||(frame.owner&0x80000000u))InterlockedIncrement64(&unmanaged);
         else {
+            const char* reason="native transform context differs";
             result=1;NativeTransformContext context;
             if(ReadNativeTransformContext(frame.room,frame.index,frame.slot,frame.target,context)){
+                reason="captured unit lifecycle snapshot is unavailable";
                 HumanUnitCaptureSnapshot snapshot;
                 if(capture->Snapshot(context.room,context.player,context.deck,context.root,context.serial,snapshot)){
                     InterlockedIncrement64(&checks);const auto policy=CheckUnitForm(*graphs,*expected,context,snapshot,lookup);
+                    reason=policy.reason;
                     InterlockedAdd64(&normalized,policy.normalizations);
                     if(policy.decision==PreflightDecision::native_cached||policy.decision==PreflightDecision::native_uncached){
                         if(capture->Current(snapshot)){
@@ -120,11 +124,15 @@ int __cdecl Evaluate(const Registers* registers) {
                             // its own uncached refusal, so nothing beyond the original happens.
                             if(policy.decision==PreflightDecision::native_uncached&&composerReady)ComposeInactive(context,snapshot);
                             result=0;
-                        }else InterlockedIncrement64(&stale);
+                        }else {reason="captured unit lifecycle snapshot expired";InterlockedIncrement64(&stale);}
                     }
                 }else InterlockedIncrement64(&stale);
             }
-            if(result)InterlockedIncrement64(&denied);
+            if(result){
+                const auto count=InterlockedIncrement64(&denied);
+                if(count<=64&&runtimeApi)runtimeApi->Log(runtimeMod,SDGO_LOG_WARN,
+                    "unit form request refused: root=%u target=%u reason=%s",frame.root,frame.target,reason);
+            }
         }
     }catch(...){result=1;InterlockedIncrement64(&denied);}
     SetLastError(error);return result;
@@ -174,6 +182,7 @@ bool InstallFormGate(const SdgoApi* api,SdgoMod* mod,std::shared_ptr<const Graph
     if(gate!=base+0xcace0||failure!=base+0xcaf12||registry!=base+0x42aab8||find!=base+0x64ed0||
        hash!=base+0x321b30||compare!=base+0x321ae0){
         error="native form gate symbol boundaries differ";return false;}
+    runtimeApi=api;runtimeMod=mod;
     graphs=std::move(bindings);expected=definitions;capture=lifecycle;rejected=failure;lookup.registry=registry;lookup.query=reinterpret_cast<Lookup::Find>(find);lookup.hash=hash;lookup.compare=compare;
     // Composing uncached graph targets needs the composer symbols; without them the gate
     // still runs its preflight and the original handler keeps refusing uncached forms.

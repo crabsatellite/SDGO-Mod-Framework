@@ -15,7 +15,7 @@ from unit_import_support import Baseline,Repository,archive,png,publisher,comple
 
 
 class WorkspaceTests(unittest.TestCase):
-    def directed(self,targets):
+    def directed(self,targets,profile='native-three-stage-forms-v1'):
         from unit_import_support import unit
         with zipfile.ZipFile(io.BytesIO(archive())) as source:
             files={n:source.read(n) for n in source.namelist() if n!='gdrs/unit.bin'}
@@ -25,7 +25,35 @@ class WorkspaceTests(unittest.TestCase):
             for name,raw in files.items():z.writestr(name,raw)
         state=self.workspace.inspect('directed.zip',output.getvalue(),self.workspace.public()['revision'])
         return self.workspace.update(state['draft']['id'],{
-            'root_unit_id':min(targets),'behavior_profile':'native-three-stage-forms-v1'},state['revision'])
+            'root_unit_id':min(targets),'behavior_profile':profile},state['revision'])
+
+    def test_general_directed_profile_keeps_cycles_and_auxiliary_incoming_nodes(self):
+        for targets in ({91001:91002,91002:91003,91003:91002},
+                        {91001:91002,91002:91003,91003:91004,91004:91001},
+                        {91001:91002,91002:91003,91003:0,91004:91002}):
+            with self.subTest(targets=targets):
+                state=complete(self.workspace,self.directed(targets,'native-directed-forms-v1'))
+                draft=state['draft'];self.assertTrue(draft['can_confirm'],draft['requirements'])
+                self.assertEqual(targets,{node['id']:node['transform_target'] for node in draft['form_graph']['nodes']})
+                self.assertEqual([91001],[row['id'] for row in draft['forms'] if row['server']['SallyReady']])
+                from owner.units.project import export_project
+                with tempfile.TemporaryDirectory() as directory:
+                    other=Workspace(directory,baseline=Baseline(),repository=Repository(),publisher=publisher)
+                    try:
+                        imported=other.inspect('directed-project.zip',export_project(self.workspace,draft),other.public()['revision'])['draft']
+                        self.assertEqual('native-directed-forms-v1',imported['behavior_profile'])
+                        self.assertEqual(draft['form_graph'],imported['form_graph'])
+                    finally:other.close()
+
+    def test_general_directed_profile_refuses_unrelated_forms_and_does_not_skip_server_binding(self):
+        state=self.directed({91001:91002,91002:0,91003:0},'native-directed-forms-v1')
+        self.assertTrue(any(r['code']=='disconnected_form' for r in state['draft']['requirements']))
+        state=complete(self.workspace,self.directed({92001:92002,92002:92003,92003:0},'native-directed-forms-v1'))
+        self.repo.configured=True;draft=state['draft']
+        with self.assertRaisesRegex(ValueError,'形态图计划'):
+            self.workspace.confirm(draft['id'],{'preview_revision':draft['content_revision'],'shop':True,'capsule':True},state['revision'])
+        self.assertEqual([],self.repo.applied)
+        self.assertEqual('draft',self.workspace.public(draft['id'])['draft']['status'])
 
     def test_directed_profile_preserves_three_form_chain_and_project_roundtrip(self):
         state=complete(self.workspace,self.directed({91001:91002,91002:91003,91003:0}))
@@ -86,6 +114,17 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(model.field_value('UserGradeLimit',0x01000000),0x01000000)
         with self.assertRaises(ValueError):model.field_value('UserGradeLimit',0x80000000)
         with self.assertRaises(ValueError):model.field_value('SallyReady',256)
+
+    def test_old_project_override_dependency_is_recomputed_from_complete_record(self):
+        from unit_import_support import wchar
+        state=complete(self.workspace,self.inspect());draft=copy.deepcopy(state['draft'])
+        raw=bytearray(self.workspace.blob(draft['forms'][0]['source_sha']))
+        wchar(raw,738,'mdrs/extra.mod')
+        draft['forms'][0]['source_sha']=self.workspace._store(bytes(raw))
+        # Old projects did not know that this field was a native model path.
+        draft['forms'][0]['resource_refs']=[]
+        issues=self.workspace.requirements(draft)
+        self.assertTrue(any(row['code']=='resource' and row['field']=='mdrs/extra.mod' for row in issues))
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.repo=Repository()
         self.workspace=Workspace(Path(self.tmp.name),baseline=Baseline(),repository=self.repo,publisher=publisher)

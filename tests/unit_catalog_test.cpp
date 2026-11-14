@@ -16,6 +16,7 @@
 #include "sdgo/content_localization_boundary.h"
 #include "sdgo/sdgo_api.h"
 #include "sdgo/unit_catalog_format.h"
+#include "sdgo/unit_transform_recovery.h"
 #include "../mods/unit_catalog/content_localization_boundary_index.h"
 
 #pragma comment(lib, "bcrypt.lib")
@@ -549,6 +550,10 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
 
     const HMODULE module = LoadLibraryW(dll.c_str());
     Check(module != nullptr, "production unit_catalog DLL loaded");
+    const auto transformRecovery=reinterpret_cast<SdgoIsImportedTransformRecoveryV1Fn>(
+        GetProcAddress(module,SDGO_UNIT_TRANSFORM_RECOVERY_EXPORT));
+    Check(transformRecovery&&transformRecovery(nullptr)==0&&transformRecovery(reinterpret_cast<void*>(1))==0,
+        "optional transform recovery query refuses null and unowned actors before chain activation");
     const auto localizationBoundary =
         reinterpret_cast<SdgoUnitCatalogLocalizationBoundaryV1Fn>(
             GetProcAddress(
@@ -985,7 +990,7 @@ int ParserFixture() {
         Check(catalog.records.empty(), "failed parse clears prior catalog");
     }
 
-    for (int mutation = 0; mutation < 12; ++mutation) {
+    for (int mutation = 0; mutation < 15; ++mutation) {
         auto invalid = valid;
         auto* header = reinterpret_cast<Header*>(invalid.data());
         auto* first = HeaderAt(invalid, 0);
@@ -1008,7 +1013,11 @@ int ParserFixture() {
                 Hash32(category, HeaderAt(invalid, 3)->byteCount);
         }
         if (mutation == 11) first->recordHash ^= 1;
+        if (mutation == 12) PutUtf16(unit+kUnitModelOverrideOffset,kUnitModelPathBytes,"not-a-model");
+        if (mutation == 13) std::memset(unit+kUnitModelOverrideOffset,0x41,kUnitModelPathBytes);
+        if (mutation == 14) PutUtf16(unit+kUnitModelOverrideOffset,kUnitModelPathBytes,"mdrs\\portrait.spr");
         if (mutation >= 2 && mutation <= 9) first->recordHash = Hash32(unit, first->byteCount);
+        if (mutation >= 12) first->recordHash=Hash32(unit,first->byteCount);
         Rehash(invalid);
         Check(!catalog.Parse(invalid, error), "malformed native catalog rejected after outer rehash");
         Check(catalog.records.empty(), "semantic failure remains atomic");

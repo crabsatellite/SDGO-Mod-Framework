@@ -507,7 +507,7 @@ sdgo_add_mod(battle_rewards SERVER DESCRIPTION "native contribution rewards and 
              SOURCES mods/battle_rewards/battle_rewards.cpp LIBS bcrypt FILES config.example.ini)
 sdgo_add_mod(room_random_client DESCRIPTION "native random loadout client synchronization"
              SOURCES mods/room_random_client/room_random_client.cpp)
-sdgo_add_mod(transform_input_fix DESCRIPTION "Apsalus III missing-animation transform input recovery"
+sdgo_add_mod(transform_input_fix DESCRIPTION "Missing-animation recovery for Apsalus III and verified imported chains"
              SOURCES mods/transform_input_fix/transform_input_fix.cpp)
 sdgo_add_mod(room_random SERVER DESCRIPTION "per-round random owned human loadouts"
              SOURCES mods/room_random/room_random.cpp mods/room_random/inventory.cpp
@@ -2157,6 +2157,10 @@ if(BUILD_TESTING)
     target_link_libraries(unit_form_graph_test PRIVATE sdgo_unit_form_graph)
     sdgo_strict(unit_form_graph_test)
     add_test(NAME unit_form_graph_test COMMAND unit_form_graph_test)
+    add_executable(unit_form_models_test tests/unit_form_models_test.cpp)
+    target_link_libraries(unit_form_models_test PRIVATE sdgo_api)
+    sdgo_strict(unit_form_models_test)
+    add_test(NAME unit_form_models COMMAND unit_form_models_test)
     add_executable(human_unit_capture_test tests/human_unit_capture_test.cpp)
     target_link_libraries(human_unit_capture_test PRIVATE sdgo_human_unit_capture)
     sdgo_strict(human_unit_capture_test)

@@ -1,0 +1,149 @@
+{
+  "schema": "sdgo.unit-default-presets/1",
+  "recipe_version": 1,
+  "enabled_by_default": false,
+  "owner": "example-directed-forms",
+  "host": "GOnline-54BE1568-00C97000",
+  "host_sha256": "e2dba73c10302b50cb0e6f2e58dd0a14effa8d224989ae570a7f8e05af79ff92",
+  "templates": [
+    {
+      "kind": 2,
+      "id": 10001,
+      "sha256": "a7a3503c278bd70092bfb15548ba0db576db4ff58641273ccadefb492143c897"
+    },
+    {
+      "kind": 2,
+      "id": 10005,
+      "sha256": "167d9d0d6e9e71ef2d0fe42f9d910c499b9c178bd0f2c23b2fa36745a41eb202"
+    },
+    {
+      "kind": 2,
+      "id": 10022,
+      "sha256": "def3b9f17704e2fdb8647b1b6eff9d7c3af6106ab8e3db31ed9835863cdecb5b"
+    },
+    {
+      "kind": 2,
+      "id": 20008,
+      "sha256": "c9165e6fcf5bca72ab00ea42236d7d11197dd66e3ea2bea6cbe64b76fa2ee3b4"
+    },
+    {
+      "kind": 13,
+      "id": 70077,
+      "sha256": "86bb3f3cc062ce2eb79371c33bd0f4c317ae5b1a17c9391aaa4e6d47a20a12ff"
+    }
+  ],
+  "skills": [
+    {
+      "id": 74970,
+      "template": 70077,
+      "name": "训练耐久协调",
+      "internal_name": "Example_Tactical",
+      "fields": {
+        "ActivateValue": 85,
+        "Defense": 5,
+        "Attack": 5,
+        "BoostIncreaseRate": 0.0,
+        "BoostPower": 0
+      },
+      "description": "耐久85%以下时提高攻击与防御；原生条件仍生效。"
+    },
+    {
+      "id": 74971,
+      "template": 70077,
+      "name": "训练决战协调",
+      "internal_name": "Example_Decisive",
+      "fields": {
+        "ActivateValue": 45,
+        "Defense": 0,
+        "Attack": 5,
+        "DashLv": 8,
+        "MotiveLv": 5,
+        "BoostIncreaseRate": 0.0,
+        "BoostPower": 30
+      },
+      "description": "耐久45%以下时提高攻击与机动；原生条件仍生效。"
+    }
+  ],
+  "presets": [
+    {
+      "key": "directed-training-cycle",
+      "family_key": "example.directed-training-cycle",
+      "name": "训练计划·循环试验机",
+      "profile": "native-directed-forms-v1",
+      "root_unit_id": 29840,
+      "item_category_id": 1119979,
+      "item_template_id": 1120001,
+      "forms": [
+        {
+          "id": 29840,
+          "template": 10022,
+          "target": 29841,
+          "name": "训练·量产框架",
+          "fields": {
+            "HP": 14000,
+            "UnitGradeNumber": 3,
+            "UnitGradeNumber2": 4,
+            "Star": 4,
+            "BattleCost": 455,
+            "UnitGrowIndex": 3
+          }
+        },
+        {
+          "id": 29841,
+          "template": 10001,
+          "target": 29842,
+          "name": "训练·标准框架",
+          "fields": {
+            "HP": 14000,
+            "UnitGradeNumber": 3,
+            "UnitGradeNumber2": 4,
+            "Star": 4,
+            "BattleCost": 455,
+            "UnitGrowIndex": 3
+          }
+        },
+        {
+          "id": 29842,
+          "template": 20008,
+          "target": 29843,
+          "name": "训练·决战框架",
+          "fields": {
+            "HP": 14000,
+            "UnitGradeNumber": 3,
+            "UnitGradeNumber2": 4,
+            "Star": 4,
+            "BattleCost": 455,
+            "UnitGrowIndex": 3
+          }
+        },
+        {
+          "id": 29843,
+          "template": 10005,
+          "target": 29840,
+          "name": "训练·支援框架",
+          "fields": {
+            "HP": 14000,
+            "UnitGradeNumber": 3,
+            "UnitGradeNumber2": 4,
+            "Star": 4,
+            "BattleCost": 455,
+            "UnitGrowIndex": 3
+          }
+        }
+      ],
+      "skills": [
+        74970,
+        74971
+      ],
+      "weapons": [],
+      "description": "通用四形态有向环制作示例；使用服主兼容客户端的原版资源。",
+      "gameplay_notes": "手动 R 循环；不自动登记、不发放机体、不配置获取途径。编号须检查目标占用，数值不是正式平衡基准。"
+    }
+  ],
+  "stage_rules": [],
+  "acquisition": {
+    "creates_shop_products": false,
+    "creates_gacha_slots": false,
+    "grants_inventory_units": false
+  }
+}

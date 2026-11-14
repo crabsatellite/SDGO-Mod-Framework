@@ -9,7 +9,8 @@
 // is outside that pair, this runtime rebases the alternate record/model before
 // the native swap. The move controller's cached target must match the current
 // record's transform target. Rebuild the attack controller's weapon tables and
-// restore the deck-owned pair before the unit is destroyed.
+// retain a model cache for subsequent hops, and reconcile all model owners with
+// the native live-pair/deck destructor ordering when the unit is destroyed.
 namespace sdgo::unit_form_chain {
 using GridData=void*(__cdecl*)();
 using GridFind=bool(__thiscall*)(void*,const std::uint8_t**,std::uint32_t,int,char);

@@ -2,11 +2,12 @@
   "schema_version": 1,
   "distribution": "public",
   "id": "transform_input_fix",
-  "title": "阿普萨拉斯 III 变形卡死修复",
+  "title": "缺失动画的变形卡死修复",
   "category": "fixes",
   "hosts": ["client"],
-  "description": "修复阿普萨拉斯 III 从变形后形态出击时，按 R 后无法移动和攻击的问题。",
+  "description": "修复阿普萨拉斯 III，以及已登记导入形态链复用模型时，缺失变形动画导致移动与攻击锁定的问题。",
   "presentation": "automatic_fix",
   "settings": [],
-  "mechanism": "仅在阿普萨拉斯 III 两形态之间的变形动作句柄为空、旧动画事件阻塞结束时，调用原生等待与变形退出流程。保留原生形态切换、武器、机库和玩家数据。"
+  "provides": {"unit.transform_recovery": 1},
+  "mechanism": "仅在受支持形态的变形句柄为空、旧动画事件阻塞结束时，调用原生等待与退出；导入形态还须由机体目录确认所有权、存活状态、完整记录及目标已经提交。不补动画、不重发请求、不改写玩家数据。"
 }

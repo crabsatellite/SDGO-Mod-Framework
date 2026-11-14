@@ -42,7 +42,7 @@ MAX_PLAN_BYTES = 128 * 1024 * 1024
 MAX_CATALOG_BYTES = 64 * 1024 * 1024 + 32
 MAX_FAMILIES = 4096
 _FAMILY_FIELDS = {'family_key', 'root_unit_id', 'item_template_id', 'units', 'weapons', 'item', 'names'}
-_FAMILY_OPTIONAL = {'shared_form_ids', 'shared_weapon_ids', 'behavior_profile'}
+_FAMILY_OPTIONAL = {'shared_form_ids', 'shared_weapon_ids', 'behavior_profile', 'blueprints'}
 _RECORD_BYTES = {2: 4976, 10: 1871, 11: 732, 12: 1559, 13: 1132,79:89}
 _IN_CHUNK = 500
 
@@ -132,6 +132,9 @@ def _catalog_records(root: Path) -> dict[int, dict[int, bytes]]:
     from .indexes import catalog_records
     result = {}
     for identity,(kind,record) in catalog_records(raw).items():
+        if kind==2:
+            from .codec import model_override
+            model_override(record)
         result.setdefault(kind,{})[identity]=record
     return result
 
@@ -317,6 +320,8 @@ def family_plan(family: dict, revision: str, items: dict[int, dict]) -> dict:
              'item': {**{column: template[column] for column in ITEM_COLUMNS}, **family['item']}, 'names': family['names']}
     if family.get('behavior_profile'):
         value['behavior_profile'] = family['behavior_profile']
+    if family.get('blueprints'):
+        value['blueprints'] = family['blueprints']
     return value
 
 

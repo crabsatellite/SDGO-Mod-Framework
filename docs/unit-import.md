@@ -11,6 +11,19 @@ Packages prepared from any source can be submitted through the documented import
 Import a unit archive (RAR/ZIP) in SDGO Mod Manager, fill in missing definitions, generate the shop, capsule and
 encyclopedia images, then write the unit definitions to the server and build a client package for players.
 
+Use the documentation and examples from the same Release/tag as the installed programmes. Versions 1.16.37/1.16.38
+already include single/two-form support and the linear three-stage growth and armor-purge recipes (`unit_catalog` 0.6.1).
+They do not provide the general directed editor profile. Version 1.16.39 adds that profile with `unit_catalog` 0.7.0,
+`transform_input_fix` 1.1.0 and paired server publication, plus kind-79 parameter support. Updating only Manager or
+reading newer `master` documentation does not update an old native runtime.
+
+The additional [four-form cyclic recipe](examples/unit-directed-cycle.recipe.json) is a generic, non-default authoring
+example using compatible original templates and their hashes. It is not a definitions file or installable content ZIP.
+Clone and renumber it in a separate author workspace, verify occupied IDs and templates, then use `preset_recipe.load()`
+and `preset_publication.build(..., recipe=recipe)` to produce the complete paired publication. Apply it through the
+ordinary Manager preflight/stopped-server route and validate each edge, weapon, skill, respawn and normal return.
+It carries no original assets and is not automatically registered alongside the two built-in default demos.
+
 Batch preflight also checks complete resource paths stored inside native weapon callback bodies against the
 sealed client archive or the configured compatible client. A registered callback can still crash when its effect
 is absent. Complete the dependencies before applying the server plan; see [special weapons and skill slots](unit-skill-import.md).
@@ -22,6 +35,11 @@ The three-stage profile (`native-three-stage-forms-v1`) declares exactly three c
 inventory root → second stage → final stage, whose transform target must be zero. Install the server form-graph
 binding through batch apply. Selecting the profile does not create an automatic progression trigger; native skills,
 transform conditions and weapons still need matching definitions and actual game validation.
+For a general directed graph, choose `native-directed-forms-v1`: 2–64 complete records in one connected family,
+including cycles and auxiliary incoming forms. Every nonzero target must be supplied; only the explicitly selected
+root gets an inventory item. The editor emits and applies matching server graph requests through the batch route.
+Offline confirmation provides a separate owner-only server ZIP through **服务端计划**; the player ZIP carries client
+content only. Exporting does not install host authority.
 Direct confirmation in the single-family editor requires skills available in the server catalog. A complete protocol
 publication can instead carry new skill records, icon resources and server definitions through the batch apply route,
 even for one family. See the fictional [custom skill import example](unit-skill-import.md). Before going live, try an imported unit in
@@ -68,7 +86,7 @@ original templates and hashes, new skill and weapon field edits, names, descript
 currently provides the default-registration switch, without a “clone preset as a new unit” button. New author
 projects use the import, preview and publication workflow on this page.
 
-Single, two-form and three-stage families share the same import protocol:
+Single, two-form, three-stage and general directed families share the same import protocol:
 
 | Design | `behavior_profile` | Complete records and transform targets |
 | --- | --- | --- |
@@ -76,6 +94,7 @@ Single, two-form and three-stage families share the same import protocol:
 | Reciprocal two-form unit | `native-linked-forms-v1` | A → B, B → A |
 | One-way two-form unit / armor purge | `native-one-way-forms-v1` | A → B, B → 0; see Ember |
 | Three-stage growth | `native-three-stage-forms-v1` | A → B, B → C, C → 0; see Kindling |
+| Directed multi-form | `native-directed-forms-v1` | 2–64 complete records, e.g. A → B → C → B or a four-form cycle; retain auxiliary incoming forms |
 
 A/B/C name forms, not unit ranks. Each form needs a complete unit record, weapons, skill references and
 model/animation dependencies; compatible native resources may be reused. `root_unit_id` chooses the inventory
@@ -182,7 +201,9 @@ ready/selection poses (see [developer notes](#gametest-checks-and-captures)), up
   (`native-linked-forms-v1`), one-way links whose final form cannot transform back (`native-one-way-forms-v1`), a
   single self-referencing record (`native-self-transform-v1`), and entry forms that transform into one
   form of an already published reciprocal pair (`native-entry-forms-v1`), plus exactly three complete records
-  in a three-stage chain (`native-three-stage-forms-v1`).
+  in a three-stage chain (`native-three-stage-forms-v1`), or 2–64 complete records in a directed graph
+  (`native-directed-forms-v1`). The general profile requires closed targets and one weakly connected family;
+  it does not invent reverse edges or grant auxiliary forms inventory eligibility.
 - For two independently switchable states, supply two complete reciprocal records and matching native transform
   animations. They may share a model. A self-reference by itself can be a native no-op and is not proof of two states.
 - An entry form enters the hangar as its own unit, and its first transform enters the reciprocal pair. Moving back
@@ -506,8 +527,43 @@ authority the server refuses the second hop.
 **原始形态关系** shows directed targets read from complete unit records and the
 path from the selected root. Other entries sharing later forms remain visible;
 the report never invents reverse edges. It describes record references, not player
-inventory eligibility or native transform behavior. More than two forms still
-require an appropriate runtime adapter.
+inventory eligibility or native transform behavior. Use `native-directed-forms-v1` for general multi-form projects.
+The **服务端计划** download provides a separate server ZIP with a complete batch plan, directed requests and the exact
+final client catalog. It stays in the owner's backend; player ZIPs contain no server apply plan or graph requests.
+Each node hash binds the compiled bytes, including generated portraits.
+Online confirmation uses that same batch controller rather than only installing definition rows. The controller
+requires stopped native services and matching Battle host components, reads SQL/ownership under its mutation gate,
+preserves unrelated graphs, and independently generates host authority. Batch families commit individually;
+an interrupted application retains its committed results and diagnostics for a corrected retry, without confirming
+the draft or claiming a whole-batch rollback.
+
+The client reuses original deck models or caches additional models by form ID before the original swap. Cleanup
+retains native controller/live-model destruction order and releases the remaining independently checked owners
+afterward. Validate every used edge, post-transform weapons, respawn and normal return in the actual game.
+When a reused chain model has no requested transition animation, the paired [input recovery fix](transform-input-fix.md)
+can finish the native empty-event exit only after the catalog verifies a living, owned and already committed form.
+It does not generate an animation, force a timeout or replace server authority.
+With form chains enabled, Manager requires `transform_input_fix >= 1.1.0` and its `unit.transform_recovery/1`
+capability. Update the matching framework programmes together; replacing only the importer DLL is insufficient.
+
+Troubleshooting uses the full `requirements` entries (`code`, `field`, `message`), project revision, IDs and target
+framework version. Counts alone do not identify a fix:
+
+| Code | Required correction |
+| --- | --- |
+| `unsupported_forms` | Select the appropriate profile. A two-form profile requires exactly two records; three-stage requires a linear three-record chain. Use the general directed profile for other closed graphs; never drop forms to pass validation. |
+| `id_native` | Native Grid IDs are global across kinds. Check a complete occupied-ID snapshot, relocate through `owner.units.relocation.plan` and update all verified references. Unit IDs must also remain in the server's 10001–30000 domain. A random large ID is not a collision fix. |
+| `weapon` | Supply the complete kind-10 / 1871-byte client record and server definition, plus its referenced resources, scripts and funnel data. A filename or a server-only row is insufficient. |
+| `field_invalid` | Use the named field's actual type/range and SQL schema. For example, `UserGradeLimit=16777216` is a valid SQL int, while `SallyReady=256` exceeds a byte. Do not zero, truncate or overwrite recovered values with a template. |
+
+The target 4976-byte unit record also contains an optional model override at `+738`, beside the primary path at
+`+612`. Both fields contain 30 UTF-16 units including the terminator. A nonempty override takes priority during
+native model construction and must name a supplied or compatible original `mdrs/*.mod`, with its dependencies.
+The codec, compiler, batch publication reader and native catalog reject malformed overrides before registration.
+A valid primary model does not prove the selected override can load. Source layouts can assign another meaning
+to these bytes; content authors must resolve that source meaning and preserve conversion evidence, rather than
+put numbers into a target string slot or erase unknown data. Never hide a load failure by disabling skeletons,
+skills or transforms. Actual model/animation loading and every used form still need native validation.
 
 The linkable `sdgo_unit_form_composition` developer library can compose a process-local
 native form bank in separate memory. It requires verified host symbols, the expected

@@ -38,6 +38,25 @@ def png(color='orange'):
     out=io.BytesIO();Image.new('RGBA',(32,24),color).save(out,format='PNG');return out.getvalue()
 
 
+def native_dll(*,directed=False):
+    """Synthetic PE metadata only; never loaded or executed by a test."""
+    raw=bytearray(2048 if directed else 512);raw[:2]=b'MZ'
+    struct.pack_into('<I',raw,0x3c,0x80);raw[0x80:0x84]=b'PE\0\0'
+    struct.pack_into('<HH',raw,0x84,0x14c,1);struct.pack_into('<H',raw,0x94,0xe0)
+    if directed:
+        from owner.units.runtime_capabilities import EXPORT
+        struct.pack_into('<H',raw,0x98,0x10b);struct.pack_into('<I',raw,0x98+92,16)
+        struct.pack_into('<II',raw,0x98+96,0x1000,0x100)
+        raw[0x178:0x180]=b'.rdata\0\0'
+        struct.pack_into('<4I',raw,0x180,0x600,0x1000,0x600,0x200)
+        struct.pack_into('<I',raw,0x178+36,0x40000040)
+        struct.pack_into('<5I',raw,0x200+20,1,1,0x1040,0x1044,0x1048)
+        struct.pack_into('<IIH',raw,0x240,0x1200,0x1060,0)
+        raw[0x260:0x260+len(EXPORT)+1]=EXPORT+b'\0'
+        struct.pack_into('<8s6I',raw,0x400,b'SDGODIR1',32,1,64,512,1,1)
+    return bytes(raw)
+
+
 class Baseline:
     def unit_index(self):
         raw=bytearray(614);struct.pack_into('<I',raw,0,0x375BE1);raw[5]=1
