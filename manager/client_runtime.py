@@ -512,7 +512,7 @@ class ClientRuntime:
             if 'sdgo/sdgo.ini'in entries and global_path.is_file():preserved['sdgo/sdgo.ini']={'bytes':global_path.stat().st_size,'sha256':file_hash(global_path)}
             effective={**entries,**preserved,**merged}
         needed=[n for n,e in effective.items()if not matches(updates.child(root,n),e)]
-        retired=set(contract.get('remove_paths',[]))|{n for n in previous.get('files',{})if n not in entries and runtime_path(n,contract)}
+        retired=set(layers.get('consolidation_retired',[]))|set(contract.get('remove_paths',[]))|{n for n in previous.get('files',{})if n not in entries and runtime_path(n,contract)}
         retired=sorted(n for n in retired if n not in entries and not protected(n)and not any(n==p or n.startswith(p+'/')for p in excluded)and updates.child(root,n).is_file())
         snapshot={n:file_hash(updates.child(root,n))if updates.child(root,n).is_file()else None for n in set(needed)|set(retired)}
         snapshot[RECEIPT]=file_hash(root/RECEIPT)if(root/RECEIPT).is_file()else None

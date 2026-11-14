@@ -130,10 +130,19 @@ def import_client(workspace, host_id, encoded):
                 text=io.StringIO();merged.write(text,space_around_delimiters=False);pending[path]=text.getvalue().encode('ascii')
     from .target_locks import lease
     with lease('host:'+str(root).casefold()),storage.LOCK:
+        from .consolidation import prepare
+        retired=prepare(root,pending)
+        if _running(root/'GOnline.exe'):raise ValueError('请先关闭这个客户端，再导入配置包')
         previous={p:(p.read_bytes() if p.exists() else None) for p in pending};written=[]
+        previous.update(retired)
         migrated=[];recovery=root/'sdgo/local-state/scope-migrations'/uuid.uuid4().hex
         try:
             for path,data in pending.items():storage.atomic(path,data);written.append(path)
+            for path,data in retired.items():
+                if not path.is_file()or path.read_bytes()!=data:raise storage.Conflict('旧 Mod 在安装期间发生变化')
+                saved=storage.safe_child(recovery,path.relative_to(root).as_posix())
+                storage.atomic(saved,data)
+                path.unlink();written.append(path)
             # Importing a new declared scope replaces that identity, while
             # preserving its previous directory outside every loading root.
             for destination in addon_roots:
@@ -154,4 +163,4 @@ def import_client(workspace, host_id, encoded):
                 if previous[path] is None:path.unlink(missing_ok=True)
                 else:storage.atomic(path,previous[path])
             raise
-    return {'installed_files':len(pending),'activation':'restart_required','scope_recovery':str(recovery)if migrated else None,'state':workspace.public()}
+    return {'installed_files':len(pending),'activation':'restart_required','scope_recovery':str(recovery)if migrated or retired else None,'state':workspace.public()}

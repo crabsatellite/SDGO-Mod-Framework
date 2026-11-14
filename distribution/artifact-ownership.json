@@ -156,6 +156,18 @@
       "kind": "query",
       "target": "server",
       "purpose": "Parameterized framework operation; result data remains on the selected server"
+    },
+    "mods/unit_appearance_server/decal_schema.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic cosmetic placement metadata schema; unit records and placement data remain on the selected server"
+    },
+    "mods/unit_appearance_server/rgb_schema.sql": {
+      "ownership": "framework",
+      "kind": "schema",
+      "target": "server",
+      "purpose": "Generic exact RGB cosmetic schema; player appearance rows remain server-side"
     }
   },
   "owner_content": "Owner profiles, generated client assets and shared configuration; never part of framework Releases",

@@ -69,13 +69,29 @@ def compose(controller,binding,contract,root,entries,repo,commit,shared_data=Non
     if spec.get('mod_ids')is not None or owner:
         filtered={**catalog,'mods':list(all_mods.values())}
         rendered['sdgo/catalog.json']=storage.json_bytes(filtered)
+    # Consolidate before applying owner-selected shared settings. Explicit
+    # shared settings retain precedence; personal values follow their contract.
+    from .consolidation import prepare
+    incoming={}
+    for identity in mods:
+        base='sdgo/mods/'+identity+'/'
+        name=base+'manager.json'
+        if name in files:
+            raw=program_path(name).read_bytes()
+            if json.loads(raw.decode('utf-8-sig')).get('consolidates'):
+                incoming[updates.child(root,name)]=raw
+                incoming[updates.child(root,base+'mod.ini')]=program_path(base+'mod.ini').read_bytes()
+    retired=prepare(root,incoming,preserve_existing=False)
+    if any(p.relative_to(root).as_posix()in files for p in retired):raise ValueError('配置档同时选择合并前后的 Mod')
+    for path,data in incoming.items():
+        if path.name=='mod.ini':rendered[path.relative_to(root).as_posix()]=data
     for name,rows in patches.items():
         updates.safe_name(name)
         if name not in files or not re.fullmatch(r'sdgo/(?:mods|owner-mods)/[a-z][a-z0-9_]*/mod\.ini',name):raise ValueError('共享设置只能覆盖 Mod 参数：'+name)
         if not isinstance(rows,list)or len(rows)>10000:raise ValueError('共享参数清单无效')
         for row in rows:
             if not isinstance(row,list)or len(row)!=3 or not(row[0]=='settings'or row[:2]==['mod','enabled']):raise ValueError('共享设置不能替换 Mod 身份或接口')
-        data=storage.patch_ini(program_path(name).read_bytes(),rows)
+        data=storage.patch_ini(rendered.get(name,program_path(name).read_bytes()),rows)
         rendered[name]=data
     # Personal fields are explicitly declared by the distributor, rather than
     # preserving every gameplay setting and hiding owner configuration changes.
@@ -99,6 +115,7 @@ def compose(controller,binding,contract,root,entries,repo,commit,shared_data=Non
     combined={**{n:{k:v for k,v in e.items()if k!='source'}for n,e in files.items()},**entries}
     for name,encoded in generated.items():combined[name]=effective[name]={'bytes':len(base64.b64decode(encoded)),'sha256':updates.digest(base64.b64decode(encoded))}
     return combined,effective,{'framework':framework,'framework_files':files,'content_files':sorted(entries),'owner_programme':owner,
+        'consolidation_retired':[p.relative_to(root).as_posix()for p in retired],
         'rendered':{n:base64.b64encode(v).decode()for n,v in rendered.items()},'generated':generated,'shared_files':shared_files,'personal_settings':personal}
 
 

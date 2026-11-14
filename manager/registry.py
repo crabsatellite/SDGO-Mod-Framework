@@ -53,6 +53,8 @@ def load(root):
         for name in retirement.get('content_files',[]):
             if not isinstance(name,str)or not re.fullmatch(r'[A-Za-z0-9_.-]+',name)or name in('.','..'):
                 raise ValueError('内容引用文件无效：'+identity)
+        from .consolidation import validate as validate_consolidation
+        validate_consolidation(value)
         records[identity] = value
     return records
 

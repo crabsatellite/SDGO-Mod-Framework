@@ -317,17 +317,29 @@ def _install_host(host,bundle,manifest,cache,is_running=None,mod_ids=None,framew
                     if not new.has_section(section) or section in protected_symbols:new[section]=dict(old[section])
                 data=serialize_ini(new)
             if not path.exists() or path.read_bytes()!=data:changes[path]=data
+        from .consolidation import prepare
+        # Include contracts even when their bytes have not changed.
+        for mod in selected:
+            base='sdgo/mods/'+mod['id']+'/'
+            contract=source/base/'manager.json'
+            if contract.is_file()and json.loads(contract.read_text('utf-8-sig')).get('consolidates'):
+                for name in ('manager.json','mod.ini'):
+                    path=child(root,base+name)
+                    changes.setdefault(path,(source/base/name).read_bytes())
+        retired=prepare(root,changes)
+        retired_ids={p.parent.name for p in retired if p.name=='mod.ini'}
         catpath=child(root,'sdgo/catalog.json');current=storage.read_json(catpath,{'schema_version':1,'mods':[],'features':{},'categories':{}})
         ids={m['id'] for m in selected+retained};features={m['feature'] for m in selected}
         existing={m['id']:m for m in current['mods']}
         kept=[{**existing.get(m['id'],m),'version':m['version'],'channel':m['channel']} for m in retained]
-        current['mods']=[m for m in current['mods'] if m['id'] not in ids]+selected+kept
+        current['mods']=[m for m in current['mods'] if m['id'] not in ids|retired_ids]+selected+kept
         current.setdefault('features',{}).update({k:v for k,v in catalog['features'].items() if k in features})
         current.setdefault('categories',{}).update(catalog['categories'])
         catbytes=storage.json_bytes(current)
         if not catpath.exists() or catpath.read_bytes()!=catbytes:changes[catpath]=catbytes
         installed={'schema_version':1,'version':manifest['version'],'channel':manifest['channel'],'source_commit':manifest['source_commit'],
                    'mods':{**prior.get('mods',{}),**{m['id']:m['version'] for m in selected+retained}}}
+        for identity in retired_ids:installed['mods'].pop(identity,None)
         mbytes=storage.json_bytes(installed)
         if not marker.exists() or marker.read_bytes()!=mbytes:changes[marker]=mbytes
         unit_plan=None
@@ -339,9 +351,10 @@ def _install_host(host,bundle,manifest,cache,is_running=None,mod_ids=None,framew
         # cause a transaction rollback; no game process is ever stopped.
         if is_running(exe):return {'id':host['id'],'name':host['name'],'status':'waiting','message':'等待对应游戏或服务器关闭'}
         from .dependencies import enforce_install
-        enforce_install(root,{p.relative_to(root).as_posix():data for p,data in changes.items()if p.name=='manager.json'or p.suffix=='.ini'},role)
+        enforce_install(root,{**{p.relative_to(root).as_posix():data for p,data in changes.items()if p.name=='manager.json'or p.suffix=='.ini'},**{p.relative_to(root).as_posix():None for p in retired if p.name=='manager.json'or p.suffix=='.ini'}},role)
         if unit_plan is not None:unit_receipts.verify_snapshot(unit_plan)
         previous={p:p.read_bytes() if p.exists() else None for p in changes};written=[]
+        previous.update(retired)
         backup=cache/'backups'/manifest['version']/digest(str(root).encode())[:16]
         try:
             for path,data in changes.items():
@@ -349,6 +362,10 @@ def _install_host(host,bundle,manifest,cache,is_running=None,mod_ids=None,framew
                     saved=child(backup,path.relative_to(root).as_posix())
                     if not saved.exists():storage.atomic(saved,previous[path])
                 storage.atomic(path,data);written.append(path)
+            for path,data in retired.items():
+                if not path.is_file()or path.read_bytes()!=data:raise storage.Conflict('旧 Mod 在安装期间发生变化')
+                storage.atomic(child(backup,path.relative_to(root).as_posix()),data)
+                path.unlink();written.append(path)
             if unit_plan is not None:unit_receipts.verify_installed(root,unit_plan,child)
         except Exception:
             for path in reversed(written):

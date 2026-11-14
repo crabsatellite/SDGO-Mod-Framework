@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "distribution": "public",
+  "id": "unit_appearance_client",
+  "title": "机体外观",
+  "category": "gameplay",
+  "hosts": [
+    "client"
+  ],
+  "presentation": "configurable",
+  "description": "RGB 涂装与自由贴花分别开关，沿用已保存的机体颜色和贴花位置。",
+  "mechanism": "原生涂装页调整颜色，纹章页调整贴纸位置；按机体身份同步到大厅、房间和战斗。保存由 World 校验归属与版本。",
+  "dependencies": {
+    "required": [
+      {
+        "id": "friend_unit_gift_client",
+        "minimum": "0.1.9"
+      }
+    ],
+    "conflicts": [
+      {
+        "id": "rgb_paint_client"
+      },
+      {
+        "id": "surface_decal_client"
+      }
+    ]
+  },
+  "runtime_enabled_setting": "enabled",
+  "settings": [
+    {
+      "id": "enabled",
+      "key": "Enabled",
+      "label": "启用机体外观",
+      "type": "boolean",
+      "default": false,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "rgb_enabled",
+      "key": "RgbEnabled",
+      "label": "启用 RGB 涂装",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    },
+    {
+      "id": "decals_enabled",
+      "key": "DecalsEnabled",
+      "label": "启用自由贴花",
+      "type": "boolean",
+      "default": true,
+      "file": "mod.ini",
+      "section": "settings",
+      "audience": "user",
+      "activation": "restart_required"
+    }
+  ],
+  "consolidates": [
+    {
+      "id": "rgb_paint_client",
+      "setting": "rgb_enabled"
+    },
+    {
+      "id": "surface_decal_client",
+      "setting": "decals_enabled"
+    }
+  ]
+}

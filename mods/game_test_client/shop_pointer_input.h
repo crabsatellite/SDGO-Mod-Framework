@@ -115,9 +115,20 @@ public:
     void Clear() {
         if (!installed_) return;
         SetLeftButton(false);
+        SetRightButton(false);
+        InterlockedExchange(&motionX_,0);InterlockedExchange(&motionY_,0);
         HWND window = ValidateOwnedWindow(ownedWindow_) ? ownedWindow_ : FindOwnedGameWindow();
         SetOffscreen(window);
     }
+
+    void SetRightButton(bool down) {
+        const LONG value=down?1:0;
+        if(InterlockedExchange(&rightButton_,value)==value)return;
+        HWND window=FindOwnedGameWindow();if(!window)return;
+        AcquireSRWLockShared(&pointLock_);POINT point=fakePoint_;ReleaseSRWLockShared(&pointLock_);
+        if(ScreenToClient(window,&point))PostMessageW(window,down?WM_RBUTTONDOWN:WM_RBUTTONUP,down?MK_RBUTTON:0,PackClientPoint(point.x,point.y));
+    }
+    void Motion(LONG x,LONG y) {InterlockedExchangeAdd(&motionX_,x);InterlockedExchangeAdd(&motionY_,y);}
 
     uint32_t PositionReads() const {
         return ReadCounter(positionReads_);
@@ -575,6 +586,9 @@ private:
 
         std::memset(data, 0, bytes);
         static_cast<BYTE*>(data)[12]=InterlockedCompareExchange(&self->leftButton_,0,0) ? 0x80u:0u;
+        static_cast<BYTE*>(data)[13]=InterlockedCompareExchange(&self->rightButton_,0,0) ? 0x80u:0u;
+        const LONG x=InterlockedExchange(&self->motionX_,0),y=InterlockedExchange(&self->motionY_,0);
+        std::memcpy(data,&x,sizeof x);std::memcpy(static_cast<BYTE*>(data)+4,&y,sizeof y);
         InterlockedIncrement(&self->stateReads_);
         return S_OK;
     }
@@ -606,4 +620,6 @@ private:
     volatile LONG positionReads_ = 0;
     volatile LONG stateReads_ = 0;
     volatile LONG leftButton_ = 0;
+    volatile LONG rightButton_ = 0;
+    volatile LONG motionX_ = 0,motionY_ = 0;
 };
