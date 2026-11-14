@@ -363,6 +363,7 @@ def plan(controller,host,source):
     if same_channel and prior_profile.get('revision',0)>profile['revision']:raise ValueError('拒绝自动回退到较旧的服主配置')
     if same_channel and prior_profile.get('revision')==profile['revision']and prior_profile.get('sha256')!=identity:raise ValueError('服主不能重复使用同一修订号发布不同内容')
     retired=[n for n in previous_files if n not in combined and n!=SOURCE and updates.child(root,n).is_file()]
+    retired=sorted(set(retired)|set(layers.get('consolidation_retired',[])))
     quarantined=[]
     if profile['schema_version']==2:
         from .owner_programmes import unknown_files
