@@ -540,6 +540,12 @@ the draft or claiming a whole-batch rollback.
 The client reuses original deck models or caches additional models by form ID before the original swap. Cleanup
 retains native controller/live-model destruction order and releases the remaining independently checked owners
 afterward. Validate every used edge, post-transform weapons, respawn and normal return in the actual game.
+For A → B → C → D → A, first traverse A → B → C while alive and use each target form's native weapons.
+Then let that same human player die and revive through normal combat. Read the actual current form before
+following its real outgoing links and using its weapons again, and finish with results and normal return.
+Do not assume revival resets the actor to A, or change health, form IDs or eligibility to manufacture a pass.
+NPC revivals, transform notices or model-load logs do not replace this same-player sequence; verify model
+releases after native destruction as a separate part of the check.
 When a reused chain model has no requested transition animation, the paired [input recovery fix](transform-input-fix.md)
 can finish the native empty-event exit only after the catalog verifies a living, owned and already committed form.
 It does not generate an animation, force a timeout or replace server authority.
