@@ -82,7 +82,7 @@
 | [机库管理](docs/hangar-manager.zh-CN.md) <!-- catalog: `hangar_manager` --> | 在机体管理页整理机库、预览并兑换重复机体，结果当场刷新、无需重新登录，支持导入机体 |
 | [保管库一键领取](docs/storage-claim.zh-CN.md) <!-- catalog: `storage_claim` --> | 保管库页内确认一次，一次领取当前页签全部分页的物品或礼物 |
 | [自动机库容量](docs/hangar-capacity.zh-CN.md) <!-- catalog: `hangar_capacity` --> | 登录时把每个账号的机库保障到至少 1200 格（WorldServer） |
-| [商城汉化与中文检索](docs/shop-localization.zh-CN.md) <!-- catalog: `shop_localization` --> | 汉化商品名称、说明、选项和涂装机体预览，可用中文名称搜索并组合等级、币种筛选 |
+| [商城汉化与中文检索](docs/shop-localization.zh-CN.md) <!-- catalog: `shop_localization` --> | 汉化商品名称、说明和机体预览，修复详情面板闪退；可按中文名称、等级与币种检索 |
 | [原生界面中文汉化](docs/ui-localization.zh-CN.md) <!-- catalog: `ui_localization` --> | 汉化原版泰文／韩文按钮、活动获得说明与较长系统提示，保留简单英语和原版图片；自定义内容随内容包分发 |
 | [机体获得方式](docs/acquisition-sources.zh-CN.md) <!-- catalog: `acquisition_sources` --> | 汇总已应用的扭蛋、商城和副官来源，以及设计图合成与取得方式；各功能可选联动 |
 | [长房名](docs/room-titles.zh-CN.md) <!-- catalog: `room_titles`、`room_titles_agent`、`room_titles_server` --> | 普通、AI、队伍及任务房的建房、设置和改名入口支持最长 128 字 |

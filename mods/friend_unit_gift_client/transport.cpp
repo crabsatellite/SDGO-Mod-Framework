@@ -480,8 +480,13 @@ void Transport::Complete(const Reply& reply) noexcept {
     const auto completed = pending_;
     has_pending_ = false;
     deadline_ = 0;
-    capabilities_ = reply.capabilities;
-    server_epoch_ = reply.server_epoch;
+    // Extension handlers advertise only the shared carrier baseline. Their
+    // replies do not describe the gift service policy and must not revoke the
+    // full gift capabilities established by Hello or an ordinary gift reply.
+    if (!IsExtensionCommand(completed.command)) {
+        capabilities_ = reply.capabilities;
+        server_epoch_ = reply.server_epoch;
+    }
     if (state_ == ConnectionState::probing_expanded) {
         if (api_ && api_->Log && mod_) {
             const auto saved = GetLastError();

@@ -194,27 +194,112 @@ int main() {
     assert(!transport.HasOutstanding());
     assert(transport.ServerEpoch() == 78);
 
+    // Other Mods share this carrier through extension commands. Extension
+    // replies advertise only the carrier baseline (0x23), not the complete
+    // friend-gift policy. They must deliver their payload without revoking the
+    // gift capabilities established by Hello.
+    const auto extension_sent_base = sent.size();
+    const auto extension_reply_base = event_replies.size();
+    Request extension;
+    extension.command = static_cast<Command>(kExtensionCommandFirst);
+    extension.extension_bytes = 2;
+    extension.extension[0] = 0xAB;
+    extension.extension[1] = 0xCD;
+    assert(transport.SendAt(extension, 1500));
+    assert(sent.size() == extension_sent_base + 1);
+    const auto sent_extension = DecodeSentRequest(extension_sent_base);
+    Reply extension_reply;
+    extension_reply.command = extension.command;
+    extension_reply.request_id = sent_extension.request_id;
+    extension_reply.status = WireStatus::success;
+    extension_reply.capabilities =
+        capability_protocol |
+        capability_expanded_requests |
+        capability_agent_validated;
+    extension_reply.server_epoch = 79;
+    extension_reply.extension_bytes = 2;
+    extension_reply.extension[0] = 0x12;
+    extension_reply.extension[1] = 0x34;
+    bytes = ReplyBytes(extension_reply);
+    assert(transport.OnStoragePacket(
+        kNativeReplyOpcode,
+        bytes.data(),
+        static_cast<std::uint32_t>(bytes.size())));
+    assert(transport.State() == ConnectionState::ready);
+    assert(transport.Capabilities() == capabilities);
+    assert(transport.ServerEpoch() == 78);
+    assert(event_replies.size() == extension_reply_base + 1);
+    assert(event_replies.back().command == extension.command);
+    assert(event_replies.back().extension_bytes == 2);
+    assert(event_replies.back().extension[0] == 0x12);
+    assert(event_replies.back().extension[1] == 0x34);
+
+    // Ordinary gift replies remain authoritative. A policy response that
+    // removes offer support must still revoke that capability.
+    Request capability_refresh;
+    capability_refresh.command = Command::list_inbox;
+    capability_refresh.page = 1;
+    assert(transport.SendAt(capability_refresh, 1600));
+    const auto sent_refresh = DecodeSentRequest(extension_sent_base + 1);
+    Reply capability_reply;
+    capability_reply.command = Command::list_inbox;
+    capability_reply.request_id = sent_refresh.request_id;
+    capability_reply.status = WireStatus::success;
+    capability_reply.capabilities =
+        capabilities & ~capability_offer_enabled;
+    capability_reply.server_epoch = 80;
+    capability_reply.page = 1;
+    bytes = ReplyBytes(capability_reply);
+    assert(transport.OnStoragePacket(
+        kNativeReplyOpcode,
+        bytes.data(),
+        static_cast<std::uint32_t>(bytes.size())));
+    assert(transport.Capabilities() == capability_reply.capabilities);
+    assert(transport.ServerEpoch() == 80);
+
+    Request disabled_preview;
+    disabled_preview.command = Command::preview_offer;
+    disabled_preview.receiver_id = 4002;
+    disabled_preview.unit_uid = 0x1122334455667788ull;
+    assert(!transport.SendAt(disabled_preview, 1700));
+
+    // Restore the advertised policy for the mutation/receipt cases below.
+    Request capability_restore;
+    capability_restore.command = Command::list_inbox;
+    capability_restore.page = 1;
+    assert(transport.SendAt(capability_restore, 1800));
+    const auto sent_restore = DecodeSentRequest(extension_sent_base + 2);
+    capability_reply.request_id = sent_restore.request_id;
+    capability_reply.capabilities = capabilities;
+    capability_reply.server_epoch = 81;
+    bytes = ReplyBytes(capability_reply);
+    assert(transport.OnStoragePacket(
+        kNativeReplyOpcode,
+        bytes.data(),
+        static_cast<std::uint32_t>(bytes.size())));
+    assert(transport.Capabilities() == capabilities);
+
     Request offer;
     offer.command = Command::offer;
     offer.receiver_id = 4002;
     offer.unit_uid = 0x1122334455667788ull;
     assert(transport.SendAt(offer, 2000));
-    assert(sent.size() == 4);
+    assert(sent.size() == extension_sent_base + 4);
     transport.TickAt(12000);
     assert(transport.State() == ConnectionState::uncertain);
     assert(transport.MutationUncertain());
-    assert(sent.size() == 4);
+    assert(sent.size() == extension_sent_base + 4);
     assert(!transport.SendAt(offer, 12001));
 
-    const auto sent_offer = DecodeSentRequest(3);
+    const auto sent_offer = DecodeSentRequest(extension_sent_base + 3);
     assert(transport.UncertainRequestId() ==
            sent_offer.request_id);
     assert(transport.UncertainCommand() == Command::offer);
     Request receipt;
     receipt.command = Command::receipt;
     assert(transport.SendAt(receipt, 12002));
-    assert(sent.size() == 5);
-    const auto sent_receipt = DecodeSentRequest(4);
+    assert(sent.size() == extension_sent_base + 5);
+    const auto sent_receipt = DecodeSentRequest(extension_sent_base + 4);
     assert(sent_receipt.request_id == sent_offer.request_id);
     assert(sent_receipt.gift_id == 0);
     Reply receipt_reply;
@@ -237,8 +322,8 @@ int main() {
     // A receipt query reuses the original mutation GUID. It never creates a
     // second mutation identity while the committed outcome is unresolved.
     assert(transport.SendAt(receipt, 12003));
-    assert(sent.size() == 6);
-    const auto repeated_receipt = DecodeSentRequest(5);
+    assert(sent.size() == extension_sent_base + 6);
+    const auto repeated_receipt = DecodeSentRequest(extension_sent_base + 5);
     assert(repeated_receipt.request_id == sent_offer.request_id);
     receipt_reply.request_id = repeated_receipt.request_id;
     receipt_reply.status = WireStatus::success;
@@ -259,8 +344,8 @@ int main() {
     Request second_offer = offer;
     second_offer.unit_uid = 0x8877665544332211ull;
     assert(transport.SendAt(second_offer, 12500));
-    assert(sent.size() == 7);
-    const auto sent_second_offer = DecodeSentRequest(6);
+    assert(sent.size() == extension_sent_base + 7);
+    const auto sent_second_offer = DecodeSentRequest(extension_sent_base + 6);
     Reply uncertain_reply;
     uncertain_reply.command = Command::offer;
     uncertain_reply.status = WireStatus::outcome_unknown;
@@ -281,8 +366,8 @@ int main() {
     Request second_receipt;
     second_receipt.command = Command::receipt;
     assert(transport.SendAt(second_receipt, 12501));
-    assert(sent.size() == 8);
-    const auto sent_second_receipt = DecodeSentRequest(7);
+    assert(sent.size() == extension_sent_base + 8);
+    const auto sent_second_receipt = DecodeSentRequest(extension_sent_base + 7);
     assert(sent_second_receipt.request_id ==
            sent_second_offer.request_id);
     receipt_reply.request_id = sent_second_receipt.request_id;
