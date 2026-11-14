@@ -100,3 +100,12 @@ typedef struct SdgoNativeDataGuardStatusV6 {
     uint32_t resumed_inventory_catalog_requests;
     uint32_t cancelled_inventory_catalog_requests;
 } SdgoNativeDataGuardStatusV6;
+
+// Independent read-only ABI: the existing native damage/message bank is bounded
+// to twelve targets, including hits collected before the sorted actor pass.
+typedef struct SdgoNativeBeamTargetGuardStatusV1 {
+    uint32_t size;
+    uint32_t version;
+    uint32_t capacity;
+    uint32_t bounded_loops;
+} SdgoNativeBeamTargetGuardStatusV1;

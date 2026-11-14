@@ -350,6 +350,10 @@ through normal combat; editing the record or directly setting the active state i
 
 ## When an additional adapter is needed
 
+### Weapons that hit several targets
+
+Area beams can run both the native preliminary hit pass and the sorted actor pass. Test shared hits on several units and scene collision objects, normal and transformed forms, ammunition consumption and the post-battle return. An icon or one damaged target is insufficient. The target client shares a twelve-entry damage/message bank; the paired [native data guard](native-data-guard.md) applies the same capacity check before the second pass writes another result. If a stack-cookie failure occurs on this path, first verify the loaded guard and the actual overflow evidence before blaming the imported record. Do not hide it by removing the skill, clearing the beam area or substituting a weapon. This bound does not provide other missing native dispatch, fixed-ID effects or resources.
+
 ### Ordinary skill slots and compatibility aliases
 
 A kind-13 record does not choose its actor slot. The supported client's native classifier treats IDs in

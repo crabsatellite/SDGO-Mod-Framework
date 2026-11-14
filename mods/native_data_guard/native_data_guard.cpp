@@ -12,6 +12,7 @@
 #include "camera_guard.h"
 #include "material_guard.h"
 #include "inventory_loading_guard.h"
+#include "beam_target_guard.h"
 
 namespace {
 const SdgoApi* g_api = nullptr;
@@ -542,6 +543,17 @@ extern "C" __declspec(dllexport) int __cdecl SdgoNativeDataGuardGetStatusV6(
     return 1;
 }
 
+extern "C" __declspec(dllexport) int __cdecl SdgoNativeBeamTargetGuardGetStatusV1(
+    SdgoNativeBeamTargetGuardStatusV1* out) {
+    if (!out || out->size < sizeof(*out) ||
+        !sdgo::native_beam_target_guard::continue_) return 0;
+    out->version = 1;
+    out->capacity = sdgo::native_beam_target_guard::kCapacity;
+    out->bounded_loops = static_cast<uint32_t>(InterlockedCompareExchange(
+        &sdgo::native_beam_target_guard::bounded_loops_, 0, 0));
+    return 1;
+}
+
 SDGO_MOD_ENTRY {
     if (!api || api->size < offsetof(SdgoApi, HookImport) + sizeof(api->HookImport) ||
         !api->Symbol || !api->HookCode || !api->HookSite || !api->HookImport || !api->Log) return 0;
@@ -562,6 +574,8 @@ SDGO_MOD_ENTRY {
     if (!g_grid || !g_find || !g_unitSkip || !information || !bounds || !g_deferredContinue ||
         !symbol("native_data_guard.exception_writer") ||
         !symbol("native_data_guard.information_refresh") ||
+        !symbol("native_data_guard.beam_target_loop") ||
+        !symbol("native_data_guard.beam_target_finish") ||
         !symbol("native_data_guard.unit_indexing_copy") ||
         !symbol("native_data_guard.unit_indexing_destructor")) return 0;
     if (!api->HookCode(mod, "native_data_guard.name_lookup", reinterpret_cast<void*>(&FindName),
@@ -591,7 +605,8 @@ SDGO_MOD_ENTRY {
                          reinterpret_cast<void**>(&g_stackWalk))) return 0;
     if (!native_data_guard_material::Attach(api, mod) ||
         !sdgo::native_camera_guard::Attach(api, mod) ||
-        !sdgo::native_inventory_guard::Attach(api, mod)) return 0;
+        !sdgo::native_inventory_guard::Attach(api, mod) ||
+        !sdgo::native_beam_target_guard::Attach(api, mod)) return 0;
     if (!CorrectBounds(bounds)) return 0;
     g_boundsCorrected = true;
     api->Log(mod, SDGO_LOG_INFO,

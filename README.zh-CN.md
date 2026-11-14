@@ -128,7 +128,7 @@
 | [输入法卡死修复](docs/findwindow-fix.zh-CN.md) <!-- catalog: `findwindow_fix` --> | 防止讯飞等输入法让整合包客户端卡死或崩溃 |
 | [启动崩溃修复](docs/startup-crash-fix.zh-CN.md) <!-- catalog: `startup_crash_fix` --> | 修复开游戏时读取界面随机闪退 |
 | [房间窗口初始化保护](docs/waitroom-window-fix.zh-CN.md) <!-- catalog: `waitroom_window_fix` --> | 修复建房成功后客户端偶尔直接退出 |
-| [原生数据与生命周期修复](docs/native-data-guard.zh-CN.md) <!-- catalog: `native_data_guard` --> | 修复机体数据缺失或机体管理页等待数据时的闪退，并让闪退日志记录正确现场 |
+| [原生数据与生命周期修复](docs/native-data-guard.zh-CN.md) <!-- catalog: `native_data_guard` --> | 保护缺失机体数据、库存等待及多目标光束伤害边界，并记录正确的闪退现场 |
 | [机库三维预览加载保护](docs/hangar-preview-guard.zh-CN.md) <!-- catalog: `hangar_preview_guard` --> | 列表及主展示的图形加载失败时安全清理，沿用原生缩略图或空模型分支 |
 | [特殊攻击目标选择保护](docs/special-target-guard.zh-CN.md) <!-- catalog: `special_target_guard` --> | 随机目标数量非法时，使用已有原生失败结果阻止越界读取 |
 | [场景登记生命周期修复](docs/scene-lifecycle-fix.zh-CN.md) <!-- catalog: `scene_lifecycle_fix` --> | 修复场景对象切换区域后偶发的清理闪退 |

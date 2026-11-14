@@ -131,7 +131,7 @@ Repairs for crashes, freezes, disconnected sessions and incorrect displays in ex
 | [Input method freeze fix](docs/findwindow-fix.md) <!-- catalog: `findwindow_fix` --> | Stop input methods such as iFlytek from freezing or crashing the repack client |
 | [Startup crash fix](docs/startup-crash-fix.md) <!-- catalog: `startup_crash_fix` --> | Stop random crashes on the loading screen at game start |
 | [Wait-room window initialization guard](docs/waitroom-window-fix.md) <!-- catalog: `waitroom_window_fix` --> | Fix the client sometimes closing right after a room is created |
-| [Native data and lifecycle guards](docs/native-data-guard.md) <!-- catalog: `native_data_guard` --> | Fix crashes when unit data is missing or unit management is still waiting for data; keep crash logs accurate |
+| [Native data and lifecycle guards](docs/native-data-guard.md) <!-- catalog: `native_data_guard` --> | Guard missing unit data, pending inventory and multi-target beam damage bounds; keep crash logs accurate |
 | [Hangar preview loading guard](docs/hangar-preview-guard.md) <!-- catalog: `hangar_preview_guard` --> | Safely reject failed unit-list and main-hangar GPU loads; retain native thumbnails or the empty-model branch |
 | [Special-target selection guard](docs/special-target-guard.md) <!-- catalog: `special_target_guard` --> | Reject an invalid random target count through the existing native failure result |
 | [Scene registration lifecycle fix](docs/scene-lifecycle-fix.md) <!-- catalog: `scene_lifecycle_fix` --> | Fix an occasional cleanup crash after a scene object moves to another area |

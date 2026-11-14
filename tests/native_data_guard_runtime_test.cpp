@@ -247,12 +247,14 @@ LONG WINAPI OriginalExceptionWriter(EXCEPTION_POINTERS* pointers) {
 }
 #include "native_camera_guard_cases.h"
 #include "native_inventory_guard_cases.h"
+#include "native_beam_target_guard_cases.h"
 
 void* __fastcall UnusedMaterialLookup(void*, void*, int, uint8_t, uint8_t) {
     return nullptr;
 }
 
 void* Symbol(SdgoMod*, const char* key) {
+    if (void* beam = BeamGuardSymbol(key)) return beam;
     if (void* inventory = InventoryGuardSymbol(key)) return inventory;
     if (void* camera = CameraSymbol(key)) return camera;
     if (!std::strcmp(key, "native_data_guard.material_lookup"))
@@ -311,6 +313,7 @@ int HookCode(SdgoMod*, const char* key, void* detour, void** original) {
     exceptionHook = detour; *original = reinterpret_cast<void*>(&OriginalExceptionWriter); return 1;
 }
 int HookSite(SdgoMod*, const char* key, void* detour, void** original) {
+    if (BeamGuardHook(key, detour, original)) return 1;
     if (InventoryGuardSiteHook(key, detour, original)) return 1;
     if (!std::strcmp(key, "native_data_guard.decal_material_result")) {
         Check(detour != nullptr, "production decal result guard is installed");
@@ -612,6 +615,7 @@ void Run(SdgoModLoadFn entry, HMODULE dll) {
     Check(gridCalls > 0 && warnings == 11, "warnings are emitted only for missing data or failed ownership copy");
     ExerciseCameraGuards(dll);
     RunInventoryGuardCases(dll);
+    RunBeamGuardCases(dll);
     VirtualFree(code, 0, MEM_RELEASE); VirtualFree(bounds, 0, MEM_RELEASE);
 }
 }
