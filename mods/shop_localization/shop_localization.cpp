@@ -35,7 +35,10 @@ using RenderFn=void(__thiscall*)(void*);
 LoadFn g_load=nullptr;RenderFn g_render=nullptr;
 using InitialPopupFn=void(__thiscall*)(void*);
 using PopupFn=void(__thiscall*)(void*,uint32_t);
-using HoverFn=void(__stdcall*)(void*,void*);
+// Both shipped product-detail consumers use ECX for the native UI owner and
+// pop two stack arguments. Keep that owner across observation and forward it
+// explicitly; a stdcall wrapper silently substitutes a volatile ECX value.
+using HoverFn=void(__thiscall*)(void*,uint32_t,void*);
 InitialPopupFn g_buyOptions=nullptr,g_giftOptions=nullptr;
 PopupFn g_buyPopup=nullptr,g_giftPopup=nullptr;
 HoverFn g_hover=nullptr,g_hoverAlt=nullptr;
@@ -76,12 +79,12 @@ void Popup(void* self,uint32_t argument,PopupFn original)
 }
 void __fastcall BuyPopup(void* self,void*,uint32_t argument){Popup(self,argument,g_buyPopup);}
 void __fastcall GiftPopup(void* self,void*,uint32_t argument){Popup(self,argument,g_giftPopup);}
-void Hover(void* self,void* options,HoverFn original)
+void Hover(void* self,uint32_t argument,void* options,HoverFn original)
 {
-    ObserveSafely(options,0);__try {original(self,options);}__finally {CustomProducts::Clear();}
+    ObserveSafely(options,0);__try {original(self,argument,options);}__finally {CustomProducts::Clear();}
 }
-void __stdcall HoverTooltip(void* self,void* options){Hover(self,options,g_hover);}
-void __stdcall HoverTooltipAlt(void* self,void* options){Hover(self,options,g_hoverAlt);}
+void __fastcall HoverTooltip(void* self,void*,uint32_t argument,void* options){Hover(self,argument,options,g_hover);}
+void __fastcall HoverTooltipAlt(void* self,void*,uint32_t argument,void* options){Hover(self,argument,options,g_hoverAlt);}
 
 bool CopyText(const wchar_t* src, uint32_t size, wchar_t* target)
 {

@@ -88,6 +88,20 @@ int main() {
     }
     Check(!NativeBriefAllowsGift(nullptr),"a missing native brief is not a selectable instance");
     Check(
+        OfferEntryAvailable(true, true, false, false, false) &&
+        OfferEntryAvailable(true, true, false, true, false) &&
+        OfferEntryAvailable(true, true, false, false, true) &&
+        OfferEntryAvailable(true, true, false, true, true),
+        "background inventory reads and cached read failures keep the offered friend entry visible");
+    Check(
+        !OfferEntryAvailable(false, true, false, false, false) &&
+        !OfferEntryAvailable(true, false, false, false, false) &&
+        !OfferEntryAvailable(true, true, true, false, false) &&
+        !OfferEntryAvailable(false, true, false, true, true) &&
+        !OfferEntryAvailable(true, false, false, true, true) &&
+        !OfferEntryAvailable(true, true, true, true, true),
+        "native readiness, server capability and uncertain mutation state still fail closed");
+    Check(
         LocalInventoryEffect(
             Command::offer,
             WireStatus::success) ==

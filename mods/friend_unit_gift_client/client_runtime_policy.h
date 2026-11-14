@@ -16,6 +16,21 @@ inline bool NativeBriefAllowsGift(const std::uint8_t* brief) noexcept {
     return brief && !brief[16] && !brief[17] && !brief[18];
 }
 
+// Background native detail reads are shared by Storage receipt resolution and
+// the gift composer. Their transient busy/error state must not remove the
+// friend-menu entry: opening the composer can safely resume a failed read-only
+// queue, while preview and mutation remain guarded by their full checks.
+inline bool OfferEntryAvailable(
+    bool nativeReady,
+    bool serverAllowsOffer,
+    bool mutationUncertain,
+    bool backgroundInventoryBusy,
+    bool backgroundInventoryFailed) noexcept {
+    (void)backgroundInventoryBusy;
+    (void)backgroundInventoryFailed;
+    return nativeReady && serverAllowsOffer && !mutationUncertain;
+}
+
 enum class InventoryEffect : std::uint8_t {
     none,
     remove_local,

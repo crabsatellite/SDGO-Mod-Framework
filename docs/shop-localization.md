@@ -10,6 +10,8 @@ Paint-page unit previews also use Chinese names, including training units. Descr
 battleship descriptions and usage restrictions appear in their separate fields. The buy/gift option dialogs and
 the following confirmation pages show translated product titles; numeric purchase values stay native.
 
+Product-detail and hover hooks preserve the native panel owner across translation. This prevents a crash when the shop opens a detail panel while custom product display records are enabled.
+
 Prices, currencies, durations and billing keep their original definitions. Rental/permanent labels are handled by
 the separate [shop rental and Chinese option fix](shop-labels.md).
 

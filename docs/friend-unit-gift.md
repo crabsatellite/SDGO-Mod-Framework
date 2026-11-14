@@ -7,6 +7,8 @@ Offer an owned unit to a mutually accepted friend. The gift transfers the same u
 The feature is off by default. Server owners turn on **启用好友机体赠送** (enable friend unit gifts) under
 **好友机体赠送** in SDGO Mod Manager and adjust eligibility there. The client shows the offer entry when the connected server supports and enables it. The gift preview reuses the native unit-acquisition card, showing its original model, weapons, skills and level. Unit selection, the optional note and confirmation use existing native controls and assets.
 
+Background detail reads and cached read failures no longer hide the friend-menu entry. Opening an offer resumes a failed read-only request. Preview and confirmation still require complete selected-unit details and server approval; an unresolved previous mutation continues to block a new offer.
+
 ## Send and receive
 
 1. Right-click an accepted friend in the home screen's top-right **USER LIST** or the messenger, then choose the unit-gift action. Online and offline recipients are supported.

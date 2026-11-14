@@ -153,6 +153,13 @@ jobs:
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
           ctest --test-dir build -C Release -R '^(native_data_guard_actual_dll|native_material_guard_actual_dll|game_test_quiet_wait_room_offline|lobby_music_fix_actual_dll|lobby_music_fix_missing_file|hangar_preview_guard_actual_dll|special_target_guard_actual_dll)$' --output-on-failure
           if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+      - name: Shop native owner calling convention
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target shop_hover_abi_dll_test shop_localization_test --parallel 2
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+          ctest --test-dir build -C Release -R '^(shop_hover_actual_dll_abi|shop_localization_.*)$' --output-on-failure
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
       - name: Retain prepared package
         # Candidate branches build exact install bytes before runtime delivery.
         if: env.PREPARE_ONLY == 'true'

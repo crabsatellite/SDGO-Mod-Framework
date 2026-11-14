@@ -2967,6 +2967,7 @@ int __cdecl ReadCapsuleCurrency(const SdgoGameTestContextV1* context) {
 }
 int ReadShopReady(const SdgoGameTestContextV1* context) {
     const auto state=actions.OnboardingState();
+    const auto inventory=onboarding.InventoryState();
     static NativeActions::OnboardingObservation previous{};
     static bool observed=false;
     if(!observed || memcmp(&state,&previous,sizeof(state))!=0) {
@@ -2977,7 +2978,8 @@ int ReadShopReady(const SdgoGameTestContextV1* context) {
         context->Observe(message);previous=state;observed=true;
     }
     if(!state.profile_pilot_id || state.tutorial_level<2 ||
-       (state.native_app_state!=5 && state.native_app_state!=6))return SDGO_GAME_TEST_WAIT;
+       (state.native_app_state!=5 && state.native_app_state!=6) ||
+       !inventory.initialized || !inventory.scan_complete)return SDGO_GAME_TEST_WAIT;
     if(!authenticatedPilot)authenticatedPilot=state.profile_pilot_id;
     context->Assert(authenticatedPilot==state.profile_pilot_id,"the existing shop test identity is the genuine server-loaded profile after accepted login");
     context->Observe("shop entry uses the genuine lobby or hangar; it does not claim battle-channel admission or create starter assets");

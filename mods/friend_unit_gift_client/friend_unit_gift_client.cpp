@@ -487,11 +487,12 @@ void RefreshAvailability() {
     } else {
         g_model.SyncCapabilities(session, 0, 0);
     }
-    const bool offer =
-        g_native_ready && g_model.CanOffer() &&
-        !g_transport.MutationUncertain() &&
-        !g_inventory_sync.Busy() &&
-        g_inventory_sync.error() == NativeInventorySync::Error::none;
+    const bool offer = runtime::OfferEntryAvailable(
+        g_native_ready,
+        g_model.CanOffer(),
+        g_transport.MutationUncertain(),
+        g_inventory_sync.Busy(),
+        g_inventory_sync.error() != NativeInventorySync::Error::none);
     const bool resolve =
         g_native_ready && g_model.CanResolveExisting();
     g_friend_main.SetAvailable(offer);
@@ -1528,9 +1529,17 @@ bool CreateComposerCard(std::uint64_t uid) {
 
 bool OpenComposer() {
     runtime::AuthenticatedContext context;
-    if (!g_native_ready || !g_model.CanOffer() || g_composer || g_picker_selecting ||
+    if (!runtime::OfferEntryAvailable(
+            g_native_ready,
+            g_model.CanOffer(),
+            g_transport.MutationUncertain(),
+            g_inventory_sync.Busy(),
+            g_inventory_sync.error() != NativeInventorySync::Error::none) ||
+        g_composer || g_picker_selecting ||
         !runtime::ReadAuthenticatedContext(g_app ? g_app():nullptr,g_profile,&context) ||
         (context.app_state!=5 && context.app_state!=6)) return false;
+    if (g_inventory_sync.error() != NativeInventorySync::Error::none)
+        g_inventory_sync.Retry();
     g_picker_selecting=true;g_picker_seen=false;g_picker_navigation_sent=false;
     g_picker_target_uid=0;g_picker_next_action=0;
     g_selected_unit={};g_composer_saved_note_size=0;
