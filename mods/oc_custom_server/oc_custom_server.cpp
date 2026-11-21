@@ -50,7 +50,7 @@ using sdgo::oc_custom::server::TextRow;
 using sdgo::friend_unit_gift::WireStatus;
 
 constexpr char kWorldHost[] = "WorldServer-548A86E3-0010C000";
-constexpr std::uint16_t kSchemaVersion = 2; // 2: units without a growth row get the grade formula
+constexpr std::uint16_t kSchemaVersion = 3; // 3: shared read-only information projection
 // The server owner's optional growth file in the Mod directory (see SyncGrowthRows).
 constexpr wchar_t kGrowthOverrideFile[] = L"oc_growth_overrides.tsv";
 
@@ -381,7 +381,8 @@ bool SchemaPresent(Session& session) {
     if (!session.Query(
             L"SET NOCOUNT ON; SELECT [Value] FROM dbo.sdgo_mod_oc_Meta WHERE [Key] = N'SchemaVersion'; "
             L"SELECT COUNT(*) FROM dbo.sdgo_mod_oc_UnitRev; "
-            L"SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name LIKE N'sdgo[_]mod[_]oc[_]%'",
+            L"SELECT COUNT(*) FROM sys.objects WHERE type = 'P' AND name LIKE N'sdgo[_]mod[_]oc[_]%' "
+            L"AND OBJECT_ID(N'dbo.sdgo_mod_oc_UnitProfile',N'V') IS NOT NULL",
             &sets) ||
         sets.size() != 3 || sets[0].size() != 1 || sets[1].size() != 1 || sets[2].size() != 1)
         return false;
@@ -717,7 +718,7 @@ bool LoadCarriers(Session& session, const std::vector<std::uint64_t>& uids, std:
             L"P.Normal_Attack * TCR.Normal_Attack_Stat + P.Over_Attack * TCR.Over_Attack_Stat, "
             L"P.Normal_Defense * TCR.Normal_Defense_Stat + P.Over_Defense * TCR.Over_Defense_Stat, "
             L"P.Normal_Agility * TCR.Normal_Agility_Stat + P.Over_Agility * TCR.Over_Agility_Stat, "
-            L"P.Normal_Special * TCR.Normal_Special_Stat + P.Over_Special * TCR.Over_Special_Stat "
+            L"P.Normal_Special * TCR.Normal_Special_Stat + P.Over_Special * TCR.Over_Special_Stat, P.ExtraBonus "
             L"FROM dbo.sdgo_mod_oc_UserUnitCustom P "
             L"INNER JOIN dbo.tbl_UserUnits UU ON UU.UserUnitNumber = P.UserUnitNumber AND UU.UnitNumber = P.UnitNumber AND UU.AccountNumber = P.AccountNumber "
             L"INNER JOIN dbo.sdgo_mod_oc_UnitRev R ON R.UnitNumber = P.UnitNumber "
@@ -727,7 +728,7 @@ bool LoadCarriers(Session& session, const std::vector<std::uint64_t>& uids, std:
         sets.size() != 1)
         return false;
     for (const auto& row : sets[0]) {
-        if (row.size() != 11) return false;
+        if (row.size() != 12) return false;
         CarrierRow entry;
         entry.uid = static_cast<std::uint64_t>(Int64Or(row, 0));
         entry.carrier.flags = static_cast<std::uint8_t>(
@@ -736,6 +737,8 @@ bool LoadCarriers(Session& session, const std::vector<std::uint64_t>& uids, std:
         entry.carrier.normal_points = static_cast<std::uint8_t>(Int64Or(row, 2));
         entry.carrier.over_points = static_cast<std::uint8_t>(Int64Or(row, 3));
         entry.carrier.revision = static_cast<std::uint32_t>(Int64Or(row, 4));
+        const auto extra = Int64Or(row, 11);
+        entry.carrier.extra_bonus = extra >= 0 && extra <= 8 ? static_cast<std::uint8_t>(extra) : 0;
         for (std::size_t stat = 0; stat < stat_count; ++stat) {
             auto value = Int64Or(row, 5 + stat);
             if (value > 32767) value = 32767;
@@ -992,6 +995,45 @@ std::int32_t HandleGetProfile(Session& session, std::uint32_t account, const std
     return static_cast<std::int32_t>(WireStatus::success);
 }
 
+template<class Database>
+std::int32_t HandleInformation(Database& session, const std::uint8_t* payload,
+                               std::uint32_t bytes, std::uint8_t* reply, std::uint32_t* produced) {
+    UnitRequest request;
+    if (!ReadUnitRequest(payload, bytes, &request) || !request.unit_uid || request.unit_uid > INT64_MAX)
+        return static_cast<std::int32_t>(WireStatus::invalid_argument);
+    // SELECT only: inspecting another player must not call EnsureProfile or
+    // grant access to the existing owner-only allocation/G1/EX commands.
+    const bool g1 = g_settings.g1 && g_g1_state.load() == 1;
+    std::wstring sql = L"SET NOCOUNT ON; SELECT P.*, UU.Normal_MaxLv, "
+        L"ISNULL(UU.UnitSkill_1,0), ISNULL(UU.UnitSkill_2,0), ISNULL(UU.UnitSkill_3,0), ISNULL(UU.UnitSkill_4,0), ";
+    sql += g1 ? L"ISNULL(G.Skill_1,0), ISNULL(G.Skill_2,0), ISNULL(G.Skill_3,0), ISNULL(G.Skill_4,0) "
+              : L"0,0,0,0 ";
+    sql += L"FROM dbo.sdgo_mod_oc_UnitProfile P INNER JOIN dbo.tbl_UserUnits UU "
+           L"ON UU.UserUnitNumber=P.UserUnitNumber AND UU.AccountNumber=P.AccountNumber AND UU.UnitNumber=P.UnitNumber ";
+    if (g1) sql += L"LEFT JOIN dbo.sdgo_mod_g1_UserUnitSkill G ON G.UserUnitNumber=UU.UserUnitNumber "
+                   L"AND G.AccountNumber=UU.AccountNumber AND G.UnitNumber=UU.UnitNumber ";
+    sql += L"WHERE P.State=0 AND P.UserUnitNumber=" + std::to_wstring(request.unit_uid);
+    ResultSets sets;
+    if (!session.Query(sql, &sets) || sets.size() != 1 || sets[0].size() > 1)
+        return static_cast<std::int32_t>(WireStatus::database_unavailable);
+    Information value;
+    if (!sets[0].empty()) {
+        const auto& row = sets[0][0];
+        if (row.size() != 61 || !ParseProfile(TextRow(row.begin(), row.begin() + 52), &value.profile))
+            return static_cast<std::int32_t>(WireStatus::database_unavailable);
+        const auto slots = Int64Or(row, 52);
+        if (slots < 0 || slots > 4) return static_cast<std::int32_t>(WireStatus::database_unavailable);
+        value.g2_slots = static_cast<std::uint8_t>(slots);
+        for (std::size_t i = 0; i < 4; ++i) {
+            value.g2_skills[i] = static_cast<std::uint16_t>(Int64Or(row, 53 + i));
+            value.g1_skills[i] = static_cast<std::uint16_t>(Int64Or(row, 57 + i));
+        }
+    }
+    WriteInformationReply(reply, sets[0].empty() ? 1 : 0, value);
+    *produced = static_cast<std::uint32_t>(kInformationReplyBytes);
+    return static_cast<std::int32_t>(WireStatus::success);
+}
+
 std::int32_t HandleSet(Session& session, std::uint32_t account, bool over, const std::uint8_t* payload,
                        std::uint32_t bytes, std::uint8_t* reply, std::uint32_t* produced) {
     SetRequest request;
@@ -1012,6 +1054,77 @@ std::int32_t HandleSet(Session& session, std::uint32_t account, bool over, const
         return static_cast<std::int32_t>(WireStatus::database_unavailable);
     WriteSetReply(reply, result);
     *produced = static_cast<std::uint32_t>(kSetReplyBytes);
+    return static_cast<std::int32_t>(WireStatus::success);
+}
+
+// EX uses the Mod profile and extension transport. Do not install or invoke
+// the retired native sp_SetUserUnitExtraBonus or overwrite native unit levels.
+std::int32_t HandleEx(Session& session, std::uint32_t account, bool setting,
+                     const std::uint8_t* payload, std::uint32_t bytes,
+                     std::uint8_t* reply, std::uint32_t* produced) {
+    ExSetRequest request;
+    if (setting) {
+        if (!ReadExSetRequest(payload, bytes, &request)) return static_cast<std::int32_t>(WireStatus::invalid_argument);
+    } else {
+        UnitRequest unit;
+        if (!ReadUnitRequest(payload, bytes, &unit)) return static_cast<std::int32_t>(WireStatus::invalid_argument);
+        request.unit_uid = unit.unit_uid;
+    }
+    ExReply result;
+    result.item = kExSettingItem;
+    const auto uid = Num(static_cast<std::int64_t>(request.unit_uid));
+    const auto owner = Num(account);
+    if (setting) {
+        // The retained EX modifier has type 9 in the supported current
+        // catalogue. Accept only this item identity, not arbitrary type-9
+        // coupons. The original type 5 is also understood for compatible data.
+        const std::wstring sql =
+            L"SET NOCOUNT ON; SET XACT_ABORT ON; DECLARE @r INT=0,@p INT=0,@old TINYINT,@lv TINYINT,"
+            L"@rev INT,@template INT,@count SMALLINT,@left SMALLINT,@rc INT; BEGIN TRY BEGIN TRAN; "
+            L"SELECT @template=UnitNumber FROM dbo.tbl_UserUnits WITH(UPDLOCK,HOLDLOCK) WHERE AccountNumber=" + owner +
+            L" AND UserUnitNumber=" + uid + L"; IF @@ROWCOUNT<>1 SET @r=2; "
+            L"IF @r=0 BEGIN EXEC dbo.sdgo_mod_oc_EnsureProfile " + owner + L"," + uid +
+            L",@p OUTPUT; IF @p<>0 SET @r=2; END; "
+            L"IF @r=0 BEGIN SELECT @old=ExtraBonus,@lv=OcLevel,@rev=Revision "
+            L"FROM dbo.sdgo_mod_oc_UserUnitCustom WITH(UPDLOCK,HOLDLOCK) WHERE AccountNumber=" + owner +
+            L" AND UserUnitNumber=" + uid + L" AND UnitNumber=@template AND State=0; "
+            L"IF @@ROWCOUNT<>1 SET @r=2; ELSE IF @lv<15 SET @r=3; ELSE IF @rev<>" + Num(request.revision) +
+            L" SET @r=8; ELSE IF @old=" + Num(request.ability) + L" SET @r=1; END; "
+            L"IF @r=0 BEGIN SELECT @count=V.RemainCount FROM dbo.tbl_UserEtcItemView V WITH(UPDLOCK,HOLDLOCK) "
+            L"INNER JOIN dbo.tbl_EtcItems I ON I.EtcItemNumber=V.EtcItemNumber AND I.Type=V.ItemType "
+            L"WHERE V.AccountNumber=" + owner + L" AND V.EtcItemNumber=" + Num(kExSettingItem) +
+            L" AND V.ItemType IN(5,9); IF @@ROWCOUNT<>1 SET @r=4; ELSE IF @count<1 SET @r=5; END; "
+            L"IF @r=0 BEGIN EXEC @rc=dbo.sp_UseEtcItem " + owner + L"," + Num(kExSettingItem) +
+            L",1,@left OUTPUT; IF @rc<>0 SET @r=6; END; "
+            L"IF @r=0 BEGIN UPDATE dbo.sdgo_mod_oc_UserUnitCustom SET ExtraBonus=" + Num(request.ability) +
+            L",Revision=Revision+1,UpdatedAt=GETDATE() WHERE AccountNumber=" + owner + L" AND UserUnitNumber=" + uid +
+            L" AND UnitNumber=@template AND State=0 AND OcLevel>=15 AND Revision=@rev; IF @@ROWCOUNT<>1 SET @r=7; END; "
+            L"IF @r=0 COMMIT TRAN ELSE ROLLBACK TRAN; END TRY BEGIN CATCH "
+            L"IF @@TRANCOUNT>0 ROLLBACK TRAN; DECLARE @error NVARCHAR(4000)=ERROR_MESSAGE(); "
+            L"RAISERROR(@error,16,1); RETURN; END CATCH; SELECT @r;";
+        ResultSets sets;
+        if (!session.Query(sql, &sets) || sets.size() != 1 || sets[0].size() != 1 || sets[0][0].size() != 1)
+            return static_cast<std::int32_t>(WireStatus::database_unavailable);
+        result.ret_val = static_cast<std::int32_t>(Int64Or(sets[0][0], 0, 7));
+    }
+    std::int32_t profile_ret = 0;
+    if (!QueryProfile(session, account, request.unit_uid, &profile_ret, &result.profile))
+        return static_cast<std::int32_t>(WireStatus::database_unavailable);
+    if (profile_ret != 0) {
+        result.ret_val = 2;
+        result.profile.unit_uid = request.unit_uid;
+    } else if (!setting && result.profile.oc_level < 15) {
+        result.ret_val = 3;
+    }
+    ResultSets items;
+    if (!session.Query(L"SET NOCOUNT ON; SELECT ISNULL(MAX(CONVERT(INT,V.RemainCount)),0) "
+        L"FROM dbo.tbl_UserEtcItemView V INNER JOIN dbo.tbl_EtcItems I ON I.EtcItemNumber=V.EtcItemNumber AND I.Type=V.ItemType "
+        L"WHERE V.AccountNumber=" + owner + L" AND V.EtcItemNumber=" + Num(kExSettingItem) + L" AND V.ItemType IN(5,9);", &items) ||
+        items.size() != 1 || items[0].size() != 1)
+        return static_cast<std::int32_t>(WireStatus::database_unavailable);
+    result.remaining = static_cast<std::uint16_t>((std::clamp)(Int64Or(items[0][0], 0), std::int64_t{0}, std::int64_t{32767}));
+    WriteExReply(reply, result);
+    *produced = static_cast<std::uint32_t>(kExReplyBytes);
     return static_cast<std::int32_t>(WireStatus::success);
 }
 
@@ -1304,7 +1417,7 @@ std::int32_t HandleMode(std::uint8_t* reply, std::uint32_t* produced) {
     // and kModeFlagRoomRule tells newer clients that the room decides battles.
     mode.oc_mode = g_settings.enabled && (g_settings.oc_mode || g_settings.room_mode) ? 1 : 0;
     mode.schema_version = kSchemaVersion;
-    mode.flags = (SchemaReady() ? kModeFlagSchemaReady : 0u) |
+    mode.flags = (SchemaReady() ? kModeFlagSchemaReady | kModeFlagEx : 0u) |
                  (g_settings.enabled && g_settings.room_mode ? kModeFlagRoomRule : 0u) |
                  (g_settings.enabled && g_settings.room_mode && g_settings.g1 ? kModeFlagG1 : 0u);
     WriteModeReply(reply, 0, mode);
@@ -1387,8 +1500,15 @@ std::int32_t __cdecl ExtensionHandler(void*, std::uint32_t actor, std::uint16_t 
         if (!OpenGameSession(game_database, session))
             return static_cast<std::int32_t>(WireStatus::database_unavailable);
         switch (wrapped) {
+        case Command::information:
+            return HandleInformation(session, payload, payload_bytes, reply, produced);
         case Command::get_profile:
             return HandleGetProfile(session, actor, payload, payload_bytes, reply, produced);
+        case Command::ex_info:
+            return HandleEx(session, actor, false, payload, payload_bytes, reply, produced);
+        case Command::ex_set:
+            status = HandleEx(session, actor, true, payload, payload_bytes, reply, produced);
+            break;
         case Command::set_normal:
             status = HandleSet(session, actor, false, payload, payload_bytes, reply, produced);
             break;

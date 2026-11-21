@@ -99,6 +99,7 @@ MODE_FLOW_STEPS = ("room", "start", "ai_spawn", "return")
 # G改 2.0 room back to back. The G改 2.0 round uses the plain title (the default
 # system); each round checks the system the client and Battle applied.
 ROOM_SWITCH_SYSTEMS = ("oc", "g1", "g2")
+ATTRIBUTE_VALIDATION_ROUNDS = ("g2", "g1", "oc", "g2_after")
 ROOM_SWITCH_SUFFIXES = {"oc": " !oc", "g1": " !g1", "g2": ""}
 ROOM_SWITCH_STEPS = ("room", "start", "ai_spawn", "system", "return")
 # OC special (--oc-special): the native player probe settings sealed into the
@@ -112,9 +113,10 @@ OC_SPECIAL_OBSERVER_SETTINGS = {
 }
 
 
-def room_switch_titles(base: str) -> tuple[str, ...]:
+def room_switch_titles(base: str, *, validate_attributes: bool = False) -> tuple[str, ...]:
     """The sealed per-round room titles of a room-switch run, in play order."""
-    return tuple(base + ROOM_SWITCH_SUFFIXES[system] for system in ROOM_SWITCH_SYSTEMS)
+    rounds = ATTRIBUTE_VALIDATION_ROUNDS if validate_attributes else ROOM_SWITCH_SYSTEMS
+    return tuple(base + ROOM_SWITCH_SUFFIXES[system.removesuffix("_after")] for system in rounds)
 MISSION_SUITE = "native-mission-smoke"
 SUPPORTED_MISSION_MODES = (5, 8)
 MISSION_FLOW_CASES = (
@@ -147,7 +149,7 @@ MISSION_CLAIM_FIELDS = (
     "mission_result_claim",
     "mission_active_exit_claim",
 )
-PAGE_GROUPS = ('hangar', 'preview_guard', 'storage_gift', 'capsule', 'appearance')
+PAGE_GROUPS = ('hangar', 'preview_guard', 'storage_gift', 'capsule', 'parts_switch', 'appearance')
 IGNORED_DIRECTORIES = {
     ".git",
     ".sdgo-updater",
@@ -1948,11 +1950,13 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
                          mission_behavior_profile: str | None = None,
                          mission_game_mode_id: int | None = None,
                          oc_panel: bool = False, oc_challenge: bool = False,
-                         oc_special: bool = False) -> tuple[str, ...]:
+                         oc_special: bool = False, validate_attributes: bool = False) -> tuple[str, ...]:
     if mission_respawns is not None and (mission_respawns not in ('player','infinite') or mission_mode is None):
         raise GameTestError('mission_respawns requires a native mission and player or infinite policy')
     oc_allocate = validate_oc_allocate(oc_allocate)
     oc_special = validate_oc_special(oc_special, oc_allocate, room_switch=room_switch is True)
+    if type(validate_attributes) is not bool or (validate_attributes and not room_switch):
+        raise GameTestError('attribute validation requires a room-switch run')
     if type(room_switch) is not bool or (room_switch and (oc_allocate is None or oc_room or g1_room or same_room_rematch)):
         raise GameTestError('room_switch plays the --oc-allocate PvP battle once per room system (not with --oc-room or --g1-room)')
     if oc_allocate is not None and (play_unit_uid is None or mission_mode is not None or any((
@@ -2042,6 +2046,8 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
         return FLOW_CASES[:3] + selection + MISSION_FLOW_CASES + imported + (('mission.respawn',) if mission_respawns else ())
     modes = parse_mode_sequence(mode_sequence)
     if pages_only:
+        if page_group == 'parts_switch':
+            return FLOW_CASES[:3] + selection + ('pages.factory.parts_switch',)
         if page_group == 'appearance':
             return FLOW_CASES[:3] + selection + ('appearance.native_editor',)
         if page_group == 'capsule':
@@ -2091,7 +2097,7 @@ def required_flow_cases(mode_sequence: str, bootstrap_only: bool = False,
     if room_switch:
         if modes != (1,):
             raise GameTestError('room_switch plays three ordinary mode 1 battles')
-        return prefix + tuple(f'pvp.{system}.{step}' for system in ROOM_SWITCH_SYSTEMS
+        return prefix + tuple(f'pvp.{system}.{step}' for system in (ATTRIBUTE_VALIDATION_ROUNDS if validate_attributes else ROOM_SWITCH_SYSTEMS)
                               for step in ROOM_SWITCH_STEPS) + panel
     if len(modes) == 1:
         # OC battle stats, speed/agility and the special: the battle unit exists
@@ -2210,6 +2216,7 @@ def required_cases_for_plan(plan: dict) -> tuple[str, ...]:
         oc_room=plan.get('oc_room', False),
         g1_room=plan.get('g1_room', False),
         room_switch=plan.get('room_switch', False),
+        validate_attributes=plan.get('validate_attributes', False),
         mission_behavior_profile=plan.get("mission_behavior_profile"),
         mission_game_mode_id=plan.get("mission_game_mode_id"),
         oc_panel=plan.get('oc_panel', False),
@@ -2633,6 +2640,8 @@ def write_job(
         run['run']['g1_room'] = '1'
     if plan.get('room_switch'):
         run['run']['room_switch'] = '1'
+        if plan.get('validate_attributes'):
+            run['run']['validate_attributes'] = '1'
     if plan.get('oc_panel'):
         run['run']['oc_panel'] = '1'
     if plan.get('oc_challenge'):
@@ -3070,6 +3079,7 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                 oc_room=run.get('oc_room') == '1',
                 g1_room=run.get('g1_room') == '1',
                 room_switch=run.get('room_switch') == '1',
+                validate_attributes=run.get('validate_attributes') == '1',
                 oc_panel=run.get('oc_panel') == '1',
                 oc_challenge=run.get('oc_challenge') == '1',
                 oc_special=run.get('oc_special') == '1',
@@ -3205,6 +3215,8 @@ def read_public_plan(root: Path, *, historical_cases: bool = False) -> dict:
                     any(len(title.encode('utf-8')) > 20 for title in room_switch_titles(run['room_title']))):
                 raise ValueError('room-switch run lacks its plain sealed base room title')
             plan['room_switch'] = True
+            if run.get('validate_attributes') == '1':
+                plan['validate_attributes'] = True
         if run.get('oc_panel') == '1':
             plan['oc_panel'] = True
         if run.get('oc_challenge') == '1':
@@ -3667,6 +3679,10 @@ def prepare(
             extra_mods=tuple(dict.fromkeys((*extra_mods,'appearance_probe','unit_appearance_client')))
         sdk=manifest_mod(stage/'client/sdgo/mods/game_test_client/mod.ini').get('version','')
         parsed=re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+].*)?',sdk)
+        if page_group == 'parts_switch':
+            if not parsed or tuple(map(int, parsed.groups())) < (0, 1, 47):
+                raise GameTestError('parts mode switching requires native observer 0.1.47 or newer')
+            extra_mods = tuple(dict.fromkeys((*extra_mods, 'friend_unit_gift_client', 'oc_custom_client')))
         if not parsed or tuple(map(int,parsed.groups())) < (0,1,8):
             raise GameTestError('the sealed hangar page group requires native observer 0.1.8 or newer')
     if type(hangar_confirm_gb) is not bool:
@@ -4108,6 +4124,8 @@ def prepare(
             # The base title is the G改 2.0 round; the OC and G改 1.0 rounds add
             # their command to it.
             plan['room_switch']=True
+            if os.environ.get('SDGO_TEST_THREE_MODE_VALIDATION') == '1':
+                plan['validate_attributes'] = True
         if oc_special:
             # The native player probe fires the play unit's special in the battle.
             plan['oc_special']=True
@@ -4612,6 +4630,8 @@ def validate_metadata(run_dir: Path, *, for_reuse: bool = False) -> dict:
     if metadata.get("suite") != expected_suite:
         raise GameTestError("run.json suite disagrees with the sealed normal-flow plan")
     public_shop_fields = set()
+    if plan.get('validate_attributes') != public_plan.get('validate_attributes'):
+        raise GameTestError('room attribute validation differs from the sealed run plan')
     if plan.get('room_style_preview') != public_plan.get('room_style_preview'):
         raise GameTestError('run.json cannot change the sealed room-style preview scope')
     if plan.get('page_group') != public_plan.get('page_group'):

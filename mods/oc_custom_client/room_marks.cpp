@@ -26,6 +26,8 @@ using FindFn = void*(__thiscall*)(void*, const HostString*, int);
 using AddFn = std::uint32_t(__thiscall*)(void*, const HostString*, int, int, int, int, std::uint32_t);
 using SetTextItemFn = void(__thiscall*)(void*, int, const HostString*, int, int, int, int, std::uint32_t,
                                         std::uint32_t, std::uint8_t, std::uint32_t, int);
+using BadgeSkinFn = void(__thiscall*)(void*, const HostString*, std::uint8_t, std::uint32_t, std::uint32_t);
+using BadgeRefreshFn = void(__thiscall*)(void*);
 
 const SdgoApi* g_api = nullptr;
 SdgoMod* g_mod = nullptr;
@@ -35,6 +37,8 @@ AssignFn g_assign = nullptr;
 FindFn g_find = nullptr;
 AddFn g_add = nullptr;
 SetTextItemFn g_set_text_item = nullptr;
+BadgeSkinFn g_badge_skin = nullptr;
+BadgeRefreshFn g_badge_refresh = nullptr;
 const void* g_button_vtable = nullptr;
 std::uint32_t g_list_marks = 0;
 std::uint32_t g_title_marks = 0;
@@ -58,7 +62,10 @@ constexpr std::size_t kVisible = 0x162, kVisible2 = 0x163;
 constexpr int kButton = 4;
 constexpr std::uint32_t kLabelColor = 0xFFFFFFFF;
 constexpr std::uint32_t kShadowColor = 0xFF000000;
-constexpr int kLabelWidth = 132;
+// Keep the native frame below the communication strip, centered on the room
+// name. The random-team notice (0912.uir) owns the space above the map.
+constexpr int kLabelY = 59, kLabelWidth = 133, kLabelHeight = 27;
+constexpr wchar_t kLabelSkin[] = L"sprs\\11448.spr";
 
 constexpr wchar_t kMarkOc[] = L"【OC】";
 constexpr wchar_t kMarkG1[] = L"【G改1】";
@@ -74,7 +81,6 @@ void SystemLabel(RoomSystem system, wchar_t (&text)[24]) {
     std::swprintf(text, 24, L"体系：%ls", RoomSystemLabel(system));
 }
 constexpr wchar_t kLabelName[] = L"OcRoomSystemStatic";
-constexpr wchar_t kTitleButton[] = L"TitleChangeBtn";
 constexpr std::size_t kTextMax = 1024;
 
 HostString View(const wchar_t* text, std::size_t length) {
@@ -179,15 +185,16 @@ void* FindControl(void* dialog, const wchar_t* name, int type) noexcept {
     }
 }
 
-void* CreateLabel(void* dialog, void* title_button) noexcept {
-    float x = 0.0f, y = 0.0f;
-    int width = 0, height = 0;
-    if (!ReadAt(title_button, kX, &x) || !ReadAt(title_button, kY, &y) || !ReadAt(title_button, kWidth, &width) ||
-        !ReadAt(title_button, kHeight, &height) || width <= 0 || height <= 0)
+void* CreateLabel(void* dialog) noexcept {
+    void* title = FindControl(dialog, L"TitleChangeBtn", kButton);
+    float titleX = 0;
+    int titleWidth = 0;
+    if (!title || !ReadAt(title, kX, &titleX) || !ReadAt(title, kWidth, &titleWidth) || titleWidth < kLabelWidth)
         return nullptr;
+    const int x = static_cast<int>(titleX) + (titleWidth - kLabelWidth) / 2;
     const HostString name = View(kLabelName, std::wcslen(kLabelName));
     __try {
-        g_add(dialog, &name, static_cast<int>(x) + width + 6, static_cast<int>(y), kLabelWidth, height, 0);
+        g_add(dialog, &name, x, kLabelY, kLabelWidth, kLabelHeight, 0);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return nullptr;
     }
@@ -196,6 +203,16 @@ void* CreateLabel(void* dialog, void* title_button) noexcept {
     if (!label || !ReadAt(label, kParent, &parent) || parent != dialog) return nullptr;
     WriteAt<std::uint8_t>(label, kVisible, 1);
     WriteAt<std::uint8_t>(label, kVisible2, 1);
+    WriteAt<std::uint8_t>(label, 0x167, 0); // read-only status, no input interception
+    WriteAt<std::uint8_t>(label, 0x168, 0); // no native debug rectangle
+    const HostString skin = View(kLabelSkin, std::wcslen(kLabelSkin));
+    __try {
+        g_badge_skin(label, &skin, 0, 0, 0);
+        g_badge_refresh(label);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        WriteAt<std::uint8_t>(label, kVisible, 0);
+        return nullptr;
+    }
     return label;
 }
 
@@ -204,8 +221,8 @@ bool SetLabel(void* label, const wchar_t* text) noexcept {
     if (!ReadAt(label, kHeight, &height)) return false;
     const HostString view = View(text, std::wcslen(text));
     __try {
-        g_set_text_item(label, 0, &view, 2, height > 14 ? (height - 14) / 2 : 0, kLabelWidth - 4, 14, kLabelColor,
-                        kShadowColor, 0, 1, 0);
+        g_set_text_item(label, 0, &view, 10, height > 14 ? (height - 14) / 2 : 0, kLabelWidth - 20, 14, kLabelColor,
+                        kShadowColor, 0, 1, 2);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -223,8 +240,10 @@ bool Bind(const SdgoApi* api, SdgoMod* mod, void (*log)(const char*)) {
     g_find = reinterpret_cast<FindFn>(api->Symbol(mod, "hangar.ui_find_control"));
     g_add = reinterpret_cast<AddFn>(api->Symbol(mod, "hangar.ui_add_button"));
     g_set_text_item = reinterpret_cast<SetTextItemFn>(api->Symbol(mod, "hangar.ui_text_item"));
+    g_badge_skin = reinterpret_cast<BadgeSkinFn>(api->Symbol(mod, "hangar.ui_add_skin"));
+    g_badge_refresh = reinterpret_cast<BadgeRefreshFn>(api->Symbol(mod, "friend_unit_gift.ui_refresh_geometry"));
     g_button_vtable = api->Symbol(mod, "hangar.ui_button_vtable");
-    return g_text_item && g_assign && g_find && g_add && g_set_text_item && g_button_vtable;
+    return g_text_item && g_assign && g_find && g_add && g_set_text_item && g_button_vtable && g_badge_skin && g_badge_refresh;
 }
 
 void MarkRoomList(void* service) {
@@ -262,11 +281,9 @@ void MarkTitleBar(void* title_bar, RoomSystem system) {
     // dialog may reuse an address.
     void* label = FindControl(dialog, kLabelName, kButton);
     if (!label) {
-        void* title_button = FindControl(dialog, kTitleButton, kButton);
-        if (!title_button) return;
-        label = CreateLabel(dialog, title_button);
+        label = CreateLabel(dialog);
         if (!label) return;
-        if (g_log) g_log("oc room system label created next to the waiting-room title");
+        if (g_log) g_log("oc room system badge created below the room title");
     }
     if (label != g_label || dialog != g_label_dialog) {
         g_label = label;

@@ -29,6 +29,7 @@
 
 #include <array>
 #include <cstdint>
+#include "sdgo/oc_custom_protocol.h"
 
 namespace sdgo::oc_custom::client::radar {
 
@@ -40,6 +41,23 @@ struct Shape {
     // Bottom to top: pending, normal + Over, normal, base. 0..1 each.
     std::array<std::array<float, kAxes>, kLayers> layer{};
 };
+
+struct Range { float minimum, maximum; };
+using Ranges = std::array<Range, kAxes>;
+inline constexpr Ranges kDefaultRanges = {{{1,100},{4000,23800},{70,169},{70,169},{1,100},{3000,7950}}};
+Shape FromProfile(const Profile& profile, const Ranges& ranges) noexcept;
+// A second chart owned by the information popup, independent of the factory.
+bool InstallInformation(void* dialog) noexcept;
+struct Rect { float x, y, width, height; };
+// Clip a native skin instance in dialog coordinates, preserving its artwork.
+bool InstallInformationSkin(void* control, const Rect& clip, bool chart = false) noexcept;
+// Individually owned, clipped pieces of the native modal artwork.
+bool InstallChallengeSkin(void* control, void* root, const Rect& clip) noexcept;
+void ClearChallengeSkins() noexcept;
+void SetInformation(const Shape& shape, float x, float y, float radius) noexcept;
+void ForgetInformation(void* dialog) noexcept;
+std::uint32_t InformationFrames() noexcept;
+const Shape& CurrentInformation() noexcept;
 
 // The engine's renderer global (symbol oc_custom.client_renderer: CRenderer*,
 // whose IDirect3DDevice9* is at +8). GOnline.exe links the engine statically.

@@ -300,7 +300,8 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: 
         return evaluate_mission_behavior(metadata,paths)
     rounds=2 if plan.get('same_room_rematch') else 1
     room_switch=bool(plan.get('room_switch'))
-    titles=game_test.room_switch_titles(plan['room_title']) if room_switch else (plan['room_title'],)
+    validate_attributes = plan.get('validate_attributes', False)
+    titles=game_test.room_switch_titles(plan['room_title'], validate_attributes=validate_attributes) if room_switch else (plan['room_title'],)
     if room_switch:rounds=len(titles)
     if expected_rounds is not None:
         if room_switch or type(expected_rounds) is not int or expected_rounds not in (1,2) or expected_rounds<rounds:
@@ -400,7 +401,9 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: 
             errors.append('room-switch battles did not play the sealed OC, G改 1.0 and G改 2.0 rooms in order')
         else:
             uid=integer(plan.get('play_unit_uid'),'room-switch play unit',1)
-            for battle,system in zip(played,game_test.ROOM_SWITCH_SYSTEMS):
+            rounds = game_test.ATTRIBUTE_VALIDATION_ROUNDS if validate_attributes else game_test.ROOM_SWITCH_SYSTEMS
+            for battle,round_name in zip(played,rounds):
+                system = round_name.removesuffix('_after')
                 battle['room_system']=system
                 errors.extend(room_system_errors(battle,system,uid))
     return {'schema':1,'run_id':run_id,'scope':'passive_native_server_lifecycle',

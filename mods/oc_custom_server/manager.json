@@ -7,8 +7,8 @@
   "hosts": [
     "world"
   ],
-  "description": "恢复原版 OC 六维加点（速度、HP、攻击、防御、敏捷、必杀）：普通点按等级发放，Over 点通过 OC 挑战获得，洗点扣除 GP。OC 档保存在 Mod 自有表中，与现行改造部件（G改 2.0）数据并存，可以整服只用一套，也可以按房间选择体系；放入 G改 1.0 规则文件后，每台机体另有一组 G改 1.0 强化槽，供 G改 1.0 房间使用。",
-  "mechanism": "World Mod 在游戏库安装 sdgo_mod_oc_* 表与过程（移植自 2009 年原版存储过程），通过好友赠送载体的扩展指令处理大厅请求。oc 模式下把每台机体的加点增量写入服务端发出的机体记录保留区，并清空记录中的四个改造部件槽位；room 模式下记录同时保留加点增量、改造部件和 G改 1.0 强化槽（sdgo_mod_g1_* 表与过程，规则来自 Mod 目录的 g1_attributes.tsv），由房名中的 !oc、!g1 指令决定该房战斗使用哪套体系；current 模式下记录保持原生，OC 档只保存不生效。每台机体的成长行：原版 OC 目录收录的机体用原版数据，其余按等级公式，Mod 目录中可选的 oc_growth_overrides.tsv 可以逐台自定义；每次 World 启动时同步。",
+  "description": "恢复原版 OC 六维加点（速度、HP、攻击、防御、敏捷、必杀）：普通点按等级发放，Over 点通过 OC 挑战获得，洗点扣除 GP。OC 档保存在 Mod 自有表中，与现行改造部件（G改 2.0）数据并存，可以整服只用一套，也可以按房间选择体系；放入 G改 1.0 规则文件后，每台机体另有一组 G改 1.0 强化槽，供 G改 1.0 房间使用。 EX 技能首次设置与更换均消耗一个 EX能力修改器，选择保存在 Mod OC 档中。",
+  "mechanism": "World Mod 在游戏库安装 sdgo_mod_oc_* 表与过程（移植自 2009 年原版存储过程），通过好友赠送载体的扩展指令处理大厅请求。oc 模式下把每台机体的加点增量写入服务端发出的机体记录保留区，并清空记录中的四个改造部件槽位；room 模式下记录同时保留加点增量、改造部件和 G改 1.0 强化槽（sdgo_mod_g1_* 表与过程，规则来自 Mod 目录的 g1_attributes.tsv），由房名中的 !oc、!g1 指令决定该房战斗使用哪套体系；current 模式下记录保持原生，OC 档只保存不生效。每台机体的成长行：原版 OC 目录收录的机体用原版数据，其余按等级公式，Mod 目录中可选的 oc_growth_overrides.tsv 可以逐台自定义；每次 World 启动时同步。 EX 设置通过 Mod 扩展请求核对归属、等级、能力范围和档案版本，扣道具与保存 ExtraBonus 原子提交；不安装或调用旧版 EX 设置存储过程。 机体信息页通过 information 只读指令获取所查看机体的基础属性、普通／Over 加点和 G改 1.0／2.0 部件，自己与其他玩家使用同一投影；展示不创建档案，所有修改仍校验所有权。需要客户端 0.6.18 与 World 服务端 0.5.2 或更新版本。",
   "settings": [
     {
       "id": "enabled",
@@ -52,7 +52,7 @@
     {
       "id": "reward_item",
       "key": "RewardItem",
-      "label": "OC 挑战成功奖励道具",
+      "label": "达到 OC EX 的奖励道具",
       "type": "integer",
       "default": 3240013,
       "minimum": 0,
@@ -60,7 +60,8 @@
       "file": "mod.ini",
       "section": "settings",
       "audience": "developer",
-      "activation": "restart_required"
+      "activation": "restart_required",
+      "description": "仅在挑战达到 EX 时发放；默认是 EX能力修改器。0 不发放。更换奖励不会改变 EX 技能设置所需的道具。"
     }
   ],
   "presentation": "configurable"

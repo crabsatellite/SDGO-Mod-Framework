@@ -13,10 +13,9 @@
 // with the room at [ebp+8] and the pilot at [ebp+0x10]); a naked entry records
 // that caller frame. That builder copies the record's four custom-skill slots
 // (record +0x8A) into the battle unit (+0x644) before it builds the stats, and
-// the battle (server and clients, which receive the battle unit) plays the
-// skills from that copy. For a room whose title carries !oc the copy is
-// cleared and the OC deltas are added; the room's record keeps its skills.
-// Every other room stays native.
+// native parts cache must be built from the selected room loadout. The copy
+// is selected immediately after memcpy, before cache initialization; the
+// original room record stays unchanged. OC deltas still apply per form.
 #include <windows.h>
 #include <intrin.h>
 
@@ -27,6 +26,8 @@
 
 #include "sdgo/oc_custom_battle_observer.h"
 #include "sdgo/oc_custom_protocol.h"
+#include "sdgo/oc_battle_loadout.h"
+#include "sdgo/oc_ex_ability.h"
 #include "sdgo/oc_room_system.h"
 #include "sdgo/room_titles_lookup.h"
 #include "sdgo/sdgo_api.h"
@@ -96,6 +97,8 @@ constexpr std::size_t kUnitSpecial = 0x12;
 constexpr std::size_t kFormStride = 0x0C;
 // UnitDataEx: +6 grade, +0x55 WeaponNumber_FatalAttack.
 constexpr std::size_t kDefinitionGrade = 0x06;
+constexpr std::size_t kDefinitionAttack = 0x41;
+constexpr std::size_t kDefinitionDefense = 0x43;
 constexpr std::size_t kDefinitionFatalWeapon = 0x55;
 // Downloaded per-grade cap table, 0x10 bytes per grade: HP, attack, defense,
 // special (the native builder reads it as DAT_0082B194 + grade * 0x10).
@@ -150,10 +153,15 @@ void ApplyUnsafe(
     std::uint8_t* record,
     std::uint8_t* definition,
     int form,
-    bool oc_room) noexcept {
+    bool oc_room,
+    std::uint8_t native_mode) noexcept {
     Carrier carrier;
-    if (!ReadRecordCarrier(record, &carrier) ||
-        !((carrier.flags & carrier_oc_mode) || ((carrier.flags & carrier_room_rule) && oc_room)) ||
+    if (!ReadRecordCarrier(record, &carrier)) return;
+    // The client copies this native byte with the complete stat block and
+    // applies EX 3..8 during initialization, transformations and respawns.
+    // Clear it even when this record uses another upgrade system.
+    if (!WriteAt(unit, 13, static_cast<std::uint8_t>(0))) return;
+    if (!((carrier.flags & carrier_oc_mode) || ((carrier.flags & carrier_room_rule) && oc_room)) ||
         !(carrier.flags & carrier_profile) ||
         form < 0 || form > 3)
         return;
@@ -177,12 +185,16 @@ void ApplyUnsafe(
     if (!ReadAt(unit, kUnitAttack + stride, &attack) ||
         !ReadAt(unit, kUnitDefense + stride, &defense))
         return;
-    const auto attack_after = static_cast<std::uint16_t>(
-        Clamp(static_cast<std::int64_t>(attack) + carrier.delta[stat_attack],
-              Cap(grade, 0x4), 0));
-    const auto defense_after = static_cast<std::uint16_t>(
-        Clamp(static_cast<std::int64_t>(defense) + carrier.delta[stat_defense],
-              Cap(grade, 0x8), 0));
+    const auto extra = ActiveExAbility(carrier, oc_room, native_mode);
+    if (!WriteAt(unit, 13, extra)) return;
+    std::uint16_t base_attack = 0, base_defense = 0;
+    if (extra && (!ReadAt(definition, kDefinitionAttack, &base_attack) ||
+                  !ReadAt(definition, kDefinitionDefense, &base_defense)))
+        return;
+    const auto attack_after = ExEnhancedStat(attack, carrier.delta[stat_attack], base_attack,
+                                              extra, stat_attack, Cap(grade, 0x4));
+    const auto defense_after = ExEnhancedStat(defense, carrier.delta[stat_defense], base_defense,
+                                               extra, stat_defense, Cap(grade, 0x8));
     if (!WriteAt(unit, kUnitAttack + stride, attack_after) ||
         !WriteAt(unit, kUnitDefense + stride, defense_after))
         return;
@@ -215,9 +227,9 @@ void ApplyUnsafe(
     if (g_log_apply && g_api && g_api->Log) {
         g_api->Log(
             g_mod, SDGO_LOG_INFO,
-            "oc applied uid=%llu revision=%u form=%d level=%u hp=%d atk=%u def=%u sp=%.1f "
+            "oc applied uid=%llu revision=%u form=%d level=%u ex=%u hp=%d atk=%u def=%u sp=%.1f "
             "(delta hp=%d atk=%d def=%d sp=%d speed=%d agility=%d)",
-            static_cast<unsigned long long>(uid), carrier.revision, form, carrier.oc_level,
+            static_cast<unsigned long long>(uid), carrier.revision, form, carrier.oc_level, extra,
             hp_after, attack_after, defense_after, special_after,
             carrier.delta[stat_hp], carrier.delta[stat_attack],
             carrier.delta[stat_defense], carrier.delta[stat_special],
@@ -348,6 +360,52 @@ bool ClearUnitSkills(std::uint8_t* unit) noexcept {
     }
 }
 
+// Both native human paths copy the skills before initializing the parts
+// cache (0x478C70). Selecting at the later per-form stat builder leaves HP
+// and other cached effects from the old loadout behind.
+void* g_loadout_normal_original = nullptr;
+void* g_loadout_deck_original = nullptr;
+void __cdecl SelectCopiedServerLoadout(std::uint8_t* frame) noexcept {
+    const DWORD error = GetLastError();
+    __try {
+        auto* room = *reinterpret_cast<std::uint8_t**>(frame + 8);
+        auto* record = *reinterpret_cast<std::uint8_t**>(frame - 0x10);
+        auto* unit = *reinterpret_cast<std::uint8_t**>(frame - 0x0C);
+        char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
+        const auto system = room ? SystemOfRoom(room, title, sizeof(title)) : RoomSystem::parts;
+        std::array<std::uint16_t, 4> skills{};
+        if (unit && SelectBattleSkillIds(record, room != nullptr, system, &skills))
+            WriteUnitSkills(unit, skills);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        if (g_api && g_api->Log) g_api->Log(g_mod, SDGO_LOG_ERROR, "native battle parts selection failed");
+    }
+    SetLastError(error);
+}
+__declspec(naked) void LoadoutNormalEntry() {
+    __asm {
+        pushfd
+        pushad
+        push ebp
+        call SelectCopiedServerLoadout
+        add esp, 4
+        popad
+        popfd
+        jmp dword ptr [g_loadout_normal_original]
+    }
+}
+__declspec(naked) void LoadoutDeckEntry() {
+    __asm {
+        pushfd
+        pushad
+        push ebp
+        call SelectCopiedServerLoadout
+        add esp, 4
+        popad
+        popfd
+        jmp dword ptr [g_loadout_deck_original]
+    }
+}
+
 void LogNative(RoomSystem system, const std::uint8_t* room, const char* title, const std::uint8_t* unit,
                const std::uint8_t* record, int form, const std::uint8_t* skills) noexcept {
     if (!g_log_apply || InterlockedDecrement(&g_room_log_budget) < 0) return;
@@ -410,7 +468,7 @@ int __stdcall BuildStatsHook(
         const int result = g_original(unit, record, definition, form, mode, type, pilot_level);
         if (result && unit && record && definition) {
             const DWORD error = GetLastError();
-            ApplyUnsafe(unit, record, definition, form, false);
+            ApplyUnsafe(unit, record, definition, form, false, static_cast<std::uint8_t>(mode));
             SetLastError(error);
         }
         return result;
@@ -418,24 +476,24 @@ int __stdcall BuildStatsHook(
     const int result = g_original(unit, record, definition, form, mode, type, pilot_level);
     const DWORD error = GetLastError();
     if (result && unit && definition) {
+        // G1/G2 skip ApplyUnsafe, so clear their native EX byte here as well.
+        WriteAt(unit, 13, static_cast<std::uint8_t>(0));
         char title[SDGO_ROOM_TITLE_MAX_UTF8_BYTES + 1] = {};
         const RoomSystem system = SystemOfRoom(room, title, sizeof(title));
         std::uint8_t skills[kCustomSkillCount * 2] = {};
-        ReadSkills(unit, kUnitCustomSkills, skills);
+        ReadSkills(record, kCustomSkillOffset, skills);
         LogNative(system, room, title, unit, record, form, skills);
         bool oc_applied = false;
         if (system == RoomSystem::oc) {
             InterlockedIncrement(&g_oc_room_builds);
-            ClearUnitSkills(unit);
             const LONG applied_before = g_applied;
-            ApplyUnsafe(unit, record, definition, form, true);
+            ApplyUnsafe(unit, record, definition, form, true, static_cast<std::uint8_t>(mode));
             oc_applied = g_applied != applied_before;
         } else if (system == RoomSystem::g1) {
             InterlockedIncrement(&g_g1_room_builds);
             // A unit without a G改 1.0 loadout plays without attributes.
             const std::array<std::uint16_t, 4> loadout =
                 (carrier.flags & carrier_g1_profile) ? carrier.g1_skills : std::array<std::uint16_t, 4>{};
-            WriteUnitSkills(unit, loadout);
             if (g_log_apply && InterlockedDecrement(&g_room_log_budget) >= 0)
                 g_api->Log(g_mod, SDGO_LOG_INFO, "oc room system=g1 form=%d g1 skills=%u/%u/%u/%u", form, loadout[0],
                            loadout[1], loadout[2], loadout[3]);
@@ -535,6 +593,10 @@ SDGO_MOD_ENTRY {
         !api->HookCode(mod, "oc_custom.battle_set_unit_stat",
                        reinterpret_cast<void*>(&BuildStatsEntry),
                        reinterpret_cast<void**>(&g_original)))
+        return 0;
+    if (!api->HookSite ||
+        !api->HookSite(mod, "oc_custom.battle_loadout_normal", reinterpret_cast<void*>(&LoadoutNormalEntry), &g_loadout_normal_original) ||
+        !api->HookSite(mod, "oc_custom.battle_loadout_deck", reinterpret_cast<void*>(&LoadoutDeckEntry), &g_loadout_deck_original))
         return 0;
     if (!g_human_build)
         api->Log(mod, SDGO_LOG_WARN, "battle.build_human_unit unavailable; room systems fall back to the current system");

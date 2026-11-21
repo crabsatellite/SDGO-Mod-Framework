@@ -64,8 +64,8 @@ struct SdgoOcCustomClientSnapshotV2 {
     // The OC tab page (0800) and the six-dimension chart of 0794.
     uint32_t page_hidden;          // the upgrade page dialog is hidden under 0800
     uint32_t info_levels;          // OVER CUSTOM level icons lit on 0800
-    uint32_t owned_items;          // OC items the account holds (ITEM box source)
-    int32_t owned_item_ids[3];     // the ITEM box slots
+    uint32_t owned_items;          // OC item types the account holds
+    int32_t owned_item_ids[3];     // first three owned types (not placed slots)
     uint32_t radar_frames;         // charts drawn on 0794
     float radar_base[6];           // native stat on its stat graph range (0..1), protocol stat order
     float radar_total[6];          // with the normal and Over points, same scale
@@ -89,9 +89,9 @@ struct SdgoOcCustomClientSnapshotV2 {
     // Whether the local battle unit carries the record's own custom skills:
     // the client unit (first 16 KB) is searched for the record's four
     // UnitSkill values at every local stat setup.
-    uint32_t battle_skills_seen;    // local stat setups searched
-    int32_t battle_skills_offset;   // where the record's skills were found, -1 absent
-    uint16_t battle_skills[4];      // the record's custom skills that were searched for
+    uint32_t battle_skills_seen;    // successful native skill-vector observations
+    int32_t battle_skills_offset;   // native skill-vector offset, -1 unreadable
+    uint16_t battle_skills[4];      // actual constructed skill IDs; zero-filled empty slots
     // The 体系 row of the PvP create window (room systems).
     uint32_t create_open;           // a PvP create window is open and ready
     uint32_t create_shown;          // create windows that showed the row
@@ -200,6 +200,29 @@ using SdgoOcCustomClientGetSnapshotV2Fn = int(__cdecl*)(SdgoOcCustomClientSnapsh
 using SdgoOcCustomClientActionV2Fn = int(__cdecl*)(const SdgoOcCustomClientActionV2*);
 using SdgoOcCustomClientClickV2Fn = int(__cdecl*)(const char* window, const wchar_t* control);
 
+// Read-only EX UI/profile and received battle state; preserves the V2 ABI.
+struct SdgoOcCustomClientExV1 {
+    uint32_t size, version;
+    uint32_t available, visible, known, ability, remaining, cost;
+    uint32_t enabled_choices, battle_ability;
+    int32_t last_ret_val;
+};
+using SdgoOcCustomClientExV1Fn = int(__cdecl*)(SdgoOcCustomClientExV1*);
+
+// Read-only native item-list inspection; the V2 snapshot ABI stays unchanged.
+struct SdgoOcCustomClientItemsV1 {
+    uint32_t size, version;
+    uint32_t list_visible, ready;
+    void* panel;
+    void* toggle;
+    void* rows[10]; // current native inventory cells 0..7; 8..9 reserved/null
+    void* remove[3];
+    int32_t placed[3];
+    int32_t owned[10];
+    int16_t counts[10];
+};
+using SdgoOcCustomClientItemsV1Fn = int(__cdecl*)(SdgoOcCustomClientItemsV1*);
+
 // G改 1.0 on the native 强化部件 page (exported as SdgoOcCustomClientG1NativeV1).
 #define SDGO_OC_CUSTOM_CLIENT_G1_NATIVE_VERSION 1u
 struct SdgoOcCustomClientG1NativeV1 {
@@ -231,3 +254,12 @@ struct SdgoOcCustomClientG1NativeV1 {
     wchar_t title[32];       // the factory title the Mod set on the tab
 };
 using SdgoOcCustomClientG1NativeV1Fn = int(__cdecl*)(SdgoOcCustomClientG1NativeV1*);
+
+// Read-only native modal/tab inspection for UI regression tests.
+struct SdgoOcCustomClientUiV1 {
+    uint32_t size, version;
+    void* tab; void* reference_tab; void* factory;
+    void* challenge; void* confirm;
+    uint32_t preview_blocked, preview_forwarded;
+};
+using SdgoOcCustomClientUiV1Fn = int(__cdecl*)(SdgoOcCustomClientUiV1*);

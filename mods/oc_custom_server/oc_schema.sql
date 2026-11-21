@@ -140,20 +140,13 @@ WHERE UserUnitNumber = @v_UserUnitNum AND OcLevel < 9 AND OcLevel < @OcLevel
 RETURN
 GO
 
--- One row describing the unit's OC state, rule row, base stats and budgets.
-IF OBJECT_ID(N'dbo.sdgo_mod_oc_GetProfile', N'P') IS NOT NULL DROP PROCEDURE dbo.sdgo_mod_oc_GetProfile;
+-- Shared projection for owned editing and read-only unit information.
+IF OBJECT_ID(N'dbo.sdgo_mod_oc_UnitProfile', N'V') IS NOT NULL DROP VIEW dbo.sdgo_mod_oc_UnitProfile;
 GO
-CREATE PROCEDURE dbo.sdgo_mod_oc_GetProfile
-    @v_AccountNum INT,
-    @v_UserUnitNum BIGINT,
-    @v_RetVal INT OUTPUT
-AS
-SET NOCOUNT ON
-EXEC dbo.sdgo_mod_oc_EnsureProfile @v_AccountNum, @v_UserUnitNum, @v_RetVal OUTPUT
-IF @v_RetVal <> 0 RETURN
-SELECT P.UserUnitNumber, P.AccountNumber, P.UnitNumber, P.OcLevel, P.Normal_MaxLv, P.Revision, P.State, P.ExtraBonus,
-    P.Normal_CustomPnt, P.Normal_Speed, P.Normal_HP, P.Normal_Attack, P.Normal_Defense, P.Normal_Agility, P.Normal_Special,
-    P.Over_CustomPnt, P.Over_Speed, P.Over_HP, P.Over_Attack, P.Over_Defense, P.Over_Agility, P.Over_Special,
+CREATE VIEW dbo.sdgo_mod_oc_UnitProfile AS
+SELECT UU.UserUnitNumber, UU.AccountNumber, UU.UnitNumber, ISNULL(P.OcLevel, 0) AS OcLevel, ISNULL(P.Normal_MaxLv, UU.Normal_MaxLv) AS Normal_MaxLv, ISNULL(P.Revision, 0) AS Revision, ISNULL(P.State, 0) AS State, ISNULL(P.ExtraBonus, 0) AS ExtraBonus,
+    ISNULL(P.Normal_CustomPnt, 0) AS Normal_CustomPnt, ISNULL(P.Normal_Speed, 0) AS Normal_Speed, ISNULL(P.Normal_HP, 0) AS Normal_HP, ISNULL(P.Normal_Attack, 0) AS Normal_Attack, ISNULL(P.Normal_Defense, 0) AS Normal_Defense, ISNULL(P.Normal_Agility, 0) AS Normal_Agility, ISNULL(P.Normal_Special, 0) AS Normal_Special,
+    ISNULL(P.Over_CustomPnt, 0) AS Over_CustomPnt, ISNULL(P.Over_Speed, 0) AS Over_Speed, ISNULL(P.Over_HP, 0) AS Over_HP, ISNULL(P.Over_Attack, 0) AS Over_Attack, ISNULL(P.Over_Defense, 0) AS Over_Defense, ISNULL(P.Over_Agility, 0) AS Over_Agility, ISNULL(P.Over_Special, 0) AS Over_Special,
     UU.UnitLevelNumber, UU.LapUnitExp, UU.UnitBattle, TU.UnitGradeNumber, R.CustomNumber,
     TU.DashLevel AS Base_Speed, TU.HP AS Base_HP, TU.StrikingPower AS Base_Attack, TU.DefensivePower AS Base_Defense,
     TU.MotivePower AS Base_Agility, ISNULL(TWR.DamageSize, 0) AS Base_Special,
@@ -166,13 +159,29 @@ SELECT P.UserUnitNumber, P.AccountNumber, P.UnitNumber, P.OcLevel, P.Normal_MaxL
     ISNULL((SELECT TOP 1 GiveCustomPoint FROM dbo.tbl_CustomDice WHERE CustomLv = CASE WHEN P.OcLevel < 9 THEN 9 ELSE P.OcLevel + 1 END AND UnitGradeNumber = TU.UnitGradeNumber), 0) AS NextGivePoint,
     ISNULL((SELECT TOP 1 BattleCnt FROM dbo.tbl_CustomDice WHERE CustomLv = CASE WHEN P.OcLevel < 9 THEN 9 ELSE P.OcLevel + 1 END AND UnitGradeNumber = TU.UnitGradeNumber), 0) AS NextBattleCnt,
     ISNULL((SELECT TOP 1 LapUnitExp FROM dbo.tbl_UnitLevels WHERE UnitLevelIndex = TU.UnitGrowIndex AND UnitLevelNumber = P.OcLevel), 0) AS LevelMaxExp
-FROM dbo.sdgo_mod_oc_UserUnitCustom P
-INNER JOIN dbo.tbl_UserUnits UU ON UU.UserUnitNumber = P.UserUnitNumber
+FROM dbo.tbl_UserUnits UU
+LEFT JOIN dbo.sdgo_mod_oc_UserUnitCustom P ON UU.UserUnitNumber = P.UserUnitNumber
+    AND UU.AccountNumber = P.AccountNumber AND UU.UnitNumber = P.UnitNumber
 INNER JOIN dbo.tbl_Units TU ON TU.UnitNumber = UU.UnitNumber
 INNER JOIN dbo.sdgo_mod_oc_UnitRev R ON R.UnitNumber = TU.UnitNumber
 INNER JOIN dbo.tbl_CustomRev TCR ON TCR.CustomNumber = R.CustomNumber
 LEFT JOIN dbo.tbl_WeaponsRev TWR ON TWR.WeaponNo = TU.WeaponNumber_FatalAttack
-WHERE P.UserUnitNumber = @v_UserUnitNum AND P.AccountNumber = @v_AccountNum
+;
+GO
+
+-- One row describing the unit's OC state, rule row, base stats and budgets.
+IF OBJECT_ID(N'dbo.sdgo_mod_oc_GetProfile', N'P') IS NOT NULL DROP PROCEDURE dbo.sdgo_mod_oc_GetProfile;
+GO
+CREATE PROCEDURE dbo.sdgo_mod_oc_GetProfile
+    @v_AccountNum INT,
+    @v_UserUnitNum BIGINT,
+    @v_RetVal INT OUTPUT
+AS
+SET NOCOUNT ON
+EXEC dbo.sdgo_mod_oc_EnsureProfile @v_AccountNum, @v_UserUnitNum, @v_RetVal OUTPUT
+IF @v_RetVal <> 0 RETURN
+SELECT * FROM dbo.sdgo_mod_oc_UnitProfile
+WHERE UserUnitNumber = @v_UserUnitNum AND AccountNumber = @v_AccountNum
 IF @@ROWCOUNT = 0 SET @v_RetVal = 2
 RETURN
 GO

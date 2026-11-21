@@ -30,6 +30,14 @@ class RoomSwitchPlanTests(unittest.TestCase):
             'oc.allocate', 'setup.active_unit', 'g1.loadout', 'oc.create') + rounds + ('oc.panel',))
         self.assertEqual(len(set(cases)), len(cases))
 
+    def test_attribute_validation_returns_to_g2_after_oc(self):
+        options = dict(room_switch=True, validate_attributes=True, oc_allocate='1:1', play_unit_uid=UID)
+        cases = game_test.required_flow_cases('1', **options)
+        self.assertEqual([case for case in cases if case.endswith('.system')],
+                         ['pvp.g2.system', 'pvp.g1.system', 'pvp.oc.system', 'pvp.g2_after.system'])
+        self.assertEqual(game_test.room_switch_titles('room', validate_attributes=True),
+                         ('room', 'room !g1', 'room !oc', 'room'))
+
     def test_scope_is_rejected_outside_the_oc_battle(self):
         for options in ({'room_switch': True},
                         {'room_switch': True, 'oc_allocate': '1:1', 'oc_room': True},
@@ -118,6 +126,20 @@ class RoomSwitchReportTests(unittest.TestCase):
         result = self.evaluate(self.stream())
         self.assertEqual(result['status'], 'pass', result['errors'])
         self.assertEqual([b['room_system'] for b in result['battles']], ['oc', 'g1', 'g2'])
+
+    def test_attribute_report_checks_the_return_to_g2(self):
+        self.metadata['plan']['validate_attributes'] = True
+        events = self.stream()
+        ready, oc, g1, g2 = events[:1], events[1:5], events[5:9], events[9:13]
+        rounds = [copy.deepcopy(group) for group in (g2, g1, oc, g2)]
+        for index, group in enumerate(rounds):
+            for step, event in enumerate(group, start=1):
+                event.update(sequence=index * 4 + step, qpc=1000 + index * 4 + step, room_cookie=index + 1)
+        events = ready + sum(rounds, [])
+        result = self.evaluate(events)
+        self.assertEqual(result['status'], 'pass', result['errors'])
+        events[-1]['oc_room'] = self.decisions()['oc']
+        self.assertEqual(self.evaluate(events)['status'], 'fail')
 
     def test_a_room_built_with_the_wrong_system_fails(self):
         decisions = self.decisions()

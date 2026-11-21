@@ -734,21 +734,34 @@ void RefreshBarAndList() {
     }
 }
 
-// The bar's type icons belong to the G改 2.0 types; in G改 1.0 mode the buttons
-// show the type names alone (the native relabel shows the icons again).
-void HideTypeIcons() noexcept {
+// Native relabel updates the category captions but leaves the icon visibility alone.
+// Keep the native flags for each live control while G改 1.0 borrows the bar.
+struct TypeIconState {
+    void* control = nullptr;
+    std::uint8_t visible = 0, visible2 = 0;
+};
+std::array<TypeIconState, 8> g_native_icons{};
+
+void SetTypeIconsHidden(bool hidden) noexcept {
     void* bar = FindService(g_bar_vtable);
-    if (!bar) return;
     __try {
-        for (std::size_t index = 0; index < 8; ++index) {
+        for (std::size_t index = 0; bar && index < g_native_icons.size(); ++index) {
             auto* icon = Read<std::uint8_t*>(bar, kBarTypeIcons + index * 4);
-            if (icon && Read<std::uint8_t>(icon, kVisible)) {
+            if (!icon) continue;
+            auto& saved = g_native_icons[index];
+            if (hidden) {
+                if (saved.control != icon)
+                    saved = {icon, Read<std::uint8_t>(icon, kVisible), Read<std::uint8_t>(icon, kVisible2)};
                 Write<std::uint8_t>(icon, kVisible, 0);
                 Write<std::uint8_t>(icon, kVisible2, 0);
+            } else if (saved.control == icon) {
+                Write<std::uint8_t>(icon, kVisible, saved.visible);
+                Write<std::uint8_t>(icon, kVisible2, saved.visible2);
             }
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
+    if (!hidden) g_native_icons = {};
 }
 
 void RefreshPage(void* page) noexcept {
@@ -769,6 +782,7 @@ void Enter(void* page, const G1Loadout& loadout) {
     g_view_revision = loadout.revision;
     g_active = true;
     g_page = page;
+    SetTypeIconsHidden(true);
     ApplyView();
     Reload();
     RefreshBarAndList();
@@ -780,6 +794,7 @@ void Enter(void* page, const G1Loadout& loadout) {
 
 void Exit(void* page) {
     g_active = false;
+    SetTypeIconsHidden(false);
     RestoreView();
     Reload();
     RefreshBarAndList();
@@ -962,7 +977,6 @@ void Update(void* page, bool g1_available, bool want_g1, const G1Loadout* loadou
     if (!g_bound) return;
     // The G改 1.0 button works as soon as the server offers G改 1.0; the rule
     // set is read after the click.
-    DrawSwitch(page, g1_available);
     const bool waiting = g_save_request || g_save_waiting || g_reset_request || g_reset_waiting;
     const bool should = page && want_g1 && loadout && HasRules();
     if (g_active && (!should || page != g_page) && !waiting) {
@@ -972,8 +986,9 @@ void Update(void* page, bool g1_available, bool want_g1, const G1Loadout* loadou
     } else if (!g_active && should && PageIdle(page)) {
         Enter(page, *loadout);
     }
+    DrawSwitch(page, g1_available);
     if (g_refresh_pending && page && !waiting) RefreshPage(page);
-    if (g_active && page) HideTypeIcons();
+    if (g_active && page) SetTypeIconsHidden(true);
     if (!g_active) return;
     if (loadout && loadout->revision != g_view_revision && !waiting) {
         // A new loadout from the server (another save or a reset elsewhere).

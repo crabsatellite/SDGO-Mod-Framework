@@ -1,4 +1,5 @@
 #include "original_ui.h"
+#include "radar.h"
 
 #include <windows.h>
 
@@ -28,6 +29,7 @@ constexpr int kStatic = 3;
 constexpr int kButton = 4;
 constexpr int kRender = 5; // 3DRender
 constexpr int kCheck = 10;
+const wchar_t* const kRemoveNames[kInfoItems] = {L"OcRemoveItem0", L"OcRemoveItem1", L"OcRemoveItem2"};
 
 // CControl layout used by the upgrade page and the existing native-UI Mods.
 constexpr std::size_t kVisible = 0x162;
@@ -62,6 +64,23 @@ struct Spec {
 // Every control the original layouts declare that the OC flow drives. Names,
 // types and windows come from the shipped 0794/0813/0819 records.
 const Spec kSpecs[] = {
+    {window_ex, L"ExIcon0", kIcon, Action::none},
+    {window_ex, L"ExIcon1", kIcon, Action::none},
+    {window_ex, L"ExIcon2", kIcon, Action::none},
+    {window_ex, L"ExIcon3", kIcon, Action::none},
+    {window_ex, L"ExIcon4", kIcon, Action::none},
+    {window_ex, L"ExIcon5", kIcon, Action::none},
+    {window_ex, L"ExIcon6", kIcon, Action::none},
+    {window_ex, L"ExIcon7", kIcon, Action::none},
+    {window_ex, L"ExBtn0", kButton, Action::ex0},
+    {window_ex, L"ExBtn1", kButton, Action::ex1},
+    {window_ex, L"ExBtn2", kButton, Action::ex2},
+    {window_ex, L"ExBtn3", kButton, Action::ex3},
+    {window_ex, L"ExBtn4", kButton, Action::ex4},
+    {window_ex, L"ExBtn5", kButton, Action::ex5},
+    {window_ex, L"ExBtn6", kButton, Action::ex6},
+    {window_ex, L"ExBtn7", kButton, Action::ex7},
+    {window_ex, L"CloseBtn", kButton, Action::ex_close},
     {window_over, L"ExBtn", kButton, Action::ex},
     {window_over, L"ExIcon", kIcon, Action::none},
     {window_over, L"CustomIcon", kIcon, Action::none},
@@ -149,6 +168,42 @@ const Spec kSpecs[] = {
     {window_info, L"Item3DRender0", kRender, Action::none},
     {window_info, L"Item3DRender1", kRender, Action::none},
     {window_info, L"Item3DRender2", kRender, Action::none},
+    // Original factory inventory: two columns, four rows, native item click events.
+    {window_items, L"SlotIcon0", kIcon, Action::none},
+    {window_items, L"Item3DRender0", kRender, Action::owned0},
+    {window_items, L"ItemStatic0", kStatic, Action::none},
+    {window_items, L"NumberStatic0", kStatic, Action::none},
+    {window_items, L"SlotIcon1", kIcon, Action::none},
+    {window_items, L"Item3DRender1", kRender, Action::owned1},
+    {window_items, L"ItemStatic1", kStatic, Action::none},
+    {window_items, L"NumberStatic1", kStatic, Action::none},
+    {window_items, L"SlotIcon2", kIcon, Action::none},
+    {window_items, L"Item3DRender2", kRender, Action::owned2},
+    {window_items, L"ItemStatic2", kStatic, Action::none},
+    {window_items, L"NumberStatic2", kStatic, Action::none},
+    {window_items, L"SlotIcon3", kIcon, Action::none},
+    {window_items, L"Item3DRender3", kRender, Action::owned3},
+    {window_items, L"ItemStatic3", kStatic, Action::none},
+    {window_items, L"NumberStatic3", kStatic, Action::none},
+    {window_items, L"SlotIcon4", kIcon, Action::none},
+    {window_items, L"Item3DRender4", kRender, Action::owned4},
+    {window_items, L"ItemStatic4", kStatic, Action::none},
+    {window_items, L"NumberStatic4", kStatic, Action::none},
+    {window_items, L"SlotIcon5", kIcon, Action::none},
+    {window_items, L"Item3DRender5", kRender, Action::owned5},
+    {window_items, L"ItemStatic5", kStatic, Action::none},
+    {window_items, L"NumberStatic5", kStatic, Action::none},
+    {window_items, L"SlotIcon6", kIcon, Action::none},
+    {window_items, L"Item3DRender6", kRender, Action::owned6},
+    {window_items, L"ItemStatic6", kStatic, Action::none},
+    {window_items, L"NumberStatic6", kStatic, Action::none},
+    {window_items, L"SlotIcon7", kIcon, Action::none},
+    {window_items, L"Item3DRender7", kRender, Action::owned7},
+    {window_items, L"ItemStatic7", kStatic, Action::none},
+    {window_items, L"NumberStatic7", kStatic, Action::none},
+    {window_items, L"LeftBtn", kButton, Action::items_previous},
+    {window_items, L"RightBtn", kButton, Action::items_next},
+    {window_items, L"PageStatic", kStatic, Action::none},
 };
 
 struct WindowFile {
@@ -160,6 +215,8 @@ const WindowFile kWindows[window_count] = {
     {L"ocdlg0813", L"uirs\\0813.uir"},
     {L"ocdlg0819", L"uirs\\0819.uir"},
     {L"ocdlg0800", L"uirs\\0800.uir"},
+    {L"ocdlg0792", L"uirs\\0792.uir"}, // native factory item inventory
+    {L"ocdlg0822", L"uirs\\0822.uir"},
     {L"ocdlg1252", L"uirs\\1252.uir"}, // G改 1.0 page: the package's attribute page layout
 };
 
@@ -217,6 +274,8 @@ int WindowIndex(const char* window) noexcept {
     if (!std::strcmp(window, "challenge")) return window_challenge;
     if (!std::strcmp(window, "confirm")) return window_confirm;
     if (!std::strcmp(window, "info")) return window_info;
+    if (!std::strcmp(window, "items")) return window_items;
+    if (!std::strcmp(window, "ex")) return window_ex;
     if (!std::strcmp(window, "g1")) return window_g1;
     return -1;
 }
@@ -246,6 +305,8 @@ bool Bindings::Bind(const SdgoApi* api, SdgoMod* mod) noexcept {
     skin = reinterpret_cast<Skin>(api->Symbol(mod, "hangar.ui_add_skin"));
     add_icon = reinterpret_cast<AddIcon>(api->Symbol(mod, "friend_unit_gift.ui_add_icon"));
     button_vtable = api->Symbol(mod, "hangar.ui_button_vtable");
+    add_radio = reinterpret_cast<AddRadio>(api->Symbol(mod, "oc_custom.ui_add_radio"));
+    clear_skins = reinterpret_cast<Refresh>(api->Symbol(mod, "friend_unit_gift.ui_clear_skins"));
     refresh = reinterpret_cast<Refresh>(api->Symbol(mod, "friend_unit_gift.ui_refresh_geometry"));
     render_lock = reinterpret_cast<RenderVoid>(api->Symbol(mod, "oc_custom.client_render_lock"));
     render_clear = reinterpret_cast<RenderVoid>(api->Symbol(mod, "oc_custom.client_render_clear"));
@@ -287,7 +348,7 @@ bool OriginalUi::Load(void* component, const Bindings& bindings) {
         // Loaded dialogs start visible; keep them closed until the flow opens them.
         Put<std::uint8_t>(dialogs[index], kVisible, 0);
     }
-    std::array<Bound, 100> bound{};
+    std::array<Bound, 192> bound{};
     std::size_t count = 0;
     for (const auto& spec : kSpecs) {
         const std::wstring name = spec.name;
@@ -321,6 +382,14 @@ bool OriginalUi::Load(void* component, const Bindings& bindings) {
     dialogs_ = dialogs;
     bound_ = bound;
     bound_count_ = count;
+    // The OC-era allocation sheet starts 36 px above the factory's left
+    // information sheet. Move its root so artwork, labels, hit targets and
+    // the dialog-relative radar stay together and both sheets align.
+    if (bindings_.refresh) {
+        auto* over = dialogs_[window_over];
+        Put<float>(over, 0x14C, Read<float>(over, 0x14C) + 36.0f);
+        bindings_.refresh(over);
+    }
     return true;
 }
 
@@ -384,7 +453,17 @@ bool OriginalUi::AttachEntry() {
         none_icons_[slot] = CreateIcon(info, kNoneNames[slot], kNoneX[slot], 341, 54, 54, L"sprs\\16827.spr");
         none_texts_[slot] = CreateButton(window_info, kNoneTexts[slot], kNoneX[slot], 359, 54, 18, nullptr, 0, Action::none);
         SetCreatedText(kNoneTexts[slot], L"无", 2);
+        if (!CreateButton(window_info, kRemoveNames[slot], kNoneX[slot], 397, 54, 18,
+                          nullptr, 0, static_cast<Action>(static_cast<int>(Action::remove0) + slot))) return false;
+        SetCreatedText(kRemoveNames[slot], L"移除", 2);
     }
+    // Keep both original layouts intact; each has one switch to the other view.
+    if (!CreateButton(window_over, L"OcItemListBtn", 246, 29, 138, 22, L"sprs\\", 16819, Action::item_list) ||
+        !CreateButton(window_items, L"OcItemsRadarBtn", 87, 5, 138, 22, L"sprs\\", 16819, Action::item_list)) return false;
+    // These sprites paint their frame inside the logical button origin.
+    // Centre the captions on that frame, including the native font baseline.
+    SetCreatedText(L"OcItemListBtn", L"强化道具", 2, 5, 5);
+    SetCreatedText(L"OcItemsRadarBtn", L"六维图", 2, 5, 5);
     AttachG1(); // optional
     return true;
 }
@@ -428,13 +507,14 @@ void* OriginalUi::CreateButton(std::uint8_t window, const wchar_t* name, int x, 
     return control;
 }
 
-void OriginalUi::SetCreatedText(const wchar_t* name, const std::wstring& value, int align) {
+void OriginalUi::SetCreatedText(const wchar_t* name, const std::wstring& value, int align, int offset_x, int offset_y) {
     for (std::size_t index = 0; index < created_count_; ++index) {
         auto& created = created_[index];
         if (std::wcscmp(created.name, name) || (created.text_set && created.text == value)) continue;
         const auto native = ViewOf(value);
-        bindings_.text(created.pointer, 0, &native, 2, std::max(0, (created.height - 14) / 2), std::max(1, created.width - 4),
-                       14, kLabelColor, kShadowColor, 0, 1, align);
+        const int height = value.find(L'\n') == std::wstring::npos ? 14 : 28;
+        bindings_.text(created.pointer, 0, &native, 2 + offset_x, std::max(0, (created.height - height) / 2) + offset_y, std::max(1, created.width - 4),
+                       height, kLabelColor, kShadowColor, 0, 1, align);
         created.text = value;
         created.text_set = true;
     }
@@ -519,6 +599,8 @@ void OriginalUi::HideG1Native() {
 }
 
 void OriginalUi::Detach() noexcept {
+    radar::ClearChallengeSkins();
+    challenge_frame_={};challenge_rows_=-1;
     component_ = service_ = page_dialog_ = nullptr;
     dialogs_ = {};
     bound_ = {};
@@ -530,6 +612,7 @@ void OriginalUi::Detach() noexcept {
     page_visible_ = 1;
     level_icons_ = {};
     none_icons_ = {};
+    inventory_models_ = {};
     models_shown_ = {};
     renders_prepared_ = false;
     created_ = {};
@@ -605,9 +688,8 @@ void OriginalUi::SetStatic(std::uint8_t window, const wchar_t* name, const std::
     control->text_set = true;
 }
 
-// 0800 item names: 200 px wide statics drawn from their left edge above 80 px
-// slots. The name is centred over its slot (the NoneIcon frame) by moving the
-// static; the client font is 12 px for CJK and about 7 px for Latin text.
+// 0800 item names use centred native text in 200 px wide statics. Centre the
+// control itself over each 80 px item slot, independent of caption length.
 void OriginalUi::SetItemName(std::size_t slot, const std::wstring& value) {
     const std::wstring index = std::to_wstring(slot);
     auto* control = Find(window_info, (L"ItemNameStatic" + index).c_str());
@@ -615,10 +697,8 @@ void OriginalUi::SetItemName(std::size_t slot, const std::wstring& value) {
     if (!control || (control->text_set && control->text == value)) return;
     SetStatic(window_info, (L"ItemNameStatic" + index).c_str(), value);
     if (!frame || !bindings_.refresh) return;
-    int width = 0;
-    for (const wchar_t c : value) width += c >= 0x2E80 ? 12 : 7;
-    const float centre = Read<float>(frame->pointer, 0x148) + static_cast<float>(frame->width) / 2.0f;
-    Put<float>(control->pointer, 0x148, centre - static_cast<float>(width) / 2.0f);
+    const float centre = 42.0f + 80.0f * static_cast<float>(slot);
+    Put<float>(control->pointer, 0x148, centre - static_cast<float>(control->width) / 2.0f);
     bindings_.refresh(control->pointer);
 }
 
@@ -634,6 +714,84 @@ void OriginalUi::SetLabel(Bound& control, const std::wstring& value, int align) 
                    kShadowColor, 0, 1, align);
     control.text = value;
     control.text_set = true;
+}
+
+void OriginalUi::LayoutChallenge(const ChallengeView& view) {
+    int rows=0;for(bool shown:view.item_visible)if(shown)++rows;
+    if(rows==challenge_rows_)return;
+    auto* root=dialogs_[window_challenge];
+    if(!root || !bindings_.clear_skins || !bindings_.refresh)return;
+    const int height=330+22*rows;
+    const auto move=[&](void* p,int x,int y,int w,int h) {
+        Put<float>(p,0x148,static_cast<float>(x));Put<float>(p,0x14C,static_cast<float>(y));
+        Put<int>(p,0x154,w);Put<int>(p,0x158,h);bindings_.refresh(p);
+    };
+    move(root,292,(768-height)/2-18,440,height);
+    const auto place=[&](const wchar_t* name,int x,int y,int w,int h) {
+        if(auto* b=Find(window_challenge,name)) {
+            move(b->pointer,x,y,w,h);b->width=w;
+            auto** items=Read<std::uint8_t**>(b->pointer,0x190);
+            auto** end=Read<std::uint8_t**>(b->pointer,0x194);
+            if(b->type==kStatic && items && items<end && *items) {
+                const auto empty=ViewOf(std::wstring());
+                bindings_.text(b->pointer,0,&empty,0,0,w,h,Read<unsigned>(*items,0x58),
+                    Read<unsigned>(*items,0x5C),Read<std::uint8_t>(*items,0x64),
+                    Read<unsigned>(*items,0x6C),Read<int>(*items,0x68));
+            }
+            b->text_set=false;
+        }
+    };
+    place(L"TitleStatic",40,17,348,22);place(L"CloseBtn",400,14,25,25);
+    place(L"WorkUnitName",28,51,384,20);
+    place(L"TargetLevelTittle",28,80,100,18);place(L"LevelName",150,80,250,18);
+    place(L"WorkStateText",28,106,384,18);place(L"MessageStatic0",28,130,384,28);
+    place(L"OverCustomTittle",28,164,384,20);
+    int row=0;
+    for(std::size_t i=0;i<kItemSlots;++i)if(view.item_visible[i])
+        place((L"UseItemCheck"+std::to_wstring(i)).c_str(),28,190+22*row++,16,18);
+    place(L"MessageStatic1",28,208+22*rows,384,46);
+    place(L"StartBtn",142,height-60,156,30);
+    if(!challenge_frame_[0]) {
+        bindings_.clear_skins(root);
+        auto* head=Read<void*>(root,0x23C);auto* first=Read<void*>(head);
+        for(std::size_t i=0;i<challenge_frame_.size();++i) {
+            const auto name=L"OcChallengeFrame"+std::to_wstring(i);const auto key=ViewOf(name);
+            bindings_.add(root,&key,0,0,368,152,0);
+            auto* p=bindings_.find(root,&key,kButton);if(!p)return;
+            const std::wstring art=L"sprs\\8460.spr";const auto skin=ViewOf(art);
+            bindings_.skin(p,&skin,0,0,0);SetState(p,true,false);Put<std::uint8_t>(p,kDebugQuad,0);
+            challenge_frame_[i]=p;
+            // Backgrounds precede the original controls, without changing hit targets.
+            for(auto* link=Read<void*>(head);link!=head;link=Read<void*>(link))if(Read<void*>(link,8)==p) {
+                auto* next=Read<void*>(link);auto* prev=Read<void*>(link,4);
+                Put<void*>(prev,0,next);Put<void*>(next,4,prev);prev=Read<void*>(first,4);
+                Put<void*>(link,0,first);Put<void*>(link,4,prev);Put<void*>(prev,0,link);Put<void*>(first,4,link);break;
+            }
+        }
+    }
+    // Nine slices of the original confirmation frame; retain the corner/edge
+    // pixels and use its blank blue interior without stretching printed art.
+    const radar::Rect source[11]={{0,0,20,20},{20,0,328,20},{348,0,20,20},
+        {0,20,20,112},{20,80,4,4},{348,20,20,112},
+        {0,132,20,20},{20,132,328,20},{348,132,20,20},
+        {83,24,261,52},{83,24,261,52}};
+    const radar::Rect target[11]={{0,0,20,20},{20,0,400,20},{420,0,20,20},
+        {0,20,20,static_cast<float>(height-40)},{20,20,400,static_cast<float>(height-40)},
+        {420,20,20,static_cast<float>(height-40)},
+        {0,static_cast<float>(height-20),20,20},{20,static_cast<float>(height-20),400,20},
+        {420,static_cast<float>(height-20),20,20},
+        {20,44,400,112},{20,static_cast<float>(200+22*rows),400,56}};
+    radar::ClearChallengeSkins();
+    for(std::size_t i=0;i<challenge_frame_.size();++i) {
+        auto* p=challenge_frame_[i];if(!p)return;
+        const float sx=target[i].width/source[i].width,sy=target[i].height/source[i].height;
+        auto** skins=Read<std::uint8_t**>(p,0x1A4);auto* sprite=Read<void*>(*skins);
+        move(p,static_cast<int>(target[i].x-source[i].x*sx),static_cast<int>(target[i].y-source[i].y*sy),
+             static_cast<int>(368*sx),static_cast<int>(152*sy));
+        Put<float>(sprite,0x94,sx);Put<float>(sprite,0x98,sy);Put<std::uint8_t>(sprite,0xA0,1);
+        radar::InstallChallengeSkin(p,root,target[i]);
+    }
+    challenge_rows_=rows;
 }
 
 void OriginalUi::ShowIcon(void* control, bool visible) noexcept {
@@ -832,6 +990,7 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
             }
             if (none_icons_[slot]) SetState(none_icons_[slot], !info.item[slot], false);
             if (none_texts_[slot]) SetState(none_texts_[slot], !info.item[slot], false);
+            SetCreatedState(kRemoveNames[slot], info.item[slot], info.items_enabled && !confirm.visible);
         }
     }
     if (!info.visible && !g1_page) {
@@ -901,8 +1060,42 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
         }
         entry_shown_ = entry.visible;
     }
+    // 0792 is the client's factory inventory, with its original cell art,
+    // 3D renders, quantity/name statics and paging controls.
+    const bool inventory_visible = over.visible && over.item_list;
+    SetCreatedState(L"OcItemListBtn", over.visible && !over.item_list, over.items_enabled && !confirm.visible);
+    SetCreatedState(L"OcItemsRadarBtn", inventory_visible, over.items_enabled && !confirm.visible);
+    if (inventory_visible) {
+        for (std::size_t cell = 0; cell < kInventoryCells; ++cell) {
+            const auto slot = over.item_page * kInventoryCells + cell;
+            const auto suffix = std::to_wstring(cell);
+            const bool occupied = slot < kItemSlots && over.item_visible[slot];
+            SetStatic(window_items, (L"ItemStatic" + suffix).c_str(), occupied ? over.item_text[slot] : L"");
+            SetStatic(window_items, (L"NumberStatic" + suffix).c_str(), occupied ? over.item_count[slot] : L"");
+            if (auto* icon = Find(window_items, (L"SlotIcon" + suffix).c_str()))
+                ShowIcon(icon->pointer, occupied && over.item_selected[slot]);
+            if (auto* render = Find(window_items, (L"Item3DRender" + suffix).c_str())) {
+                const bool model = occupied && !over.item_model[slot].empty() && bindings_.ItemModels();
+                if (model && inventory_models_[cell] != over.item_model[slot]) {
+                    PutCamera(render->pointer);
+                    const auto native = ViewOf(over.item_model[slot]);
+                    if (LoadModel(render->pointer, &native)) inventory_models_[cell] = over.item_model[slot];
+                    else inventory_models_[cell].clear();
+                }
+                const bool loaded = model && inventory_models_[cell] == over.item_model[slot];
+                SetState(render->pointer, loaded, loaded && over.item_enabled[slot] && !confirm.visible);
+            }
+        }
+        SetStatic(window_items, L"PageStatic", std::to_wstring(over.item_page + 1) + L" / " + std::to_wstring(over.item_pages));
+        if (auto* previous = Find(window_items, L"LeftBtn"))
+            SetState(previous->pointer, true, over.items_enabled && over.item_page > 0 && !confirm.visible);
+        if (auto* next = Find(window_items, L"RightBtn"))
+            SetState(next->pointer, true, over.items_enabled && over.item_page + 1 < over.item_pages && !confirm.visible);
+    }
+    Put<std::uint8_t>(dialogs_[window_items], kVisible, inventory_visible ? 1 : 0);
+    shown_[window_items] = inventory_visible;
     // 0794: allocation window.
-    if (over.visible) {
+    if (over.visible && !over.item_list) {
         SetStatic(window_over, L"NoticeStatic", over.notice);
         SetStatic(window_over, L"NomalPointStatic", over.normal_left);
         SetStatic(window_over, L"OverPointStatic", over.over_left);
@@ -924,25 +1117,26 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
         // over the chart; the OC chart lights only the Over gain (radar.h).
         if (auto* sheet = Find(window_over, L"BackIcon1")) ShowIcon(sheet->pointer, false);
     }
-    if (dialogs_[window_over]) Put<std::uint8_t>(dialogs_[window_over], kVisible, over.visible ? 1 : 0);
-    shown_[window_over] = over.visible;
+    if (dialogs_[window_over]) Put<std::uint8_t>(dialogs_[window_over], kVisible, over.visible && !over.item_list ? 1 : 0);
+    shown_[window_over] = over.visible && !over.item_list;
     // 0813: challenge window.
     if (challenge.visible) {
+        LayoutChallenge(challenge);
         SetStatic(window_challenge, L"TitleStatic", challenge.title);
         SetStatic(window_challenge, L"WorkUnitName", challenge.unit);
         SetStatic(window_challenge, L"WorkStateText", challenge.state);
         SetStatic(window_challenge, L"TargetLevelTittle", challenge.target_title);
         SetStatic(window_challenge, L"LevelName", challenge.target);
         SetStatic(window_challenge, L"MessageStatic0", challenge.message0);
-        SetStatic(window_challenge, L"OverCustomTittle", challenge.over_title);
+        SetStatic(window_challenge, L"OverCustomTittle", challenge_rows_ ? L"强化道具" : L"强化道具：无");
         SetStatic(window_challenge, L"MessageStatic1", challenge.message1);
         if (auto* start = Find(window_challenge, L"StartBtn")) {
             SetLabel(*start, challenge.start, 2);
             SetState(start->pointer, true, challenge.start_enabled && !confirm.visible);
         }
         if (auto* close = Find(window_challenge, L"CloseBtn")) SetState(close->pointer, true, !confirm.visible);
-        if (auto* left = Find(window_challenge, L"LeftBtn")) SetState(left->pointer, true, challenge.left_enabled);
-        if (auto* right = Find(window_challenge, L"RightBtn")) SetState(right->pointer, true, challenge.right_enabled);
+        if (auto* left = Find(window_challenge, L"LeftBtn")) SetState(left->pointer, false, false);
+        if (auto* right = Find(window_challenge, L"RightBtn")) SetState(right->pointer, false, false);
         for (std::size_t slot = 0; slot < kItemSlots; ++slot) {
             const std::wstring name = L"UseItemCheck" + std::to_wstring(slot);
             auto* check = Find(window_challenge, name.c_str());
@@ -954,6 +1148,31 @@ void OriginalUi::Render(const EntryView& entry, const OverView& over, const Info
     }
     if (dialogs_[window_challenge]) Put<std::uint8_t>(dialogs_[window_challenge], kVisible, challenge.visible ? 1 : 0);
     shown_[window_challenge] = challenge.visible;
+    const bool ex_visible = over.ex_visible && !confirm.visible;
+    if (ex_visible) {
+        static const int sprites[8] = {9004, 9005, 9008, 9007, 9006, 9009, 9011, 9010};
+        for (std::size_t index = 0; index < 8; ++index) {
+            if (auto* button = Find(window_ex, (L"ExBtn" + std::to_wstring(index)).c_str())) {
+                SetLabel(*button, over.ex_labels[index] + (over.ex_selected == index + 1 ? L"（已装备）" : L""), 2);
+                SetState(button->pointer, true, over.ex_choices_enabled && over.ex_selected != index + 1);
+            }
+            if (auto* icon = Find(window_ex, (L"ExIcon" + std::to_wstring(index)).c_str())) {
+                if (!icon->text_set && bindings_.skin && bindings_.clear_skins) {
+                    const auto path = L"sprs\\" + std::to_wstring(sprites[index]) + L".spr";
+                    const auto native = ViewOf(path);
+                    // The shipped layout supplies an empty frame already.
+                    // AddSkin appends; remove that frame so the EX art is used.
+                    bindings_.clear_skins(icon->pointer);
+                    bindings_.skin(icon->pointer, &native, 0, 0, 0);
+                    icon->text_set = true;
+                }
+                ShowIcon(icon->pointer, true);
+            }
+        }
+        if (auto* close = Find(window_ex, L"CloseBtn")) SetState(close->pointer, true, true);
+    }
+    if (dialogs_[window_ex]) Put<std::uint8_t>(dialogs_[window_ex], kVisible, ex_visible ? 1 : 0);
+    shown_[window_ex] = ex_visible;
     // 0819: confirmation popup.
     if (confirm.visible) {
         SetStatic(window_confirm, L"NoticeStatic0", confirm.line0);
