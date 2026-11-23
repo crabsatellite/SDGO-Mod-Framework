@@ -11,14 +11,23 @@
 
 namespace sdgo::unit_catalog {
 
+struct ContentLocalizationBoundaryIssue {
+    uint32_t kind = 0, id = 0;
+    size_t offset = 0, capacity = 0;
+    const char* reason = "";
+};
+
 class ContentLocalizationBoundaryIndex {
 public:
-    bool Build(const Catalog& catalog) {
+    bool Build(const Catalog& catalog,
+               ContentLocalizationBoundaryIssue* issue = nullptr) {
+        if (issue) *issue = {};
         std::set<uint64_t> records;
         std::set<std::wstring> texts;
         for (const auto& entry : catalog.records) {
             if (!SupportedKind(entry.kind)) continue;
             if (!entry.id || entry.bytes.size() != ExpectedBytes(entry.kind)) {
+                if (issue) *issue = {entry.kind, entry.id, 0, 0, "invalid_record_extent"};
                 Clear();
                 return false;
             }
@@ -26,21 +35,21 @@ public:
             bool valid = false;
             switch (entry.kind) {
             case kUnitType:
-                valid = AddField(entry, 5, 50, texts) &&
-                        AddField(entry, 105, 50, texts) &&
-                        AddField(entry, 205, 50, texts);
+                valid = AddField(entry, 5, 50, texts, issue) &&
+                        AddField(entry, 105, 50, texts, issue) &&
+                        AddField(entry, 205, 50, texts, issue);
                 break;
             case kWeaponType:
                 // Only the name is text. From offset 105 a weapon row holds
                 // numeric data (special feature at 132) and effect paths.
-                valid = AddField(entry, 5, 50, texts);
+                valid = AddField(entry, 5, 50, texts, issue);
                 break;
             case kSkillType:
-                valid = AddField(entry, 5, 50, texts) &&
-                        AddField(entry, 0x213, 300, texts);
+                valid = AddField(entry, 5, 50, texts, issue) &&
+                        AddField(entry, 0x213, 300, texts, issue);
                 break;
             case kItemCategoryType:
-                valid = AddField(entry, 5, 50, texts);
+                valid = AddField(entry, 5, 50, texts, issue);
                 break;
             default:
                 break;
@@ -132,9 +141,14 @@ private:
     }
 
     static bool AddField(const Entry& entry, size_t offset, size_t capacity,
-                         std::set<std::wstring>& texts) {
+                         std::set<std::wstring>& texts,
+                         ContentLocalizationBoundaryIssue* issue) {
         std::wstring raw;
-        if (!ReadField(entry, offset, capacity, raw)) return false;
+        if (!ReadField(entry, offset, capacity, raw)) {
+            if (issue) *issue = {entry.kind, entry.id, offset, capacity,
+                                 "unterminated_display_text"};
+            return false;
+        }
         if (raw.empty()) return true;
         texts.insert(raw);
         texts.insert(DisplayText(raw));

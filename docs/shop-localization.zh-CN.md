@@ -64,11 +64,39 @@ SDGO Mod Manager 的「商城中文汉化」提供五个开关，默认全部开
 
 ## 日志
 
+汉化没有生效时，在 Manager 选择实际客户端，打开「商城中文汉化」或「机体内容导入」，点击
+**检查汉化数据**。检查只读，不连接数据库，也不会修改文件或安装回执。「复制给 AI 配置 / 排查」
+和「发现 Bug，复制报告」也会带上同一份检查结果，不包含机体原文或词典全文。结果区分词典损坏、
+汉化开关关闭和自定义文本归属异常；机体问题给出分区、kind、id、offset 和 capacity。
+检查通过只说明当前文件满足静态文本契约，仍须重启游戏核对加载日志和实际显示。
+
+例如 `kind=2 id=9000001 offset=105 capacity=50` 表示该机体的第二名称字段缺少容量内的
+UTF-16 NUL 结束符。50是包含结束符的总容量，正文最多49个UTF-16单元，少数生僻字占两个单元。
+请让内容作者在源包中修正并通过正常发布/更新重新安装。不要截断未知字段、关闭归属保护，
+或直接改已安装的 catalog 和回执哈希。旧包仍保留原注册行为；归属无法确定时，普通商品保留原文。
+
+归属正常、仅个别文字未翻译时，再核对词典：`Source` 必须与原文逐字一致，区分大小写、
+空格和换行；`Kind` 使用 `name`、`description` 或 `option`。文件为UTF-8，支持
+`\n`、`\r`、`\t`、`\s`（空格）和 `\\`，解码后的 `Source` 不得重复。
+以下为不含实际素材的通用示例：
+
+```ini
+[entry:generic-unit]
+Kind=name
+Source=GENERIC UNIT
+Text=通用测试机体
+```
+
+检查会指出词典的节名与行号，但不判断翻译是否准确，也不保证原文来自已支持的显示调用点。
+`zh-CN.ini` 属于程序词典，直接修改会被程序更新替换；自定义内容的名称和说明应随内容包分发，
+服主商品名在商城编辑器填写，新增原版翻译则提交词典维护。词典未提供独立用户覆盖文件入口。
+
 | 日志 | 含义 |
 |---|---|
 | `Chinese shop localization ready: <n> dictionary entries, <m> verified shop callers ...` | 汉化已加载 |
 | `Chinese shop search bridge ready ...` | 中文搜索已加载 |
 | `shop search rejected overlong query ...` | 关键词超过 36 个 UTF-16 单元，未发送（日志不记录关键词内容） |
+| `unit catalog display-text ownership index is invalid; kind=... id=... offset=... capacity=... reason=...` | 内容文本归属异常；在 Manager 检查并让作者修正源包，普通商品汉化会保守保留原文 |
 | `localization caller is not verified: <name>` / `shop localization refused: ...` | 客户端版本不匹配，本 Mod 未加载，商城显示原文 |
 
 ## 开发者说明

@@ -64,6 +64,15 @@ class ManagerTests(unittest.TestCase):
         self.assertIn(b'export function createAbilitiesEditor',body)
         self.assertEqual(self.call('GET','/panels/not_registered.js')[0],400)
 
+    def test_localization_check_is_read_only_and_bound_to_a_registered_client(self):
+        host = self.workspace.settings['hosts'][0]['id']
+        status, body = self.call('GET', '/api/localization-check?host=' + host)
+        self.assertEqual(200, status)
+        self.assertEqual('blocked', body['status'])
+        self.assertFalse(body['changes_applied'])
+        self.assertFalse(body['runtime_verified'])
+        self.assertEqual(400, self.call('GET', '/api/localization-check?host=unknown')[0])
+
     def install_fps_limit(self, root=None):
         root = root or self.client
         mod = root/'sdgo/mods/fps_limit'

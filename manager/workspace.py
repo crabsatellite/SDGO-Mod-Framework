@@ -182,8 +182,8 @@ class Workspace:
                         if value is None and name=='config.ini':value=storage.ini_values((root/'mod.ini').read_bytes()).get('settings',field['key'],fallback=None)
                         if value is None:value=field.get('default','')
                     if field['type']=='boolean':value=str(value).lower()in('1','true')
-                    elif field['type']=='integer':value=int(value)
-                    elif field['type']=='number':value=float(value)
+                    elif field['type']=='integer':value=int(value if str(value).strip() else field.get('default',0))
+                    elif field['type']=='number':value=float(value if str(value).strip() else field.get('default',0))
                     values[field['id']]=value
                 gate=contract.get('runtime_enabled_setting')
                 nodes.append({**mod,'enabled':mod['enabled']and(not gate or bool(values.get(gate))),

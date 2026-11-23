@@ -96,6 +96,9 @@ def make_server(workspace, port=0):
                     from .runtime_state import host_mod_states
                     host=workspace.host(query['host'][0])
                     return self.send_json(200,host_mod_states(host,workspace._installed(host)))
+                if method=='GET'and path=='/api/localization-check':
+                    from .localization_check import check
+                    return self.send_json(200,check(workspace,query['host'][0]))
                 if method == 'POST' and path == '/api/timezone':
                     return self.send_json(200,{**workspace.set_display_timezone(body.get('utc_offset_minutes')),'session_token':token})
                 if method=='POST' and path=='/api/entrypoints':

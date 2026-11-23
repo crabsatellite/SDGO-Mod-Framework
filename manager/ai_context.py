@@ -90,6 +90,9 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
                 value=storage.ini_values((root/'mod.ini').read_bytes()).get('settings',field['key'],fallback=None)
             item['current']=redact(value if value is not None else field.get('default'))
             settings['可调设置'].append(item)
+        if host['role']=='client' and mod_id in ('shop_localization','unit_catalog'):
+            from .localization_check import check
+            settings['汉化数据静态检查']=check(workspace,host_id)
         addresses=[base_url+'/api/settings?host='+host_id+'&mod='+mod_id]
         if installed.get('distribution')in('owner','local_only'):
             scope=installed['distribution'];label='本服程序'if scope=='owner'else'仅本机插件'
@@ -118,6 +121,13 @@ def build(workspace, base_url, *, host_id=None, mod_id=None, provider_id=None, k
                   '如果有本机访问能力，可先只读调查；变更配置前说明计划，不得重置玩家数据或停止无关游戏服务。',
                   f'可用 GitHub CLI 指向明确仓库：gh issue list --repo {repo["slug"]} --state all；然后 gh issue create --repo {repo["slug"]}。',
                   '如果没有 GitHub 写入能力，请给我可直接粘贴的 issue 标题和正文，并明确尚未提交。']
+        if '汉化数据静态检查' in settings:
+            diagnostic=settings['汉化数据静态检查']
+            summary={key:diagnostic[key] for key in ('status','records','protected_fields','issue_count','runtime_verified')}
+            summary['issues']=[{key:row[key] for key in ('code','kind','field','offset','capacity','scope') if key in row}
+                               for row in diagnostic['issues']]
+            summary['dictionary_valid']=diagnostic['dictionary']['valid']
+            lines+=['汉化数据静态检查摘要（不含内容编号、原文或文件路径）：',json.dumps(summary,ensure_ascii=False,indent=2)]
     else:
         lines += ['','请帮助我配置或调试这个功能。以下路径和地址只用于我授权的本机排查，不要发送到公开 issue。',
                   'Manager 入口：'+executable,'Manager 本机地址：'+base_url,

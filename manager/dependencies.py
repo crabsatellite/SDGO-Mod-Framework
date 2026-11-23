@@ -172,8 +172,8 @@ def enforce_install(root,changes,role,*,strict_dependencies=()):
                 content=storage.ini_values(raw(folder+'/'+field['file']))
                 value=content.get('settings',field['key'],fallback=field.get('default',''))
                 if field['type']=='boolean':value=str(value).casefold()in('1','true')
-                elif field['type']=='integer':value=int(value)
-                elif field['type']=='number':value=float(value)
+                elif field['type']=='integer':value=int(value if str(value).strip() else field.get('default',0))
+                elif field['type']=='number':value=float(value if str(value).strip() else field.get('default',0))
                 settings[field['id']]=value
             gate=contract.get('runtime_enabled_setting')
             if gate:enabled=enabled and bool(settings.get(gate))

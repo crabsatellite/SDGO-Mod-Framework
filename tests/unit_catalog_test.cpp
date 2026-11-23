@@ -26,6 +26,7 @@ namespace fs = std::filesystem;
 
 namespace {
 int g_checks = 0;
+std::string g_ownershipDiagnostic;
 std::wstring g_modDirectory;
 uint8_t g_grid[0x58]{};
 
@@ -257,6 +258,8 @@ void Log(SdgoMod*, int level, const char* format, ...) {
     va_start(arguments, format);
     _vsnprintf_s(text, sizeof(text), _TRUNCATE, format, arguments);
     va_end(arguments);
+    if (std::strstr(text, "display-text ownership index is invalid"))
+        g_ownershipDiagnostic = text;
     if(g_diagnosticPath.empty()) {
         if(level>=SDGO_LOG_ERROR)std::fprintf(stderr,"unit_catalog: %s\n",text);
         return;
@@ -433,6 +436,11 @@ void WriteAvailabilityFixture(const fs::path& root,
 
 std::vector<uint8_t> MakeNativeFixture(const std::string& scenario) {
     Entry first = MakeRecord(kUnitType, 25060);
+    if (scenario == "localization_invalid")
+        for (size_t index = 0; index < 50; ++index) {
+            first.bytes[105 + index * 2] = 'X';
+            first.bytes[106 + index * 2] = 0;
+        }
     Entry second = MakeRecord(kUnitType, 25061);
     Entry weapon = MakeRecord(kWeaponType, 61165);
     Entry blueprint = MakeRecord(kBlueprintType, 200001);
@@ -507,7 +515,8 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
           scenario=="blueprint_material_missing" ||
           scenario=="blueprint_item_reference_missing" ||
           scenario=="index_blueprint_reference_missing" ||
-          scenario=="index_blueprint_output_mismatch" || scenario=="large_catalog",
+          scenario=="index_blueprint_output_mismatch" || scenario=="large_catalog" ||
+          scenario=="localization_invalid",
           "native fixture scenario is supported");
     g_nodes.clear();
     g_nativeUnits.clear();
@@ -587,13 +596,18 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
     Check(load(&api, reinterpret_cast<SdgoMod*>(1)) != 0, "production unit_catalog accepts native fixture");
     Check(blueprintState(200001, 25060) == 3,
           "blueprint ownership remains indeterminate before native record readback");
-    if (scenario == "conflict") {
+    if (scenario == "conflict" || scenario == "localization_invalid") {
         Check(localizationBoundary(kUnitType, 25060, nullptr, 0) ==
                   SDGO_CONTENT_LOCALIZATION_INDETERMINATE &&
               sdgo::content_localization_boundary::Query(
                   0, 0, L"Fixture Weapon Name", 19) ==
                   SDGO_CONTENT_LOCALIZATION_INDETERMINATE,
               "invalid protected text leaves ownership indeterminate without blocking catalog load");
+        if (scenario == "localization_invalid")
+            Check(g_ownershipDiagnostic.find("kind=2 id=25060 offset=105 capacity=50 reason=unterminated_display_text") != std::string::npos &&
+                      g_ownershipDiagnostic.find("Manager") != std::string::npos &&
+                      g_ownershipDiagnostic.find("XXXXXXXX") == std::string::npos,
+                  "actual DLL reports the exact bad field and remedy without publishing author text");
     } else {
         Check(localizationBoundary(kUnitType, 25060, nullptr, 0) ==
                   SDGO_CONTENT_LOCALIZATION_OWNED &&
@@ -658,7 +672,7 @@ void NativeFixture(const fs::path& dll, const std::string& scenario,
           "catalog waits for the exact final native table");
     reinterpret_cast<Detour>(g_loadDetour)(g_grid, nullptr, L"gdrs\\0280.gdt", 0x0d);
     Check(g_loadCalls == 2, "original native table loader called before both detours");
-    if (scenario == "success" || scenario=="dependency_records_success" || scenario=="large_catalog") {
+    if (scenario == "success" || scenario=="dependency_records_success" || scenario=="large_catalog" || scenario=="localization_invalid") {
         const size_t expected=scenario=="dependency_records_success" ? 12u:
                               scenario=="large_catalog" ? static_cast<size_t>(kMaxRecords) : 7u;
         Check(g_nodes.size() == expected && static_cast<size_t>(g_integrityRecords) == expected,
@@ -885,6 +899,13 @@ int ParserFixture() {
                   boundary.RecordCount() == 0 &&
                   boundary.TextCount() == 0,
               "unterminated protected text refuses the complete index without stale ownership");
+        ContentLocalizationBoundaryIssue issue;
+        Check(!boundary.Build(unterminated, &issue) && issue.kind == kUnitType &&
+                  issue.id == 25060 && issue.offset == 205 && issue.capacity == 50 &&
+                  !std::strcmp(issue.reason, "unterminated_display_text"),
+              "rejected ownership text identifies its exact record and field without logging private text");
+        Check(boundary.Build(owned, &issue) && !issue.kind && !issue.id && !issue.offset,
+              "a successful rebuild clears the previous diagnostic");
     }
     {
         Entry skill=MakeRecord(kSkillType,9000001);

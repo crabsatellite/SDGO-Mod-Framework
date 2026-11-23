@@ -130,8 +130,10 @@ def _catalog_records(root: Path) -> dict[int, dict[int, bytes]]:
     # Use the same global-ID/extent/checksum contract as client authoring.
     # Per-kind dictionaries alone cannot detect cross-kind global collisions.
     from .indexes import catalog_records
+    from .display_text import validate
     result = {}
     for identity,(kind,record) in catalog_records(raw).items():
+        validate(kind,identity,record)
         if kind==2:
             from .codec import model_override
             model_override(record)

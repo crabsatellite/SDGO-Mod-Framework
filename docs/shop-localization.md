@@ -71,11 +71,41 @@ Chinese product names the owner already entered take precedence.
 
 ## Logs
 
+If translations are missing, select the actual client in Manager, open **商城中文汉化** or **机体内容导入**,
+and click **检查汉化数据** (Check localization data). The AI and bug-report copy actions include the same bounded
+diagnosis, without unit source text or dictionary contents. This is a read-only file check, with no database or
+receipt changes. It distinguishes invalid dictionaries, disabled translation switches and unresolved content
+ownership. Record diagnostics identify the scope, kind, ID, offset and capacity. Passing does not prove runtime
+activation or UI output: restart the game and check its load log and actual display.
+
+For example, `kind=2 id=9000001 offset=105 capacity=50` identifies an unterminated secondary unit-name field.
+The capacity includes its UTF-16 NUL: at most 49 UTF-16 units of text fit; some characters require two units.
+Ask the author to correct the source package and republish it through the normal update route. Do not truncate
+unknown fields, disable ownership protection, or manually rewrite installed catalog/receipt hashes. Legacy
+packages retain their existing registration behavior; unresolved ownership preserves ordinary source text.
+
+When ownership is healthy and only individual strings remain untranslated, check each exact `Source`, including
+case, spaces and line endings. Use `Kind=name`, `description` or `option`; encode the file as UTF-8. Supported
+escapes are `\n`, `\r`, `\t`, `\s` (space) and `\\`; decoded source keys must be unique. A neutral example:
+
+```ini
+[entry:generic-unit]
+Kind=name
+Source=GENERIC UNIT
+Text=通用测试机体
+```
+
+Dictionary errors include their entry section and line. The check does not assess translation quality or prove
+that a source string reaches a supported display caller. `zh-CN.ini` is programme data, so updates may replace
+direct local edits. Author custom names/descriptions in content packages and product names in the shop editor;
+submit original-client translations to dictionary maintenance. No separate user-override dictionary is loaded.
+
 | log line | meaning |
 |---|---|
 | `Chinese shop localization ready: <n> dictionary entries, <m> verified shop callers ...` | localization loaded |
 | `Chinese shop search bridge ready ...` | Chinese search loaded |
 | `shop search rejected overlong query ...` | keyword over 36 UTF-16 units was not sent (the keyword is not logged) |
+| `unit catalog display-text ownership index is invalid; kind=... id=... offset=... capacity=... reason=...` | unresolved content text ownership; run Manager's check and correct the source package; ordinary stock translations preserve their source |
 | `localization caller is not verified: <name>` / `shop localization refused: ...` | unsupported client; the Mod did not load and the shop shows original text |
 
 ## Developer notes

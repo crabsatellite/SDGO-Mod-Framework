@@ -948,7 +948,7 @@ if(BUILD_TESTING)
     sdgo_strict(unit_preview_test)
     add_test(NAME unit_preview_offline COMMAND unit_preview_test)
     add_test(NAME unit_catalog_offline COMMAND unit_catalog_test)
-    foreach(scenario success conflict missing_reference partial_failure index_reference_missing index_conflict
+    foreach(scenario success conflict localization_invalid missing_reference partial_failure index_reference_missing index_conflict
                      skill_reference_missing funnel_reference_missing special_feature_reference_missing linked_skill_reference_missing skill_parameter_reference_missing dependency_records_success
                      blueprint_output_missing blueprint_material_missing
                      blueprint_item_reference_missing index_blueprint_reference_missing index_blueprint_output_mismatch
@@ -962,6 +962,11 @@ if(BUILD_TESTING)
     add_test(NAME unit_import_owner_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_import_*.py" -v)
     set_tests_properties(unit_import_owner_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 90)
+    foreach(check unit_display_text localization_check)
+        add_test(NAME ${check}_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+            -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_${check}.py" -v)
+        set_tests_properties(${check}_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)
+    endforeach()
     add_test(NAME unit_resource_depot_offline COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
         -s "${CMAKE_CURRENT_SOURCE_DIR}/tests" -p "test_unit_resource_depot.py" -v)
     set_tests_properties(unit_resource_depot_offline PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 30)

@@ -170,6 +170,17 @@ async function showSettings(host,mod){
  const required=data.contract.dependencies?.required?.find(rule=>rule.id==='resource_worker');
  if(required)root.append(element('p','当前安装的大地图包需要「64 位资源后台」'+required.minimum+' 或更高版本。','intro'));
  const runtimeLine=element('p',data.runtime?.message||'等待核实运行状态','muted');root.append(runtimeLine,button('核对运行状态',async()=>{const rows=await request('/api/runtime?'+new URLSearchParams({host}));runtimeLine.textContent=rows[mod]?.message||'等待核实运行状态';},'ui-btn is-ghost is-small'));
+ if(['shop_localization','unit_catalog'].includes(mod)){
+  const diagnostic=element('section',undefined,'manager-card');
+  const output=element('div');
+  diagnostic.append(element('h2','汉化数据检查'),element('p','只读核对所选客户端的词典与自定义文本字段，不修改内容、价格或回执。','muted'),button('检查汉化数据',async()=>{
+   const result=await request('/api/localization-check?'+new URLSearchParams({host}));
+   output.replaceChildren(element('p',result.message,result.status==='blocked'?'error':'muted'),element('p',`${result.records} 条目录记录 · ${result.protected_fields} 个文本字段 · ${result.dictionary.entries} 个词条`,'muted'));
+   for(const warning of result.warnings)output.append(element('p',warning,'error'));
+   for(const issue of result.issues)output.append(element('p',(issue.scope?'['+issue.scope+'] ':'')+issue.message,'error'));
+   if(result.truncated)output.append(element('p','共 '+result.issue_count+' 项问题，显示前32项。修正后请重新检查。','muted'));
+  },'ui-btn is-ghost is-small'),output);root.append(diagnostic);
+ }
  const userProvider=data.contract.provider_audience==='user';
  if(data.contract.provider&&(ownerTools()||userProvider)){const panel=(state.panels||[]).find(p=>p.id===data.contract.provider);if(panel){const link=button((userProvider?'打开详细配置：':'打开服主管理：')+panel.title,()=>leave()&&showProvider(panel.id),'ui-btn is-ghost is-small');link.prepend(icon(panel.id));root.append(link);}}
  const box=element('section',undefined,'manager-card settings-plate'),fields=element('div',undefined,'settings-grid'),controls={};

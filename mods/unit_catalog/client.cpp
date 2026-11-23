@@ -553,12 +553,17 @@ SDGO_MOD_ENTRY {
     try {
         auto candidate =
             std::make_shared<ContentLocalizationBoundaryIndex>();
-        if (candidate->Build(g_catalog)) {
+        sdgo::unit_catalog::ContentLocalizationBoundaryIssue issue;
+        if (candidate->Build(g_catalog, &issue)) {
             boundary = std::move(candidate);
         } else {
             api->Log(mod, SDGO_LOG_WARN,
                      "unit catalog display-text ownership index is invalid; "
-                     "localization ownership remains indeterminate");
+                     "kind=%u id=%u offset=%u capacity=%u reason=%s; "
+                     "localization ownership remains indeterminate; "
+                     "run Check localization data in Manager; fix and republish the source package",
+                     issue.kind, issue.id, static_cast<unsigned>(issue.offset),
+                     static_cast<unsigned>(issue.capacity), issue.reason);
         }
     } catch (const std::exception& exception) {
         api->Log(mod, SDGO_LOG_WARN,

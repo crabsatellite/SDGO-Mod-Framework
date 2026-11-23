@@ -36,6 +36,8 @@ def native_catalog(records):
         if kind not in {2,10,11,12,13,20,33,34,79,85} or len(raw)!={2:4976,10:1871,11:732,12:1559,13:1132,20:106,33:1197,34:614,79:89,85:614}[kind]:raise ValueError('不支持的原生记录类型或长度')
         if type(identity) is not int or identity<=0 or identity in seen or struct.unpack_from('<I',raw)[0]!=identity or raw[4]!=0:
             raise ValueError('原生记录身份、发布标记或全局编号冲突')
+        from .display_text import validate
+        validate(kind,identity,raw)
         if kind==2:
             from .codec import model_override
             model_override(raw)

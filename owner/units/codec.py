@@ -229,6 +229,8 @@ def model_override(raw: bytes) -> str:
 def decode_unit(raw: bytes) -> dict[str, Any]:
     identity = _validate_common(raw, UNIT_SIZE, "unit record")
     name = _utf16(raw, 5, 100, f"unit {identity} name", required=True)
+    from .display_text import validate
+    validate(2, identity, raw)
     model = _virtual_path(_utf16(raw, 612, 60, f"unit {identity} model"), f"unit {identity} model")
     override=model_override(raw)
     portraits = {

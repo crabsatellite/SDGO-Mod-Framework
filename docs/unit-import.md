@@ -28,6 +28,12 @@ Batch preflight also checks complete resource paths stored inside native weapon 
 sealed client archive or the configured compatible client. A registered callback can still crash when its effect
 is absent. Complete the dependencies before applying the server plan; see [special weapons and skill slots](unit-skill-import.md).
 
+Import, compilation and batch application also check author-owned display fields for a bounded UTF-16 NUL.
+Unit fields at offsets 5/105/205, weapon names at 5, and item-category names at 5 each hold 50 units including
+the terminator; skill fields hold 50 units at 5 and 300 at 531. Text therefore fits at most 49 or 299 units.
+Errors identify the record kind/ID and field offset/capacity, without rewriting source bytes. For an installed
+legacy package, use Manager's **检查汉化数据**; see [localization diagnosis and a generic entry](shop-localization.md#logs).
+
 Single-form and two-form (reciprocal or one-way) units are supported, as are entry forms into an already published
 reciprocal pair. Self-referencing records can be preserved, but a same-ID target alone does not create an R-key
 state change; it requires the corresponding native behavior and actual runtime validation.
