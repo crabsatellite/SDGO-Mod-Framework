@@ -72,6 +72,14 @@ sdgo_strict(sdgo_surface_decal)
 sdgo_strict(sdgo_surface_decal_native)
 sdgo_strict(sdgo_surface_decal_render)
 if(BUILD_TESTING)
+    add_library(appearance_shutdown_fixture SHARED tests/appearance_shutdown_fixture.cpp)
+    target_link_libraries(appearance_shutdown_fixture PRIVATE sdgo_surface_decal)
+    sdgo_strict(appearance_shutdown_fixture)
+    add_executable(appearance_shutdown_test tests/appearance_shutdown_test.cpp)
+    sdgo_strict(appearance_shutdown_test)
+    add_dependencies(appearance_shutdown_test appearance_shutdown_fixture)
+    add_test(NAME appearance_shutdown COMMAND appearance_shutdown_test)
+    set_tests_properties(appearance_shutdown PROPERTIES TIMEOUT 50)
     add_executable(surface_decal_test tests/surface_decal_test.cpp)
     target_link_libraries(surface_decal_test PRIVATE sdgo_surface_decal)
     sdgo_strict(surface_decal_test)
@@ -671,7 +679,7 @@ sdgo_add_mod(oc_custom_server SERVER DESCRIPTION "over-custom six-stat enhanceme
 sdgo_add_mod(oc_custom_battle SERVER DESCRIPTION "over-custom six-stat enhancement (Battle)"
              SOURCES mods/oc_custom_battle/oc_custom_battle.cpp)
 sdgo_add_mod(oc_custom_client DESCRIPTION "over-custom six-stat enhancement (client)"
-             SOURCES mods/oc_custom_client/oc_custom_client.cpp mods/oc_custom_client/original_ui.cpp mods/oc_custom_client/radar.cpp mods/oc_custom_client/room_marks.cpp mods/oc_custom_client/g1_native.cpp mods/oc_custom_client/factory_l10n.cpp
+             SOURCES mods/oc_custom_client/oc_custom_client.cpp mods/oc_custom_client/original_ui.cpp mods/oc_custom_client/radar.cpp mods/oc_custom_client/room_marks.cpp mods/oc_custom_client/g1_native.cpp mods/oc_custom_client/factory_l10n.cpp mods/oc_custom_client/unit_information.cpp
              LIBS user32)
 
 
@@ -1759,11 +1767,62 @@ if(BUILD_TESTING)
     add_test(NAME room_commands_offline COMMAND room_commands_test)
     set_tests_properties(room_commands_offline PROPERTIES TIMEOUT 30)
 
+    add_executable(oc_challenge_items_server_test tests/oc_challenge_items_server_test.cpp)
+    target_link_libraries(oc_challenge_items_server_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(oc_challenge_items_server_test)
+    add_test(NAME oc_challenge_items_server_offline COMMAND oc_challenge_items_server_test)
+    set_tests_properties(oc_challenge_items_server_offline PROPERTIES TIMEOUT 30)
+
+    add_executable(oc_information_server_test tests/oc_information_server_test.cpp)
+    target_link_libraries(oc_information_server_test PRIVATE sdgo_api ole32 oleaut32 uuid)
+    sdgo_strict(oc_information_server_test)
+    add_test(NAME oc_information_server_offline COMMAND oc_information_server_test)
+    set_tests_properties(oc_information_server_offline PROPERTIES TIMEOUT 30)
+    add_executable(oc_unit_information_test tests/oc_unit_information_test.cpp
+                   mods/oc_custom_client/unit_information.cpp mods/oc_custom_client/original_ui.cpp mods/oc_custom_client/radar.cpp)
+    target_link_libraries(oc_unit_information_test PRIVATE sdgo_api user32)
+    sdgo_strict(oc_unit_information_test)
+    add_test(NAME oc_unit_information_offline COMMAND oc_unit_information_test)
+    set_tests_properties(oc_unit_information_offline PROPERTIES TIMEOUT 30)
+    # Explicit native fixture target; never staged into runtime packages.
+    add_library(oc_information_probe SHARED EXCLUDE_FROM_ALL tests/oc_information_probe.cpp)
+    target_link_libraries(oc_information_probe PRIVATE sdgo_api)
+    sdgo_strict(oc_information_probe)
+    add_library(oc_room_badge_probe SHARED EXCLUDE_FROM_ALL tests/oc_room_badge_probe.cpp)
+    target_link_libraries(oc_room_badge_probe PRIVATE sdgo_api)
+    sdgo_strict(oc_room_badge_probe)
+    add_library(oc_item_list_probe SHARED EXCLUDE_FROM_ALL tests/oc_item_list_probe.cpp)
+    target_link_libraries(oc_item_list_probe PRIVATE sdgo_api)
+    sdgo_strict(oc_item_list_probe)
+    add_executable(oc_item_selection_test tests/oc_item_selection_test.cpp)
+    target_link_libraries(oc_item_selection_test PRIVATE sdgo_api)
+    sdgo_strict(oc_item_selection_test)
+    add_test(NAME oc_item_selection_offline COMMAND oc_item_selection_test)
+
+    add_executable(oc_inventory_queue_test tests/oc_inventory_queue_test.cpp
+                   mods/oc_custom_client/original_ui.cpp mods/oc_custom_client/radar.cpp
+                   mods/oc_custom_client/room_marks.cpp mods/oc_custom_client/g1_native.cpp
+                   mods/oc_custom_client/factory_l10n.cpp mods/oc_custom_client/unit_information.cpp)
+    target_link_libraries(oc_inventory_queue_test PRIVATE sdgo_api user32)
+    sdgo_strict(oc_inventory_queue_test)
+    add_test(NAME oc_inventory_queue_offline COMMAND oc_inventory_queue_test)
+    set_tests_properties(oc_inventory_queue_offline PROPERTIES TIMEOUT 30)
+
     add_executable(oc_room_system_test tests/oc_room_system_test.cpp)
     target_link_libraries(oc_room_system_test PRIVATE sdgo_api)
     sdgo_strict(oc_room_system_test)
     add_test(NAME oc_room_system_offline COMMAND oc_room_system_test)
+    add_executable(oc_battle_loadout_test tests/oc_battle_loadout_test.cpp)
+    target_link_libraries(oc_battle_loadout_test PRIVATE sdgo_api)
+    sdgo_strict(oc_battle_loadout_test)
+    add_test(NAME oc_battle_loadout_offline COMMAND oc_battle_loadout_test)
     set_tests_properties(oc_room_system_offline PROPERTIES TIMEOUT 30)
+
+    add_executable(oc_ex_ability_test tests/oc_ex_ability_test.cpp)
+    target_link_libraries(oc_ex_ability_test PRIVATE sdgo_api)
+    sdgo_strict(oc_ex_ability_test)
+    add_test(NAME oc_ex_ability_offline COMMAND oc_ex_ability_test)
+    set_tests_properties(oc_ex_ability_offline PROPERTIES TIMEOUT 30)
 
     add_executable(room_random_test tests/room_random_test.cpp)
     add_executable(random_loadout_regression_test tests/random_loadout_regression_test.cpp)

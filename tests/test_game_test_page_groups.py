@@ -59,12 +59,48 @@ class PageGroupTests(unittest.TestCase):
         self.assertNotIn('pages.storage.claim',expected)
         self.assertNotIn('pages.collection.draw',expected)
 
+    def test_parts_switch_uses_its_own_read_only_native_case(self):
+        with self.assertRaisesRegex(gt.GameTestError, '0.1.47'):
+            self.fixture.prepare('switch-old', pages_only=True, page_group='parts_switch')
+        manifest = self.fixture.stage / 'client/sdgo/mods/game_test_client/mod.ini'
+        data = gt.read_ini(manifest)
+        data['mod']['version'] = '0.1.47'
+        gt.write_ini(manifest, data)
+        for identifier in ('oc_custom_client', 'friend_unit_gift_client'):
+            folder = self.fixture.stage / 'client/sdgo/mods' / identifier
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / (identifier + '.dll')).write_bytes(b'fixture')
+            (folder / 'mod.ini').write_text(
+                f'[mod]\nid={identifier}\ndll={identifier}.dll\nenabled=1\nhosts={gt.HOST_KEY}\n')
+        run = self.fixture.prepare('switch', pages_only=True, page_group='parts_switch')
+        expected = gt.FLOW_CASES[:3] + ('pages.factory.parts_switch',)
+        self.assertEqual(gt.required_cases_for_plan(gt.validate_metadata(run)['plan']), expected)
+        self.assertEqual(gt.required_cases_for_plan(gt.read_public_plan(run / 'client')), expected)
+
     def test_existing_full_page_group_is_unchanged(self):
         prepared=self.fixture.prepare('all-pages',pages_only=True)
         plan=json.loads((prepared/'run.json').read_text())
         self.assertNotIn('page_group',plan['plan'])
         self.assertIn('pages.storage.claim',gt.required_cases_for_plan(plan['plan']))
         self.assertIn('catalog.capsule',gt.required_cases_for_plan(plan['plan']))
+
+    def test_oc_inventory_group_seals_read_only_native_provider(self):
+        for identifier in ('oc_custom_client', 'oc_item_list_probe'):
+            folder = self.fixture.stage / 'client/sdgo/mods' / identifier
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / (identifier + '.dll')).write_bytes(b'fixture')
+            (folder / 'mod.ini').write_text(
+                f'[mod]\nid={identifier}\ndll={identifier}.dll\nenabled=1\nhosts={gt.HOST_KEY}\n')
+        run = self.fixture.prepare('oc-inventory', pages_only=True, page_group='oc_items')
+        expected = gt.FLOW_CASES[:3] + ('oc.items_open', 'oc.items')
+        self.assertEqual(gt.required_cases_for_plan(gt.validate_metadata(run)['plan']), expected)
+        self.assertEqual(gt.required_cases_for_plan(gt.read_public_plan(run / 'client')), expected)
+        self.assertNotIn('oc.panel', expected)
+        selected = dict(gt.validate_metadata(run)['plan'], play_unit_uid=62247)
+        self.assertEqual(gt.required_cases_for_plan(selected),
+                         gt.FLOW_CASES[:3] + ('setup.active_unit', 'oc.items_open', 'oc.items'))
+        for identifier in ('oc_custom_client', 'oc_item_list_probe'):
+            self.assertTrue(gt.manifest_enabled(run / f'client/sdgo/mods/{identifier}/mod.ini'))
 
     def test_explicit_gb_confirmation_is_sealed_and_replaces_read_only_preview(self):
         prepared=self.fixture.prepare(

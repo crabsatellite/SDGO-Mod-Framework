@@ -50,6 +50,20 @@ void** g_original_vtable = nullptr;
 RenderFn g_render = nullptr;
 void* g_dialog = nullptr;
 Shape g_shape;
+void* g_information = nullptr;
+void* g_information_panel = nullptr;
+struct Panel { void* control=nullptr; Rect clip{}; bool chart=false; };
+using ControlDraw=void(__thiscall*)(void*);
+ControlDraw g_skin_draw=nullptr;
+std::array<Panel,32> g_panels{};
+std::size_t g_panel_count=0;
+std::array<Panel, 11> g_challenge_panels{};
+std::size_t g_challenge_panel_count=0;
+void* g_challenge_root=nullptr;
+void* g_panel_table[37]{};
+Shape g_information_shape;
+float g_information_x = 750, g_information_y = 220, g_information_radius = 95;
+volatile LONG g_information_frames = 0;
 float g_growth = 0.0f;
 bool g_was_visible = false;
 volatile LONG g_frames = 0;
@@ -107,7 +121,7 @@ void DrawLayer(IDirect3DDevice9* device, float cx, float cy, float rx, float ry,
     device->DrawPrimitiveUP(D3DPT_TRIANGLEFAN, static_cast<UINT>(kAxes), fan, sizeof(Vertex));
 }
 
-void Draw(void* dialog) {
+void Draw(void* dialog, bool information = false) {
     IDirect3DDevice9* device = Device();
     if (!device) return;
     D3DVIEWPORT9 viewport{};
@@ -115,8 +129,8 @@ void Draw(void* dialog) {
     if (g_growth < 1.0f) g_growth = (std::min)(1.0f, g_growth + kGrowthStep);
     const float sx = static_cast<float>(viewport.Width) / kLayoutWidth;
     const float sy = static_cast<float>(viewport.Height) / kLayoutHeight;
-    const float cx = static_cast<float>(viewport.X) + (Read<float>(dialog, kPositionX) + kCenterX) * sx;
-    const float cy = static_cast<float>(viewport.Y) + (Read<float>(dialog, kPositionY) + kCenterY) * sy;
+    const float cx = static_cast<float>(viewport.X) + (Read<float>(dialog, kPositionX) + (information ? g_information_x : kCenterX)) * sx;
+    const float cy = static_cast<float>(viewport.Y) + (Read<float>(dialog, kPositionY) + (information ? g_information_y : kCenterY)) * sy;
     IDirect3DStateBlock9* saved = nullptr;
     if (FAILED(device->CreateStateBlock(D3DSBT_ALL, &saved)) || !saved) return;
     device->SetPixelShader(nullptr);
@@ -143,12 +157,35 @@ void Draw(void* dialog) {
     device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE);
     device->SetTextureStageState(1, D3DTSS_COLOROP, D3DTOP_DISABLE);
     device->SetTextureStageState(1, D3DTSS_ALPHAOP, D3DTOP_DISABLE);
-    const float rx = kRadius * sx * g_growth, ry = kRadius * sy * g_growth;
+    const float radius = information ? g_information_radius : kRadius * g_growth;
+    const float rx = radius * sx, ry = radius * sy;
+    if(information) {
+        // The native information chart uses a neutral hexagon with spokes.
+        // Keep allocation-page panel artwork out of this read-only card.
+        std::array<float,kAxes> extent;extent.fill(1.0f);
+        DrawLayer(device,cx,cy,rx,ry,extent,0xFF2B2C31);
+        Vertex outline[kAxes+1],spokes[kAxes*2];
+        for(std::size_t i=0;i<kAxes;++i) {
+            const float angle=kAngle[kAround[i]]*3.14159265f/180.0f;
+            const float x=cx+std::cos(angle)*rx,y=cy-std::sin(angle)*ry;
+            outline[i]={x,y,0.5f,1,0xFF63646A};
+            spokes[2*i]={cx,cy,0.5f,1,0xFF48494F};spokes[2*i+1]={x,y,0.5f,1,0xFF48494F};
+            const float dx=1.5f*sx,dy=1.5f*sy;
+            Vertex point[4]={{x-dx,y-dy,0.5f,1,0xFFE0E0E0},{x+dx,y-dy,0.5f,1,0xFFE0E0E0},
+                             {x-dx,y+dy,0.5f,1,0xFFE0E0E0},{x+dx,y+dy,0.5f,1,0xFFE0E0E0}};
+            device->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP,2,point,sizeof(Vertex));
+        }
+        outline[kAxes]=outline[0];
+        device->DrawPrimitiveUP(D3DPT_LINELIST,static_cast<UINT>(kAxes),spokes,sizeof(Vertex));
+        device->DrawPrimitiveUP(D3DPT_LINESTRIP,static_cast<UINT>(kAxes),outline,sizeof(Vertex));
+    }
+    const auto& shape = information ? g_information_shape : g_shape;
     for (std::size_t layer = 0; layer < kLayers; ++layer)
-        DrawLayer(device, cx, cy, rx, ry, g_shape.layer[layer], kLayerColor[layer]);
+        DrawLayer(device, cx, cy, rx, ry, shape.layer[layer], kLayerColor[layer]);
     saved->Apply();
     saved->Release();
-    InterlockedIncrement(&g_frames);
+    if (information) InterlockedIncrement(&g_information_frames);
+    else InterlockedIncrement(&g_frames);
 }
 
 void DrawChart(void* dialog) {
@@ -184,6 +221,7 @@ void __fastcall RenderHook(void* self, void*, void* argument) {
     }
     g_render(self, argument);
     __try {
+
         if (self == g_dialog) {
             if (g_after_model && ModelDrawn()) return; // drawn after the model instead
             if (g_after_model && g_shape.visible) InterlockedIncrement(&g_native_turns);
@@ -236,6 +274,93 @@ bool Adopt(void* dialog, const char** failure) noexcept {
 }
 
 } // namespace
+
+
+Shape FromProfile(const Profile& profile, const Ranges& ranges) noexcept {
+    Shape shape; shape.visible = true;
+    for (std::size_t stat = 0; stat < kAxes; ++stat) {
+        const auto scale = [&](float value) {
+            const auto& r = ranges[stat];
+            return r.maximum > r.minimum ? (std::clamp(value, r.minimum, r.maximum) - r.minimum) / (r.maximum - r.minimum) : 0.0f;
+        };
+        const float base = static_cast<float>(profile.base[stat]);
+        const float normal = base + static_cast<float>(profile.normal[stat]) * profile.normal_stat[stat];
+        const float over = normal + static_cast<float>(profile.over[stat]) * profile.over_stat[stat];
+        shape.layer[3][stat] = scale(base);
+        shape.layer[2][stat] = scale(normal);
+        shape.layer[1][stat] = shape.layer[0][stat] = scale(over);
+    }
+    return shape;
+}
+void __fastcall InformationSkinDraw(void* control, void*) {
+    __try {
+        const Panel* panel=nullptr;
+        for(std::size_t i=0;i<g_panel_count;++i)if(g_panels[i].control==control){panel=&g_panels[i];break;}
+        void* root=g_information;
+        if(!panel)for(std::size_t i=0;i<g_challenge_panel_count;++i)
+            if(g_challenge_panels[i].control==control){panel=&g_challenge_panels[i];root=g_challenge_root;break;}
+        if(!root || Read<void*>(control,0x15C)!=root || !Read<std::uint8_t>(root,kVisible) ||
+           !Read<std::uint8_t>(control,kVisible) || !Read<std::uint8_t>(control,0x163))return;
+        auto* device=Device();D3DVIEWPORT9 viewport{};
+        if(!panel || !device || FAILED(device->GetViewport(&viewport)))return;
+        const float sx=static_cast<float>(viewport.Width)/kLayoutWidth,sy=static_cast<float>(viewport.Height)/kLayoutHeight;
+        const float x=Read<float>(root,kPositionX)+panel->clip.x;
+        const float y=Read<float>(root,kPositionY)+panel->clip.y;
+        RECT clip={static_cast<LONG>(viewport.X+x*sx),static_cast<LONG>(viewport.Y+y*sy),
+                   static_cast<LONG>(viewport.X+(x+panel->clip.width)*sx),static_cast<LONG>(viewport.Y+(y+panel->clip.height)*sy)};
+        clip.left=(std::max)(clip.left,static_cast<LONG>(viewport.X));clip.top=(std::max)(clip.top,static_cast<LONG>(viewport.Y));
+        clip.right=(std::min)(clip.right,static_cast<LONG>(viewport.X+viewport.Width));clip.bottom=(std::min)(clip.bottom,static_cast<LONG>(viewport.Y+viewport.Height));
+        if(clip.right<=clip.left || clip.bottom<=clip.top)return;
+        IDirect3DStateBlock9* saved=nullptr;
+        if(FAILED(device->CreateStateBlock(D3DSBT_ALL,&saved)) || !saved)return;
+        device->SetScissorRect(&clip);device->SetRenderState(D3DRS_SCISSORTESTENABLE,TRUE);
+        g_skin_draw(control);
+        saved->Apply();saved->Release();
+        if(panel->chart && g_information_shape.visible)Draw(g_information,true);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+}
+bool InstallInformationSkin(void* control, const Rect& clip, bool chart) noexcept {
+    if(!control || g_panel_count==g_panels.size())return false;
+    auto** table=Read<void**>(control);
+    if(!g_panel_table[1]) {
+        g_panel_table[0]=table[-1];
+        std::memcpy(g_panel_table+1,table,36*sizeof(void*));
+        g_skin_draw=reinterpret_cast<ControlDraw>(table[8]);
+        g_panel_table[1+8]=reinterpret_cast<void*>(&InformationSkinDraw);
+    }
+    void** ours=g_panel_table+1;std::memcpy(control,&ours,sizeof(ours));
+    g_panels[g_panel_count++]={control,clip,chart};
+    if(chart)g_information_panel=control;
+    return true;
+}
+bool InstallChallengeSkin(void* control, void* root, const Rect& clip) noexcept {
+    if(!control || !root || g_challenge_panel_count==g_challenge_panels.size())return false;
+    auto** table=Read<void**>(control);
+    if(!g_panel_table[1]) {
+        g_panel_table[0]=table[-1];
+        std::memcpy(g_panel_table+1,table,36*sizeof(void*));
+        g_skin_draw=reinterpret_cast<ControlDraw>(table[8]);
+        g_panel_table[1+8]=reinterpret_cast<void*>(&InformationSkinDraw);
+    }
+    void** ours=g_panel_table+1;std::memcpy(control,&ours,sizeof(ours));
+    g_challenge_root=root;
+    g_challenge_panels[g_challenge_panel_count++]={control,clip,false};
+    return true;
+}
+void ClearChallengeSkins() noexcept {g_challenge_root=nullptr;g_challenge_panel_count=0;}
+bool InstallInformation(void* dialog) noexcept {
+    if (!g_renderer || !dialog) return false;
+    g_information = dialog;
+    return true;
+}
+void SetInformation(const Shape& shape, float x, float y, float radius) noexcept {
+    g_information_shape = shape; g_information_x = x; g_information_y = y; g_information_radius = radius;
+}
+void ForgetInformation(void* dialog) noexcept {
+    if (dialog == g_information) { g_information = nullptr; g_information_panel = nullptr; g_information_shape = {}; g_panels={}; g_panel_count=0; }
+}
+const Shape& CurrentInformation() noexcept { return g_information_shape; }
+std::uint32_t InformationFrames() noexcept { return static_cast<std::uint32_t>(g_information_frames); }
 
 bool Install(void* dialog, const char** failure) noexcept {
     if (!g_renderer) {

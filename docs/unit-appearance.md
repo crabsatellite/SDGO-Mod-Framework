@@ -45,6 +45,8 @@ Wrapping starts at the hit surface and crosses only touching armor seams with a 
 
 Owners can add images through [Custom sticker import](sticker-import.md). The imported first-placement size applies when creating a new layer; saved placements keep their edited size. The owner's matching client content provides the image to other viewers.
 
+At game exit, process termination reclaims the sticker and wear-texture caches without calling graphics cleanup after driver worker threads have stopped. Cache eviction and explicit cleanup during normal operation still release textures.
+
 ## Troubleshooting and AI handoff
 
 Placement mode uses left clicks or drags for positioning and the right button for orbiting. Orbit mode restores left-button rotation. This input ownership is maintained during model loading and native preview replacement. Failed placement distinguishes an unready model, a click outside the model viewport and a missed surface; the preview/save prompt means the draft accepted the position.
@@ -56,6 +58,8 @@ Check both hosts' component switches, communication dependencies, host compatibi
 Use the feature's Copy for AI or bug-report entry. Include client/World versions, the affected page, reproduction steps and messages. State whether both components are enabled, whether the issue occurs only in rooms, and whether stickers or forms changed. Hide account details in screenshots; exclude credentials, databases and complete game assets.
 
 ## Developer notes
+
+Sticker-texture and wear-mask destructors check Windows `RtlDllShutdownInProgress`, resolved during module initialization. Process termination skips native texture destruction and D3D `Release`; ordinary object destruction and dynamic unload retain their cleanup paths. If the query is unavailable, destructors conservatively leave reclamation to process termination while explicit runtime cleanup remains available.
 
 `unit_appearance_client` keeps RGB material and sticker projection components separate internally and installs hooks only for enabled components. `unit_appearance_server` prepares all enabled components before one authenticated extension registration, then dispatches the original commands according to their switches. Unassigned commands inside the combined range return an invalid-argument result. Existing RGB and legacy decal records and commands remain compatible. Additional tables store independent designs, sticker unlocks and idempotent commit receipts. Native records remain authoritative for ownership, stock colors and equipped stickers.
 

@@ -536,3 +536,7 @@ ffmpeg -i capture.mkv -t 12 -an -vf "fps=12,scale=900:-2" -c:v libwebp_anim -qua
 隔离外观探针还支持同时设置 `SDGO_APPEARANCE_RGB_TEST=1`、`SDGO_RGB_ENTRY_TEST=1`，检查原生入口、页面切换、按钮进入 RGB 与取消，且不保存调色草稿。设置 `SDGO_SURFACE_DEMO_DIR` 时采集进出动画帧供目视核对。图层保存用例通过正式鼠标消息操作；`SDGO_SURFACE_NATIVE_STICKERS=1` 检查已占用一个原生贴纸槽，再加 `SDGO_SURFACE_NATIVE_THREE=1` 检查三个槽。`SDGO_SURFACE_EXPECTED_DESIGN` 可指向此前的权威设计文件，核对新进程重载的数据完全一致。
 
 开发录制镜头可以启用 `BattleReviewCamera`；`BattleReviewPilot=0` 轮流观察 AI，指定测试玩家编号后按 `BattleReviewCameraSeconds` 在本机和该玩家之间切换。它只改变镜头目标，不能代替真人入房、Ready、开局、实际绘制与结算证据。机体在画面外时未产生绘制计数，不能据此宣称贴花消失，也不能算可见性通过。
+
+### OC 道具与 EX 入口回归
+
+构建可选的 `oc_item_list_probe`，使用 `--pages-only --page-group oc_items --play-unit-uid <已有机体 UID>`；测试计划先选择既有机体再进入强化页。`SDGO_OC_EX_INPUT=1` 通过原生鼠标命中测试打开右侧 Ex、选择技能预览、取消并关闭，需要已到 EX 的机体和既有修改器，不发送技能修改请求。`SDGO_OC_RETAINED_CARD=1` 使用符合挑战条件的机体与七张既有成功卡检查保留卡的显示和选择，取消时不消耗道具。测试库存准备及恢复由外部测试流程负责。

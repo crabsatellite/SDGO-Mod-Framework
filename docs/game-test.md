@@ -21,6 +21,10 @@ database, fully isolated from production, without Docker. Concurrent jobs that w
 environment with their own ports and native SQL, and remove the whole job copy afterwards. Ordinary tests bind
 existing accounts and units; test runtimes and database copies stay local.
 
+### OC inventory and EX entry regression
+
+Use `--pages-only --page-group oc_items --play-unit-uid <owned-unit-uid>` with the optional `oc_item_list_probe` target. The plan selects the existing unit before opening OC. `SDGO_OC_EX_INPUT=1` exercises native mouse hit testing on the right Ex entry, opens an ability confirmation, cancels it and closes the selector. It requires an EX unit and an existing modifier; no skill-change request is sent. `SDGO_OC_RETAINED_CARD=1` checks the retained success coupon with seven existing items on a challenge-eligible unit and cancels without consuming them. Test inventory preparation and restoration remain external to the fixture.
+
 ## FPS cap without account login
 
 Build `game_test_client`, `fps_limit`, `sdgo_core`, `d3d9_shim` and `sdgo_data`,

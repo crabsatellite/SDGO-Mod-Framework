@@ -1,5 +1,6 @@
 #pragma once
 #include "sdgo/sdgo_api.h"
+#include "process_shutdown.h"
 #include "../../hangar_manager/native_ui.h"
 #include <d3d9.h>
 #ifdef small
@@ -17,7 +18,7 @@ public:
     IDirect3DBaseTexture9* Get(std::uint32_t sticker);
     std::wstring Name(std::uint32_t sticker)const;
     void Clear();
-    ~Textures(){Clear();}
+    ~Textures(){if(!ProcessShutdown())Clear();}
 private:
     using Grid=void*(__cdecl*)();
     using Find=bool(__thiscall*)(void*,const unsigned char**,unsigned,int,char);

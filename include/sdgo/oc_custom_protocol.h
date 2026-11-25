@@ -73,9 +73,14 @@ inline constexpr std::uint32_t kModeFlagSchemaReady = 1u << 0;
 inline constexpr std::uint32_t kModeFlagRoomRule = 1u << 1;
 // Room mode also offers G改 1.0 rooms: the World Mod loaded a G改 1.0 rule set.
 inline constexpr std::uint32_t kModeFlagG1 = 1u << 2;
+inline constexpr std::uint32_t kModeFlagEx = 1u << 3;
+// This retained item is named EX ability modifier in the compatible client.
+// Its newer native type (9) is not the old OC type (5); the Mod owns its use.
+inline constexpr std::uint32_t kExSettingItem = 3240013;
 
 struct Carrier {
     std::uint8_t flags = 0;
+    std::uint8_t extra_bonus = 0; // 0 none, 1..8 OC EX ability; wire flags high nibble
     std::uint8_t oc_level = 0;
     std::uint8_t normal_points = 0;
     std::uint8_t over_points = 0;
@@ -85,6 +90,10 @@ struct Carrier {
 };
 
 namespace detail {
+inline std::uint8_t CarrierHeader(const Carrier& carrier) noexcept {
+    const auto extra = carrier.extra_bonus <= 8 ? carrier.extra_bonus : 0;
+    return static_cast<std::uint8_t>((carrier.flags & 0x0F) | (extra << 4));
+}
 inline std::uint8_t Checksum(const std::uint8_t* carrier) noexcept {
     std::uint8_t value = 0x5A;
     for (std::size_t index = 0; index < kCarrierBytes - 2; ++index)
@@ -108,7 +117,7 @@ inline std::uint16_t G1Offset(std::uint16_t skill) noexcept {
 inline void WriteCarrier2(std::uint8_t* out, const Carrier& carrier) noexcept {
     using friend_unit_gift::wire::Write16;
     out[2] = kCarrierVersion2;
-    out[3] = carrier.flags;
+    out[3] = CarrierHeader(carrier);
     out[4] = carrier.oc_level;
     out[5] = carrier.normal_points;
     out[6] = carrier.over_points;
@@ -129,7 +138,8 @@ inline void WriteCarrier2(std::uint8_t* out, const Carrier& carrier) noexcept {
 
 inline void ReadCarrier2(const std::uint8_t* in, Carrier* carrier) noexcept {
     using friend_unit_gift::wire::Read16;
-    carrier->flags = in[3];
+    carrier->flags = in[3] & 0x0F;
+    carrier->extra_bonus = in[3] >> 4;
     carrier->oc_level = in[4];
     carrier->normal_points = in[5];
     carrier->over_points = in[6];
@@ -169,7 +179,7 @@ inline void WriteCarrier(std::uint8_t* record, const Carrier& carrier) noexcept 
     out[0] = kCarrierMagic0;
     out[1] = kCarrierMagic1;
     out[2] = kCarrierVersion;
-    out[3] = carrier.flags;
+    out[3] = detail::CarrierHeader(carrier);
     out[4] = carrier.oc_level;
     out[5] = carrier.normal_points;
     out[6] = carrier.over_points;
@@ -188,7 +198,7 @@ inline bool ReadCarrier(const std::uint8_t* record, Carrier* carrier) noexcept {
     const auto* in = record + kCarrierOffset;
     if (in[0] != kCarrierMagic0 || in[1] != kCarrierMagic1 ||
         (in[2] != kCarrierVersion && in[2] != kCarrierVersion2) || in[24] != 0 ||
-        in[23] != detail::Checksum(in))
+        in[23] != detail::Checksum(in) || (in[3] >> 4) > 8)
         return false;
     if (in[2] == kCarrierVersion2) {
         Carrier decoded;
@@ -197,7 +207,8 @@ inline bool ReadCarrier(const std::uint8_t* record, Carrier* carrier) noexcept {
         return true;
     }
     Carrier decoded;
-    decoded.flags = in[3];
+    decoded.flags = in[3] & 0x0F;
+    decoded.extra_bonus = in[3] >> 4;
     decoded.oc_level = in[4];
     decoded.normal_points = in[5];
     decoded.over_points = in[6];
@@ -236,10 +247,13 @@ enum class Command : std::uint16_t {
     g1_get = 0x100B,        // a unit's loadout and reset cost
     g1_set = 0x100C,        // equip skills (the native custom-skill rules)
     g1_reset = 0x100D,      // empty the loadout, charging the reset GP
+    ex_info = 0x100E,       // selected EX ability and available setting kits
+    ex_set = 0x100F,        // confirmed EX selection
+    information = 0x1010,  // read-only public build; never creates or changes a profile
 };
 
 inline constexpr std::uint16_t kFirstCommand = 0x1000;
-inline constexpr std::uint16_t kLastCommand = 0x100D;
+inline constexpr std::uint16_t kLastCommand = 0x1010;
 
 inline friend_unit_gift::Command Wrap(Command command) noexcept {
     return static_cast<friend_unit_gift::Command>(
@@ -357,6 +371,40 @@ inline void ReadProfile(const std::uint8_t* in, Profile* profile) noexcept {
     *profile = decoded;
 }
 
+// Complete public build for the information page, independent of the viewer.
+// No account identity, currency, inventory, or write authorization is returned.
+struct Information {
+    Profile profile{};
+    std::array<std::uint16_t, 4> g1_skills{}, g2_skills{};
+    std::uint8_t g2_slots = 0;
+};
+inline constexpr std::size_t kInformationReplyBytes = 4 + kProfileBytes + 17;
+inline void WriteInformationReply(std::uint8_t* out, std::int32_t result, const Information& value) noexcept {
+    friend_unit_gift::wire::Write32(out, static_cast<std::uint32_t>(result));
+    WriteProfile(out + 4, value.profile);
+    for (std::size_t i = 0; i < 4; ++i) {
+        friend_unit_gift::wire::Write16(out + 4 + kProfileBytes + i * 2, value.g1_skills[i]);
+        friend_unit_gift::wire::Write16(out + 12 + kProfileBytes + i * 2, value.g2_skills[i]);
+    }
+    out[20 + kProfileBytes] = value.g2_slots;
+}
+inline bool ReadInformationReply(const std::uint8_t* in, std::size_t size, std::int32_t* result,
+                                 Information* value) noexcept {
+    if (!in || !result || !value || size != kInformationReplyBytes) return false;
+    Information decoded;
+    ReadProfile(in + 4, &decoded.profile);
+    for (std::size_t i = 0; i < 4; ++i) {
+        decoded.g1_skills[i] = friend_unit_gift::wire::Read16(in + 4 + kProfileBytes + i * 2);
+        decoded.g2_skills[i] = friend_unit_gift::wire::Read16(in + 12 + kProfileBytes + i * 2);
+    }
+    decoded.g2_slots = in[20 + kProfileBytes];
+    if (decoded.g2_slots > 4) return false;
+    *result = static_cast<std::int32_t>(friend_unit_gift::wire::Read32(in));
+    *value = decoded;
+    return true;
+}
+static_assert(kInformationReplyBytes <= friend_unit_gift::kMaximumExtensionPayloadBytes);
+
 // Total of one stat after allocation, as the original rules compute it.
 inline std::int32_t StatTotal(const Profile& profile, std::size_t stat) noexcept {
     return profile.base[stat] +
@@ -446,6 +494,52 @@ inline bool ReadWorkRequest(const std::uint8_t* in, std::size_t size, WorkReques
 }
 
 // Replies -------------------------------------------------------------------
+
+struct ExSetRequest {
+    std::uint64_t unit_uid = 0;
+    std::uint32_t revision = 0;
+    std::uint8_t ability = 0;
+};
+inline constexpr std::size_t kExSetRequestBytes = 16;
+inline void WriteExSetRequest(std::uint8_t* out, const ExSetRequest& request) noexcept {
+    std::memset(out, 0, kExSetRequestBytes);
+    friend_unit_gift::wire::Write64(out, request.unit_uid);
+    friend_unit_gift::wire::Write32(out + 8, request.revision);
+    out[12] = request.ability;
+}
+inline bool ReadExSetRequest(const std::uint8_t* in, std::size_t size, ExSetRequest* request) noexcept {
+    if (size != kExSetRequestBytes || in[13] || in[14] || in[15]) return false;
+    request->unit_uid = friend_unit_gift::wire::Read64(in);
+    request->revision = friend_unit_gift::wire::Read32(in + 8);
+    request->ability = in[12];
+    return request->unit_uid && request->ability >= 1 && request->ability <= 8;
+}
+
+struct ExReply {
+    std::int32_t ret_val = 0;
+    std::uint32_t item = 0;
+    std::uint16_t remaining = 0;
+    std::uint8_t cost = 1;
+    Profile profile{};
+};
+inline constexpr std::size_t kExReplyBytes = 12 + kProfileBytes;
+inline void WriteExReply(std::uint8_t* out, const ExReply& reply) noexcept {
+    std::memset(out, 0, kExReplyBytes);
+    friend_unit_gift::wire::Write32(out, static_cast<std::uint32_t>(reply.ret_val));
+    friend_unit_gift::wire::Write32(out + 4, reply.item);
+    friend_unit_gift::wire::Write16(out + 8, reply.remaining);
+    out[10] = reply.cost;
+    WriteProfile(out + 12, reply.profile);
+}
+inline bool ReadExReply(const std::uint8_t* in, std::size_t size, ExReply* reply) noexcept {
+    if (size != kExReplyBytes || in[11] || in[10] != 1) return false;
+    reply->ret_val = static_cast<std::int32_t>(friend_unit_gift::wire::Read32(in));
+    reply->item = friend_unit_gift::wire::Read32(in + 4);
+    reply->remaining = friend_unit_gift::wire::Read16(in + 8);
+    reply->cost = in[10];
+    ReadProfile(in + 12, &reply->profile);
+    return true;
+}
 
 struct SetReply {
     std::int32_t ret_val = 0;

@@ -1,4 +1,5 @@
 #include "render.h"
+#include "process_shutdown.h"
 #include <cstring>
 #include <algorithm>
 #include <vector>
@@ -24,7 +25,7 @@ struct Mask {
     Mask()=default;Mask(const Mask&)=delete;Mask& operator=(const Mask&)=delete;
     Mask(Mask&& other)noexcept{*this=std::move(other);}
     Mask& operator=(Mask&& other)noexcept{if(this!=&other){if(texture)texture->Release();device=other.device;texture=other.texture;wear=other.wear;seed=other.seed;age=other.age;other.texture=nullptr;}return *this;}
-    ~Mask(){if(texture)texture->Release();}
+    ~Mask(){if(texture&&!ProcessShutdown())texture->Release();}
 };
 IDirect3DTexture9* WearMask(IDirect3DDevice9* device,const Style& style){
     // Called only on the native render thread. Managed masks survive a normal

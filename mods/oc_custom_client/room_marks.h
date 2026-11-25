@@ -1,6 +1,6 @@
 // Room-system marks for "room" mode: the PvP room list shows each room's
-// enhancement system in front of its title, and the waiting room's title bar
-// gets a label with the room's system. The marks are the Mod's own text drawn
+// enhancement system in front of its title, and the waiting room
+// gets a framed system badge below the room title. The marks are the Mod's own text drawn
 // with the client's native controls; the room title itself is not changed.
 #pragma once
 
@@ -17,8 +17,8 @@ bool Bind(const SdgoApi* api, SdgoMod* mod, void (*log)(const char* message));
 // text with its system (【OC】, 【G改1】 or 【G改2】), once per native list render.
 void MarkRoomList(void* service);
 
-// After the native C3DWaitRoomTitleBar update: a label next to the title
-// button shows the current room's system.
+// After the native C3DWaitRoomTitleBar update: a read-only native framed
+// badge below the room title shows the current room's system.
 void MarkTitleBar(void* title_bar, RoomSystem system);
 
 // Room creation windows (CServiceMakeRoom / CServiceMakeRoomAI): a 体系 row

@@ -5,7 +5,8 @@
 // keeps their layouts: uirs\0794.uir (six-stat allocation window),
 // uirs\0813.uir (OC challenge window) and uirs\0819.uir (OC confirmation
 // popup), plus the OC tab's UNIT INFORMATION page (0800: OVER CUSTOM level
-// track and ITEM box). The page service loads them with its own loader (vtable +0x58, the
+// track and ITEM box), and the original factory inventory (0792: eight item cells).
+// The page service loads them with its own loader (vtable +0x58, the
 // call the upgrade page uses for uirs\0799.uir), so they are native dialogs
 // owned, drawn and destroyed by the service, and their button events reach the
 // service's OnUIEvent. The OVER CUSTOM entry of the OC-era upgrade page
@@ -26,6 +27,7 @@
 
 #include "sdgo/oc_custom_protocol.h"
 #include "sdgo/sdgo_api.h"
+#include "page_slide.h"
 
 namespace sdgo::oc_custom::client::ui {
 
@@ -42,6 +44,7 @@ static_assert(sizeof(NativeString) == 24, "native string ABI");
 NativeString ViewOf(const std::wstring& value);
 
 inline constexpr std::size_t kItemSlots = 10;
+inline constexpr std::size_t kInventoryCells = 8; // native 0792 inventory grid
 inline constexpr std::size_t kInfoItems = 3;  // 0800 ITEM box
 inline constexpr std::size_t kLevelIcons = 7; // 0800 OVER CUSTOM 1..6 and EX
 
@@ -51,6 +54,7 @@ enum class Action : std::uint8_t {
     up0, up1, up2, up3, up4, up5,           // <stat>UpBtn, protocol stat order
     reset,                                  // ResetBtn
     ex,                                     // ExBtn (OC EX ability)
+    ex0, ex1, ex2, ex3, ex4, ex5, ex6, ex7, ex_close,
     challenge_start, challenge_close, challenge_left, challenge_right,
     item0, item1, item2, item3, item4, item5, item6, item7, item8, item9,
     confirm_ok, confirm_cancel,
@@ -60,6 +64,10 @@ enum class Action : std::uint8_t {
     g1_slot_prev0, g1_slot_prev1, g1_slot_prev2, g1_slot_prev3,
     g1_slot_next0, g1_slot_next1, g1_slot_next2, g1_slot_next3,
     g1_save, g1_revert, g1_reset,
+    item_list,
+    owned0, owned1, owned2, owned3, owned4, owned5, owned6, owned7, owned8, owned9,
+    remove0, remove1, remove2,
+    items_previous, items_next,
 };
 
 inline constexpr std::size_t kG1Slots = 4;
@@ -93,6 +101,9 @@ struct Bindings {
     using RenderRotation = void(__thiscall*)(void*, float, float, float);
     using RenderModel = void*(__thiscall*)(void*);
     using ModelAnimation = void(__thiscall*)(void*, const NativeString*, int, float, float, int, int, int);
+    using AddRadio = std::uint32_t(__thiscall*)(void*, const NativeString*, int, int, int, int, int, int, int);
+    AddRadio add_radio = nullptr;
+    Refresh clear_skins = nullptr;
     Add add = nullptr;
     Refresh refresh = nullptr;
     RenderVoid render_lock = nullptr;
@@ -114,7 +125,7 @@ struct Bindings {
     bool Bind(const SdgoApi* api, SdgoMod* mod) noexcept;
 };
 
-enum Window : std::uint8_t { window_over = 0, window_challenge, window_confirm, window_info, window_g1, window_count };
+enum Window : std::uint8_t { window_over = 0, window_challenge, window_confirm, window_info, window_items, window_ex, window_g1, window_count };
 
 struct EntryView {
     bool visible = false;
@@ -123,6 +134,17 @@ struct EntryView {
 
 struct OverView {
     bool visible = false;
+    bool item_list = false;
+    bool items_enabled = false;
+    std::array<std::wstring, kItemSlots> item_text;
+    std::array<bool, kItemSlots> item_visible{};
+    std::array<bool, kItemSlots> item_enabled{};
+    std::array<bool, kItemSlots> item_selected{};
+    std::array<std::wstring, kItemSlots> item_model;
+    std::array<std::wstring, kItemSlots> item_count;
+    unsigned item_page = 0;
+    unsigned item_pages = 1;
+    std::wstring item_status;
     std::wstring notice;                       // NoticeStatic
     std::wstring normal_left, over_left;       // NomalPointStatic, OverPointStatic
     std::array<std::wstring, stat_count> label;
@@ -132,11 +154,16 @@ struct OverView {
     std::wstring reset;
     bool reset_enabled = false;
     bool ex_enabled = false;
+    bool ex_visible = false;
+    std::uint8_t ex_selected = 0;
+    std::array<std::wstring, 8> ex_labels;
+    bool ex_choices_enabled = false;
 };
 
 // 0800: the left page of the OC tab (replaces the upgrade page 0799 while shown).
 struct InfoView {
     bool visible = false;
+    bool items_enabled = false;
     std::array<bool, kLevelIcons> level{};          // OverCustomSlotIcon0..6 lit
     std::array<bool, kInfoItems> item{};            // an OC item fills the slot
     std::array<std::wstring, kInfoItems> item_text; // ItemNameStatic0..2
@@ -196,8 +223,10 @@ public:
     void Render(const EntryView& entry, const OverView& over, const InfoView& info, const ChallengeView& challenge,
                 const ConfirmView& confirm, const G1View& g1);
     void HideAll() noexcept;
+    void AdvancePageSlide() noexcept;
+    float PageOffset(Window window) const noexcept;
     // GameTest: a bound control by window ("entry", "over", "info",
-    // "challenge", "confirm", "g1") and original control name; the G改 1.0
+    // "challenge", "confirm", "items", "g1") and original control name; the G改 1.0
     // page's own controls are OcG1StyleBtn, OcStyleBackBtn, OcG1CategoryLeftBtn,
     // OcG1CategoryRightBtn and OcG1Slot<n>LeftBtn / OcG1Slot<n>RightBtn.
     void* Control(const char* window, const wchar_t* name) const noexcept;
@@ -211,6 +240,13 @@ public:
     bool page_hidden() const noexcept { return page_hidden_; }
 
 private:
+    void PositionPage() noexcept;
+    PageSlide page_slide_;
+    std::array<float, window_count> page_x_{};
+    bool page_positioned_ = false;
+    void LayoutChallenge(const ChallengeView& view);
+    std::array<void*,11> challenge_frame_{};
+    int challenge_rows_ = -1;
     struct Bound {
         std::uint8_t window = 0;
         const wchar_t* name = nullptr;
@@ -227,7 +263,8 @@ private:
     void SetStatic(std::uint8_t window, const wchar_t* name, const std::wstring& value);
     void SetItemName(std::size_t slot, const std::wstring& value);
     void* CreateIcon(void* dialog, const wchar_t* name, int x, int y, int width, int height, const wchar_t* sprite);
-    void SetLabel(Bound& control, const std::wstring& value, int align);
+    void SetLabel(Bound& control, const std::wstring& value, int align, int caption_height = 14);
+    void SetCaption(void* control, const std::wstring& value, int left, int top, int width, int height, int align);
     void SetState(void* control, bool visible, bool enabled) noexcept;
     void ShowIcon(void* control, bool visible) noexcept;
     // 0800 icons the layout keeps hidden draw nothing when shown later, so the
@@ -235,6 +272,7 @@ private:
     std::array<void*, kLevelIcons> level_icons_{};
     std::array<void*, kInfoItems> none_icons_{};
     std::array<void*, kInfoItems> none_texts_{};
+    std::array<std::wstring, kInventoryCells> inventory_models_{};
     // Item models shown in Item3DRender0..2 (loaded once per change).
     std::array<std::wstring, kInfoItems> models_shown_{};
     std::uint32_t models_loaded_ = 0;
@@ -256,14 +294,14 @@ private:
         int width = 0;
         int height = 0;
     };
-    std::array<Created, 24> created_{};
+    std::array<Created, 48> created_{};
     std::size_t created_count_ = 0;
     bool g1_attached_ = false;
     bool g1_native_hidden_ = false;
     bool AttachG1();
     void* CreateButton(std::uint8_t window, const wchar_t* name, int x, int y, int width, int height,
                        const wchar_t* sprite_base, int first_sprite, Action action);
-    void SetCreatedText(const wchar_t* name, const std::wstring& value, int align);
+    void SetCreatedText(const wchar_t* name, const std::wstring& value, int align, int offset_x = 0, int offset_y = 0);
     void SetCreatedState(const wchar_t* name, bool visible, bool enabled);
     void HideG1Native();
 
@@ -280,7 +318,7 @@ private:
     void* service_ = nullptr;
     void* page_dialog_ = nullptr;
     std::array<void*, window_count> dialogs_{};
-    std::array<Bound, 100> bound_{};
+    std::array<Bound, 192> bound_{};
     std::size_t bound_count_ = 0;
     void* entry_button_ = nullptr;
     void* entry_label_ = nullptr;

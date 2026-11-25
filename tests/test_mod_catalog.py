@@ -525,7 +525,7 @@ class PublicTextTests(unittest.TestCase):
                     "www.hko.gov.hk/", "www.lua.org/", "github.com/vikiboss/60s",
                     "docs.60s-api.viki.moe/", "www.bilibili.com/video/BV1Qa4y1z7eW",
                     "api-docs.deepseek.com/", "api.deepseek.com", "space.bilibili.com/564285",
-                    "space.bilibili.com/6664566")
+                    "space.bilibili.com/6664566", "github.com/xinntao/Real-ESRGAN")
     PRIVATE = re.compile(r"update\.bat|install\.bat|朋友服|friend[- ]servers?\b|"
                          r"\b[A-Za-z]:\\(?:Dev|Users)\\|\]\((?:\.\./)*skills/", re.I)
 

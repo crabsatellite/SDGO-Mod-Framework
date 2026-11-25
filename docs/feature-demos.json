@@ -314,6 +314,92 @@
       "title_en": "Native sticker library, placement, server-confirmed save and reload",
       "guide_zh": "docs/sticker-import.zh-CN.md",
       "guide_en": "docs/sticker-import.md"
+    },
+    {
+      "id": "oc-remaining-points",
+      "path": "docs/oc-remaining-points-demo.webp",
+      "since": "1.16.63",
+      "mods": [
+        "oc_custom_client"
+      ],
+      "title_zh": "工厂加点页显示的普通点和 OC 点余额",
+      "title_en": "Normal and OC points remaining as attack points are spent",
+      "guide_zh": "docs/over-custom.zh-CN.md",
+      "guide_en": "docs/over-custom.md"
+    },
+    {
+      "id": "oc-ex-selection",
+      "path": "docs/oc-ex-selection-demo.webp",
+      "since": "1.16.63",
+      "mods": [
+        "oc_custom_client",
+        "oc_custom_server",
+        "oc_custom_battle"
+      ],
+      "title_zh": "OC EX：取消、确认技能与重新查看已装备状态",
+      "title_en": "OC EX: cancel, confirm an ability and reopen the equipped choice",
+      "guide_zh": "docs/over-custom.zh-CN.md",
+      "guide_en": "docs/over-custom.md"
+    },
+    {
+      "id": "oc-parts-switch",
+      "path": "docs/oc-parts-switch-demo.webp",
+      "since": "1.16.63",
+      "mods": [
+        "oc_custom_client"
+      ],
+      "title_zh": "工厂强化部件分类切换",
+      "title_en": "Switching factory parts categories",
+      "guide_zh": "docs/over-custom.zh-CN.md",
+      "guide_en": "docs/over-custom.md"
+    },
+    {
+      "id": "oc-room-badge",
+      "path": "docs/oc-room-badge-demo.webp",
+      "since": "1.16.63",
+      "mods": [
+        "oc_custom_client"
+      ],
+      "title_zh": "等待房间中的体系与随机队伍提示",
+      "title_en": "Room system badge and random-team notice",
+      "guide_zh": "docs/over-custom.zh-CN.md",
+      "guide_en": "docs/over-custom.md"
+    },
+    {
+      "id": "oc-inspection-radar",
+      "path": "docs/oc-inspection-radar-demo.webp",
+      "since": "1.16.63",
+      "mods": [
+        "oc_custom_client"
+      ],
+      "title_zh": "同一台机体分配一个普通攻击点前后的六维图",
+      "title_en": "The same unit’s radar before and after one normal attack point",
+      "guide_zh": "docs/over-custom.zh-CN.md",
+      "guide_en": "docs/over-custom.md"
+    },
+    {
+      "id": "oc-unit-information",
+      "path": "docs/oc-unit-information-demo.webp",
+      "since": "1.16.63",
+      "mods": [
+        "oc_custom_client"
+      ],
+      "title_zh": "完整机体信息页与两套部件区",
+      "title_en": "Full unit inspection card and both parts sections",
+      "guide_zh": "docs/over-custom.zh-CN.md",
+      "guide_en": "docs/over-custom.md"
+    },
+    {
+      "id": "oc-page-entry",
+      "path": "docs/oc-page-entry-demo.webp",
+      "since": "1.16.63",
+      "mods": [
+        "oc_custom_client"
+      ],
+      "title_zh": "终极强化：两侧面板平滑滑入",
+      "title_en": "OC: both panels slide into the factory page",
+      "guide_zh": "docs/over-custom.zh-CN.md",
+      "guide_en": "docs/over-custom.md"
     }
   ]
 }

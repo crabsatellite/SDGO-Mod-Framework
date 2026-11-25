@@ -33,11 +33,14 @@
 #include "display_text.h"
 #include "factory_l10n.h"
 #include "g1_native.h"
+#include "item_selection.h"
 #include "original_ui.h"
 #include "radar.h"
 #include "room_marks.h"
+#include "unit_information.h"
 #include "sdgo/oc_custom_client_observer.h"
 #include "sdgo/oc_custom_protocol.h"
+#include "sdgo/oc_battle_loadout.h"
 #include "sdgo/inventory_app_state.h"
 #include "sdgo/oc_room_system.h"
 #include "sdgo/room_titles_current.h"
@@ -59,6 +62,7 @@ constexpr std::size_t kPageComponent = 0xA8;
 constexpr std::size_t kPageRecord = 0x6C;
 constexpr std::size_t kServiceActive = 0xAC;
 constexpr std::uint32_t kButtonClickEvent = 0x101;
+constexpr std::uint32_t kInventoryClickEvent = 0xA02; // native Item3DRender selection
 constexpr std::uint32_t kCheckClickEvent = 0x401;
 
 template <class T>
@@ -259,7 +263,9 @@ std::wstring Percent(std::int32_t hundredths) {
 
 std::wstring ItemLabel(const ChallengeItem& item, bool brief = false) {
     auto name = ItemName(item.item);
-    if (!name.empty() && name != std::to_wstring(item.item) && name != L"不可用") return name;
+    // Native item names can exceed the narrow inventory/selected-item cells.
+    // Use the effect there; the challenge and final confirmation keep the name.
+    if (!brief && !name.empty() && name != std::to_wstring(item.item) && name != L"不可用") return name;
     std::wstring label;
     if (item.probability_plus > 0) label = (brief ? L"+" : L"成功率+") + Percent(item.probability_plus);
     if (item.lv_prevention) label += label.empty() ? L"等级保护" : L" 等级保护";
@@ -299,8 +305,10 @@ std::wstring ItemModelPath(std::int32_t item) {
 enum class Pending : std::uint8_t {
     none, mode, profile, set_normal, set_over, reset_cost, reset, challenge, items, owned,
     g1_rules, g1_categories, g1_get, g1_set, g1_reset,
+    ex_info, ex_set,
 };
-enum class Confirm : std::uint8_t { none, message, allocate, reset, challenge, g1_reset };
+enum class Confirm : std::uint8_t { none, message, allocate, reset, challenge, g1_reset, ex_set };
+enum class InventoryLoad : std::uint8_t { unloaded, loading, ready, failed };
 
 struct State {
     std::uint64_t unit_uid = 0;
@@ -323,11 +331,20 @@ struct State {
     std::int32_t reset_gp = 0;
     std::uint8_t reset_work = 0;
     bool challenge_open = false;
+    bool ex_available = false;
+    bool ex_open = false;
+    bool ex_known = false;
+    std::uint8_t ex_pick = 0;
+    ExReply ex_info{};
     ChallengeItemsReply items{};
     std::array<bool, kChallengeItemMax> item_selected{};
+    bool item_list = false;
+    unsigned item_page = 0;
+    bool items_ready = false;
     // Every OC item the account holds, for the ITEM box of the OC tab page.
     ChallengeItemsReply owned{};
     bool owned_wanted = false;
+    InventoryLoad owned_load = InventoryLoad::unloaded;
     Confirm confirm = Confirm::none;
     std::uint32_t confirm_text_id = 0;
     std::wstring confirm_line0, confirm_line1;
@@ -423,10 +440,10 @@ int SumOf(const std::array<std::uint8_t, stat_count>& values) {
 }
 
 int NormalLeft(const State& s) {
-    return s.profile_present ? std::max(0, static_cast<int>(s.profile.normal_budget) - SumOf(s.profile.normal)) : 0;
+    return s.profile_present ? s.profile.normal_points : 0;
 }
 int OverLeft(const State& s) {
-    return s.profile_present ? std::max(0, static_cast<int>(s.profile.over_budget) - SumOf(s.profile.over)) : 0;
+    return s.profile_present && s.profile.oc_level >= 9 ? s.profile.over_points : 0;
 }
 bool ChallengeAvailable(const State& s) {
     return s.profile_present && s.profile.oc_level >= s.profile.normal_max_lv + 4 && s.profile.oc_level < 15;
@@ -438,11 +455,7 @@ bool G1Busy() {
 // Stat graph ranges of the client's six-dimension charts (grid type 7, ids
 // 27501..27506: stat index at +5, minimum +6, maximum +10), the scale of the
 // OC client's hexagon. The defaults are that table's values.
-struct GraphRange {
-    float minimum;
-    float maximum;
-};
-std::array<GraphRange, stat_count> g_graph = {{{1, 100}, {4000, 23800}, {70, 169}, {70, 169}, {1, 100}, {3000, 7950}}};
+radar::Ranges g_graph = radar::kDefaultRanges;
 bool g_graph_read = false;
 
 bool ReadGraphRow(const std::uint8_t* record, std::uint8_t* stat, float* minimum, float* maximum) noexcept {
@@ -472,12 +485,6 @@ void ReadGraphRanges() {
         }
     }
     LogF(SDGO_LOG_INFO, "oc chart: %u of 6 stat graph ranges read from the client table", found);
-}
-
-float GraphScale(std::size_t stat, float value) {
-    ReadGraphRanges();
-    const auto& range = g_graph[stat];
-    return (std::clamp(value, range.minimum, range.maximum) - range.minimum) / (range.maximum - range.minimum);
 }
 
 std::int32_t StatValue(const State& s, std::size_t stat, int extra_normal, int extra_over) {
@@ -627,7 +634,7 @@ void Render() {
     // 经验值转换 tab's slot (the OC tab selects it natively first).
     const bool active = PageActive() && UpgradeTabSelected();
     const bool oc = active && s.mode_known && s.server_oc_mode && s.profile_present;
-    const bool idle = !Busy(s) && s.confirm == Confirm::none;
+    const bool idle = !Busy(s) && s.confirm == Confirm::none && !s.ex_open;
     // Two systems, separate pages: the native tabs stay purely native, and the
     // OC tab shows only OC content (0800 in the upgrade page's place with the
     // OVER CUSTOM entry, 0794 beside it), as in the dual-system factory.
@@ -648,6 +655,32 @@ void Render() {
     ui::OverView over;
     // The allocation window is the OC tab's content; it never showed with the challenge window.
     over.visible = oc_content && !s.challenge_open;
+    over.item_list = s.item_list;
+    over.item_pages = (std::max)(1u, (static_cast<unsigned>(s.owned.count) + ui::kInventoryCells - 1) / ui::kInventoryCells);
+    over.item_page = (std::min)(s.item_page, over.item_pages - 1);
+    over.items_enabled = idle;
+    if (!s.owned.count) {
+        if (s.owned_wanted || s.owned_load == InventoryLoad::loading || s.owned_load == InventoryLoad::unloaded)
+            over.item_status = L"正在读取强化道具…";
+        else if (s.owned_load == InventoryLoad::failed)
+            over.item_status = L"强化道具读取失败\n请切回六维图后重试";
+        else
+            over.item_status = L"未持有强化道具\n可使用成功率或等级保护道具";
+    }
+    for (std::size_t slot = 0; slot < s.owned.count && slot < ui::kItemSlots; ++slot) {
+        const auto& item = s.owned.items[slot];
+        std::size_t eligible = 0;
+        while (eligible < s.items.count && s.items.items[eligible].item != item.item) ++eligible;
+        const bool available = s.items_ready && eligible < s.items.count && s.items.items[eligible].count > 0;
+        const bool selected = available && s.item_selected[eligible];
+        over.item_visible[slot] = true;
+        over.item_enabled[slot] = idle && available;
+        over.item_selected[slot] = selected;
+        over.item_text[slot] = ItemLabel(item, true);
+        if (!available && s.items_ready) over.item_text[slot] = L"不可用：" + over.item_text[slot];
+        over.item_count[slot] = std::to_wstring(item.count);
+        over.item_model[slot] = ItemModelPath(item.item);
+    }
     if (oc) {
         static const std::uint32_t kLabels[stat_count] = {126638, 126639, 126640, 126641, 126642, 126643};
         static const wchar_t* kFallback[stat_count] = {L"推进力", L"耐久力", L"攻击力", L"防御力", L"机动力", L"必杀技"};
@@ -655,7 +688,7 @@ void Render() {
         over.normal_left = std::to_wstring(NormalLeft(s));
         over.over_left = std::to_wstring(OverLeft(s));
         const bool can_normal = NormalLeft(s) > 0;
-        const bool can_over = !can_normal && s.profile.oc_level >= 9 && OverLeft(s) > 0;
+        const bool can_over = !can_normal && OverLeft(s) > 0;
         for (std::size_t stat = 0; stat < stat_count; ++stat) {
             over.label[stat] = Text(kLabels[stat], kFallback[stat]);
             over.normal[stat] = std::to_wstring(s.profile.normal[stat]);
@@ -666,36 +699,41 @@ void Render() {
         over.reset = over_reset ? Text(126647, L"终极强化还原") : Text(126646, L"基本强化点数还原");
         over.reset_enabled = idle && !s.challenge_open &&
                              (over_reset ? SumOf(s.profile.over) > 0 : SumOf(s.profile.normal) > 0);
-        over.ex_enabled = false;
+        over.ex_enabled = idle && s.ex_available && s.profile.oc_level == 15;
+        over.ex_visible = oc_content && s.ex_open;
+        over.ex_selected = s.profile.extra_bonus;
+        over.ex_choices_enabled = s.ex_known && !Busy(s) && s.confirm == Confirm::none;
+        static const wchar_t* labels[8] = {L"攻击力 +3%", L"防御力 +3%", L"机动等级 +3", L"推进等级 +3",
+            L"移动等级 +3", L"横移等级 +7", L"锁定距离 +700", L"推进恢复 +7"};
+        for (std::size_t index = 0; index < 8; ++index) over.ex_labels[index] = labels[index];
+        if (s.profile.extra_bonus >= 1 && s.profile.extra_bonus <= 8)
+            over.notice += L" · EX " + std::wstring(labels[s.profile.extra_bonus - 1]);
     }
     // The OC tab's left page: OVER CUSTOM 1..6 and EX lit up to the unit's OC
-    // level (OC level 9 is OVER CUSTOM1), and the OC items the account holds.
+    // level (OC level 9 is OVER CUSTOM1), and the items placed for the challenge.
     ui::InfoView info;
     info.visible = oc_content; // stays while the challenge window covers 0794
+    info.items_enabled = idle;
     radar::Shape shape;
-    shape.visible = over.visible;
+    shape.visible = over.visible && !s.item_list;
     if (oc_tab) {
         for (std::size_t level = 0; level < ui::kLevelIcons; ++level) info.level[level] = s.profile.oc_level >= 9 + level;
-        for (std::size_t slot = 0; slot < ui::kInfoItems && slot < s.owned.count; ++slot) {
-            const auto& item = s.owned.items[slot];
+        std::size_t slot = 0;
+        for (std::size_t index = 0; index < s.items.count && slot < ui::kInfoItems; ++index) {
+            if (!s.item_selected[index]) continue;
+            const auto& item = s.items.items[index];
             info.item[slot] = true;
-            info.item_text[slot] = ItemLabel(item, true) + L" x" + std::to_wstring(item.count);
+            info.item_text[slot] = ItemLabel(item, true);
             info.item_model[slot] = ItemModelPath(item.item);
+            ++slot;
         }
         // All six dimensions on the 0794 hexagon as the OC client drew them
         // (radar.h): the unit's own stats, with the normal points, with the
         // normal and Over points (the pending layer equals it: points are
         // saved one by one), each stat scaled by its stat graph range.
-        for (std::size_t stat = 0; stat < stat_count; ++stat) {
-            const auto& p = s.profile;
-            const float base = static_cast<float>(p.base[stat]);
-            const float normal = base + static_cast<float>(p.normal[stat]) * static_cast<float>(p.normal_stat[stat]);
-            const float with_over = normal + static_cast<float>(p.over[stat]) * static_cast<float>(p.over_stat[stat]);
-            shape.layer[3][stat] = GraphScale(stat, base);
-            shape.layer[2][stat] = GraphScale(stat, normal);
-            shape.layer[1][stat] = GraphScale(stat, with_over);
-            shape.layer[0][stat] = shape.layer[1][stat];
-        }
+        ReadGraphRanges();
+        shape = radar::FromProfile(s.profile, g_graph);
+        shape.visible = over.visible && !s.item_list;
     }
     radar::Set(shape);
     ui::ChallengeView challenge;
@@ -751,6 +789,12 @@ void Render() {
 
 void ApplyProfile(const Profile& profile) {
     auto& s = g_state_data;
+    if (s.profile_present && s.profile.oc_level != profile.oc_level) {
+        s.item_selected = {};
+        s.items = {};
+        s.items_ready = false;
+        if (s.item_list) s.queued = Pending::items;
+    }
     s.profile = profile;
     s.profile_present = true;
 }
@@ -891,12 +935,17 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
         Render();
         return;
     }
-    // The ITEM box refresh is background bookkeeping: it never replaces the
+    // The owned-item refresh is background bookkeeping: it never replaces the
     // result of the player's last OC command.
     if (static_cast<Command>(command) == Command::owned_items) {
         ChallengeItemsReply reply;
-        if (static_cast<WireStatus>(status) == WireStatus::success && payload && ReadChallengeItemsReply(payload, bytes, &reply))
-            s.owned = reply;
+        const bool valid = static_cast<WireStatus>(status) == WireStatus::success && payload &&
+            ReadChallengeItemsReply(payload, bytes, &reply) && reply.ret_val == 0;
+        s.owned = valid ? reply : ChallengeItemsReply{};
+        s.owned_load = valid ? InventoryLoad::ready : InventoryLoad::failed;
+        LogF(valid ? SDGO_LOG_INFO : SDGO_LOG_WARN, "oc owned items: status=%d bytes=%u valid=%u count=%u",
+             status, bytes, valid ? 1u : 0u, static_cast<unsigned>(s.owned.count));
+        s.item_page = (std::min)(s.item_page, s.owned.count ? (static_cast<unsigned>(s.owned.count) - 1) / ui::kInventoryCells : 0u);
         Render();
         return;
     }
@@ -920,6 +969,7 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
             s.mode_known = true;
             s.server_oc_mode = mode.enabled && mode.oc_mode;
             s.room_rule = mode.enabled && (mode.flags & kModeFlagRoomRule) != 0;
+            s.ex_available = mode.enabled && (mode.flags & kModeFlagEx) != 0;
             g_g1.available = s.room_rule && (mode.flags & kModeFlagG1) != 0;
             s.mode_reply_seen = true;
             room_marks::SetG1Available(g_g1.available);
@@ -933,6 +983,29 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
             if (ret_val == 0) ApplyProfile(profile);
         }
         break;
+    case Command::ex_info:
+    case Command::ex_set: {
+        ExReply reply;
+        if (ReadExReply(payload, bytes, &reply) && reply.profile.unit_uid == s.unit_uid) {
+            s.last_ret_val = reply.ret_val;
+            s.ex_info = reply;
+            s.ex_known = reply.profile.unit_number != 0 && reply.profile.oc_level == 15;
+            if (reply.profile.unit_number) ApplyProfile(reply.profile);
+            if (reply.ret_val == 0 && static_cast<Command>(command) == Command::ex_set) {
+                s.ex_open = false;
+                RefreshActiveUnit();
+                s.owned_wanted = true;
+                ShowMessage(0, L"EX 技能设置成功。");
+            } else if (reply.ret_val != 0) {
+                const wchar_t* text = reply.ret_val == 8 ? L"机体资料已更新，请重新选择 EX 技能。"
+                    : reply.ret_val == 4 || reply.ret_val == 5 ? L"EX 能力修改器不足。"
+                    : reply.ret_val == 1 ? L"已装备该 EX 技能或所选技能无效。"
+                    : L"无法设置 EX 技能，请确认机体已达到 EX 等级及道具数量。";
+                ShowMessage(0, text);
+            }
+        }
+        break;
+    }
     case Command::set_normal:
     case Command::set_over: {
         SetReply reply;
@@ -983,8 +1056,9 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
         ChallengeItemsReply reply;
         if (ReadChallengeItemsReply(payload, bytes, &reply)) {
             s.last_ret_val = reply.ret_val;
-            s.items = reply;
-            s.item_selected = {};
+            s.item_selected = ReconcileItems(s.items, s.item_selected, reply);
+            s.items = reply.ret_val == 0 ? reply : ChallengeItemsReply{};
+            s.items_ready = true;
         }
         break;
     }
@@ -995,6 +1069,9 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
             s.last_upgrade_success = reply.success;
             ApplyProfile(reply.profile);
             s.challenge_open = false;
+            s.items = {};
+            s.item_selected = {};
+            s.items_ready = false;
             if (reply.ret_val == 2) {
                 ShowMessage(126680, Text(126680, L"该机体经验值不足,所以不能进行终极强化."));
             } else if (reply.ret_val == 6) {
@@ -1003,6 +1080,12 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
                 ShowMessage(126700, Text(126700, L"该机体等级不能进行终极强化."));
             } else if (reply.success) {
                 ShowMessage(126704, Format(Text(126704, L"[ %s ]强化成功!"), L"s", LevelName(reply.oc_level)));
+                if (reply.oc_level == 15 && s.ex_available) {
+                    s.ex_open = true;
+                    s.ex_known = false;
+                    s.queued = Pending::ex_info;
+                    s.confirm_line1 = L"请选择并确认 EX 技能。";
+                }
             } else if (reply.lv_prevention) {
                 // A level-protection item kept the level.
                 ShowMessage(126690, Format(Text(126690, L"终极强化失败.\n当前机体等级的经验值下降为%s."), L"s",
@@ -1013,6 +1096,9 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
             }
             if (reply.ret_val == 0) RefreshActiveUnit();
             s.owned_wanted = true; // the challenge may have used OC items
+            // Reaching EX already queued the ability query. Inventory refresh
+            // must not replace it while the item grid remains open.
+            if (s.item_list && !s.ex_open) s.queued = Pending::items;
         }
         break;
     }
@@ -1033,12 +1119,15 @@ bool SendCommand(Command command, const std::uint8_t* payload, std::uint32_t byt
 
 void PumpQueue() {
     auto& s = g_state_data;
+    // Do not reserve background work in the single foreground queue while a
+    // reply is outstanding. That reply can enqueue a profile/eligibility
+    // refresh and replace the reserved request before it is ever sent.
+    if (s.outstanding != Pending::none || !TransportIdle()) return;
     if (s.queued == Pending::none && s.owned_wanted && s.mode_known && s.server_oc_mode && s.unit_uid) {
         s.queued = Pending::owned;
-        s.owned_wanted = false;
     }
     // A mode learnt from a record carrier lacks the reply's flags: ask once.
-    if (s.queued == Pending::none && s.mode_known && s.room_rule && !s.mode_reply_seen && !g_g1.mode_asked) {
+    if (s.queued == Pending::none && s.mode_known && !s.mode_reply_seen && !g_g1.mode_asked) {
         s.queued = Pending::mode;
         g_g1.mode_asked = true;
     }
@@ -1075,7 +1164,27 @@ void PumpQueue() {
         const auto command = next == Pending::items   ? Command::challenge_items
                              : next == Pending::owned ? Command::owned_items
                                                       : Command::get_profile;
-        SendCommand(command, payload.data(), kUnitRequestBytes, next);
+        if (SendCommand(command, payload.data(), kUnitRequestBytes, next)) {
+            if (next == Pending::owned) {
+                s.owned_wanted = false;
+                s.owned_load = InventoryLoad::loading;
+            }
+        } else {
+            // Read-only requests can retry when the carrier becomes idle.
+            s.queued = next;
+        }
+        break;
+    }
+    case Pending::ex_info: {
+        UnitRequest request{s.unit_uid};
+        WriteUnitRequest(payload.data(), request);
+        SendCommand(Command::ex_info, payload.data(), kUnitRequestBytes, next);
+        break;
+    }
+    case Pending::ex_set: {
+        ExSetRequest request{s.unit_uid, s.ex_info.profile.revision, s.ex_pick};
+        WriteExSetRequest(payload.data(), request);
+        SendCommand(Command::ex_set, payload.data(), kExSetRequestBytes, next);
         break;
     }
     case Pending::set_normal:
@@ -1160,7 +1269,7 @@ std::wstring SelectedItemNames(std::size_t* count) {
     std::wstring names[3];
     std::size_t used = 0;
     for (std::size_t slot = 0; slot < s.items.count && used < 3; ++slot)
-        if (s.item_selected[slot]) names[used++] = ItemName(s.items.items[slot].item);
+        if (s.item_selected[slot]) names[used++] = ItemLabel(s.items.items[slot]);
     *count = used;
     if (used == 1) return Format(Text(126683, L"进行终极强化.\n使用道具 : %s"), L"s", names[0]);
     if (used == 2) return Format(Text(126684, L"进行终极强化.\n使用道具 : %s , %s"), L"ss", names[0], names[1]);
@@ -1273,6 +1382,7 @@ void HandleAction(ui::Action action) {
             if (kind == Confirm::allocate) Queue(s.request_over ? Pending::set_over : Pending::set_normal);
             else if (kind == Confirm::reset) Queue(Pending::reset, s.reset_work);
             else if (kind == Confirm::challenge) Queue(Pending::challenge);
+            else if (kind == Confirm::ex_set) Queue(Pending::ex_set);
             else if (kind == Confirm::g1_reset && g_g1.action == Pending::none) {
                 g_g1.action = Pending::g1_reset;
                 ++g_g1_page.resets;
@@ -1282,12 +1392,63 @@ void HandleAction(ui::Action action) {
         Render();
         return;
     }
-    if (s.confirm == Confirm::none && HandleG1Action(action)) return;
+    if (s.confirm == Confirm::none && !s.ex_open && HandleG1Action(action)) return;
     if (s.confirm != Confirm::none || Busy(s)) return;
+    if (action == ui::Action::ex_close) { s.ex_open = false; Render(); return; }
+    if (action == ui::Action::ex && s.ex_available && s.profile.oc_level == 15) {
+        s.ex_open = true; s.ex_known = false; Queue(Pending::ex_info); return;
+    }
+    if (s.ex_open) {
+        if (s.ex_known && action >= ui::Action::ex0 && action <= ui::Action::ex7) {
+            const auto ability = static_cast<std::uint8_t>(static_cast<unsigned>(action) - static_cast<unsigned>(ui::Action::ex0) + 1);
+            if (ability == s.profile.extra_bonus) return;
+            s.ex_pick = ability;
+            static const wchar_t* labels[8] = {L"攻击力", L"防御力", L"机动力", L"推进力", L"移动速度", L"横移", L"锁定距离", L"推进恢复"};
+            if (s.ex_info.remaining < s.ex_info.cost) ShowMessage(0, L"EX 能力修改器不足。");
+            else ShowConfirm(Confirm::ex_set, 0, L"确定设置 EX 技能：" + std::wstring(labels[ability - 1]) + L"？\n" +
+                L"消耗 1 个 EX 能力修改器，现有 " + std::to_wstring(s.ex_info.remaining) + L" 个。");
+        }
+        Render(); return;
+    }
+    if (action == ui::Action::items_previous || action == ui::Action::items_next) {
+        if (action == ui::Action::items_previous && s.item_page > 0) --s.item_page;
+        if (action == ui::Action::items_next && (s.item_page + 1) * ui::kInventoryCells < s.owned.count) ++s.item_page;
+        Render();
+        return;
+    }
+    if (action == ui::Action::item_list) {
+        s.item_list = !s.item_list;
+        if (s.item_list) {
+            s.owned_wanted = true;
+            Queue(Pending::items);
+        }
+        Render();
+        return;
+    }
+    if (action >= ui::Action::owned0 && action <= ui::Action::owned9) {
+        const auto slot = s.item_page * ui::kInventoryCells + static_cast<std::size_t>(action) - static_cast<std::size_t>(ui::Action::owned0);
+        if (!s.items_ready || slot >= s.owned.count) return;
+        for (std::size_t index = 0; index < s.items.count; ++index)
+            if (s.items.items[index].item == s.owned.items[slot].item && s.items.items[index].count > 0) {
+                HandleAction(static_cast<ui::Action>(static_cast<int>(ui::Action::item0) + index));
+                return;
+            }
+        return;
+    }
+    if (action >= ui::Action::remove0 && action <= ui::Action::remove2) {
+        auto slot = static_cast<std::size_t>(action) - static_cast<std::size_t>(ui::Action::remove0);
+        for (std::size_t index = 0; index < s.items.count; ++index)
+            if (s.item_selected[index] && slot-- == 0) {
+                s.item_selected[index] = false;
+                break;
+            }
+        Render();
+        return;
+    }
     if (ui::IsUp(action)) {
         const auto stat = ui::UpStat(action);
         const bool normal = NormalLeft(s) > 0;
-        const bool over = !normal && s.profile.oc_level >= 9 && OverLeft(s) > 0;
+        const bool over = !normal && OverLeft(s) > 0;
         if (!normal && !over) {
             ShowMessage(126270, Text(126270, L"无法使用强化点数."));
         } else if (StatValue(s, stat, normal ? 1 : 0, over ? 1 : 0) > kStatCaps[stat]) {
@@ -1314,20 +1475,20 @@ void HandleAction(ui::Action action) {
             ShowMessage(126700, Text(126700, L"该机体等级不能进行终极强化."));
         } else {
             s.challenge_open = true;
-            s.items = {};
-            s.item_selected = {};
             Queue(Pending::items);
             return;
         }
     } else if (action == ui::Action::challenge_close) {
         s.challenge_open = false;
+        s.ex_open = false;
+        s.ex_known = false;
     } else if (ui::IsItem(action)) {
         const auto slot = ui::ItemIndex(action);
         if (slot < s.items.count) {
             std::size_t selected = 0;
             for (std::size_t index = 0; index < s.items.count; ++index) selected += s.item_selected[index] ? 1 : 0;
             if (!s.item_selected[slot] && selected >= 3) {
-                ShowMessage(126692, Text(126692, L"同样的道具不能重复使用2个."));
+                ShowMessage(0, L"最多放置三种强化道具，每种一件。");
             } else {
                 s.item_selected[slot] = !s.item_selected[slot];
             }
@@ -1353,6 +1514,13 @@ void AdoptRecord(void* component) {
         radar::Restart();
         s.profile_present = false;
         s.challenge_open = false;
+        s.item_list = false;
+        s.item_page = 0;
+        s.items_ready = false;
+        s.items = {};
+        s.item_selected = {};
+        s.ex_open = false;
+        s.ex_known = false;
         s.confirm = Confirm::none;
     }
     s.unit_uid = uid;
@@ -1609,6 +1777,7 @@ void __fastcall PageUpdateHook(void* owner, void*) {
             // frame checks it, so the OC page shows in the frame the native
             // page would have.
             else if (OcTabPending() && g_ui.Alive()) Render();
+            g_ui.AdvancePageSlide();
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         g_ui.Detach();
@@ -1621,7 +1790,8 @@ bool DispatchClick(void* service, std::uint32_t event, void* control) {
         return false;
     const auto action = g_ui.Click(control);
     if (action == ui::Action::none) return false;
-    if (ui::IsItem(action) ? (event != kCheckClickEvent && event != kButtonClickEvent) : event != kButtonClickEvent)
+    const bool inventory = action >= ui::Action::owned0 && action <= ui::Action::owned9;
+    if (inventory ? event != kInventoryClickEvent : ui::IsItem(action) ? (event != kCheckClickEvent && event != kButtonClickEvent) : event != kButtonClickEvent)
         return true; // ours, but not a click (hover, leave): swallow
     const DWORD error = GetLastError();
     __try {
@@ -1716,50 +1886,54 @@ SetupMark* MarkFor(std::uint8_t* unit) {
     return &(g_setups.back() = SetupMark{unit, false});
 }
 
-// Diagnostic for room systems: does the local battle unit carry the record's
-// own custom skills? The battle server copies them into the battle unit it
-// sends (server +0x644) unless the room plays OC; the client unit is searched
-// for the record's four UnitSkill values.
-constexpr std::size_t kUnitScanBytes = 0x4000;
+// Observe the native skill-object vector, never report desired profile IDs
+// as though they were found in the battle unit.
 std::uint32_t g_battle_skills_seen = 0;
 std::int32_t g_battle_skills_offset = -1;
 std::array<std::uint16_t, kCustomSkillCount> g_battle_skills{};
-std::uint8_t g_unit_scan[kUnitScanBytes];
-
-std::size_t CopyUnitBytes(const std::uint8_t* unit) noexcept {
-    std::size_t copied = 0;
-    for (; copied < kUnitScanBytes; copied += 0x1000) {
-        __try {
-            std::memcpy(g_unit_scan + copied, unit + copied, 0x1000);
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            break;
-        }
-    }
-    return copied;
-}
 
 void NoteBattleSkills(const std::uint8_t* unit) noexcept {
-    if (!g_profile || !*g_profile) return;
-    std::array<std::uint16_t, kCustomSkillCount> wanted{};
-    std::memcpy(wanted.data(), *g_profile + kProfileActiveRecord + kCustomSkillOffset, sizeof(wanted));
-    if (!wanted[0] && !wanted[1] && !wanted[2] && !wanted[3]) return;
-    const std::size_t copied = CopyUnitBytes(unit);
-    std::int32_t found = -1;
-    for (std::size_t offset = 0; offset + sizeof(wanted) <= copied; offset += 2)
-        if (std::memcmp(g_unit_scan + offset, wanted.data(), sizeof(wanted)) == 0) {
-            found = static_cast<std::int32_t>(offset);
-            break;
+    g_battle_skills = {};
+    g_battle_skills_offset = -1;
+    __try {
+        const auto first = Read<std::uintptr_t>(unit, 0xAF0);
+        const auto last = Read<std::uintptr_t>(unit, 0xAF4);
+        if (last < first || last - first > kCustomSkillCount * sizeof(void*) || (last - first) % sizeof(void*)) return;
+        for (std::size_t slot = 0; slot < (last - first) / sizeof(void*); ++slot) {
+            const auto* skill = Read<const std::uint8_t*>(reinterpret_cast<void*>(first), slot * sizeof(void*));
+            const auto* row = Read<const std::uint8_t*>(skill, 4);
+            g_battle_skills[slot] = static_cast<std::uint16_t>(Read<std::uint32_t>(row));
         }
-    if (!g_battle_skills_seen || found != g_battle_skills_offset || wanted != g_battle_skills) {
-        char line[200];
-        std::snprintf(line, sizeof(line), "oc battle unit custom skills %u/%u/%u/%u %s offset=%d (searched %u bytes)",
-                      wanted[0], wanted[1], wanted[2], wanted[3], found >= 0 ? "present" : "absent", found,
-                      static_cast<unsigned>(copied));
-        Log(SDGO_LOG_INFO, line);
+        g_battle_skills_offset = 0xAF0;
+        ++g_battle_skills_seen;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_battle_skills = {};
     }
-    g_battle_skills = wanted;
-    g_battle_skills_offset = found;
-    ++g_battle_skills_seen;
+}
+
+void* g_battle_loadout_original = nullptr;
+void __cdecl SelectNativeBattleLoadout(std::uint8_t* record, std::uint8_t* block) noexcept {
+    __try {
+        RefreshRoomView();
+        SelectBattleLoadout(block, record, g_room_view.known, g_room_view.system);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log(SDGO_LOG_ERROR, "oc: native battle loadout could not be selected");
+    }
+}
+__declspec(naked) void BattleLoadoutDetour() {
+    __asm {
+        pushfd
+        pushad
+        lea eax, [edi - 0x32]
+        push eax
+        lea eax, [ebx - 0x14]
+        push eax
+        call SelectNativeBattleLoadout
+        add esp, 8
+        popad
+        popfd
+        jmp dword ptr [g_battle_loadout_original]
+    }
 }
 
 // --- Room-system marks (room list and waiting room) ------------------------------
@@ -1775,10 +1949,9 @@ bool RoomRuleKnown() {
 
 void LogMark(const char* message) { Log(SDGO_LOG_INFO, message); }
 
-// The lobby asks the World server for its mode itself: a player who goes
-// straight to the room list (never through the factory) still gets the room
-// marks and the create window's 体系 row.
-void AskModeFromLobby() noexcept {
+// An invited or quick-joining guest can reach the waiting room before the
+// room list has a chance to send the World mode query.
+void AskRoomMode() noexcept {
     static std::uint64_t last = 0;
     auto& s = g_state_data;
     const auto now = GetTickCount64();
@@ -1795,7 +1968,7 @@ void AskModeFromLobby() noexcept {
 
 void __fastcall RoomListUpdateHook(void* service, void*) {
     g_room_list_update_original(service);
-    AskModeFromLobby();
+    AskRoomMode();
     if (!RoomRuleKnown()) return;
     room_marks::MarkRoomList(service);
     room_marks::UpdateCreateWindow();
@@ -1818,6 +1991,7 @@ void __stdcall MakeRoomAiEventHook(void* service, std::uint32_t event, std::uint
 
 void __fastcall TitleBarUpdateHook(void* title_bar, void*) {
     g_titlebar_update_original(title_bar);
+    AskRoomMode();
     if (!RoomRuleKnown()) return;
     RefreshRoomView(true);
     if (g_room_view.known) room_marks::MarkTitleBar(title_bar, g_room_view.system);
@@ -1901,7 +2075,7 @@ struct SpecialStats {
     std::uint32_t family = 0, weapon = 0;
     std::int32_t damage_size = 0, carried = 0, gain = 0, native_value = 0, value = 0, targets = 0;
     float random = 0.0f;
-    std::uint32_t block_seen = 0;
+    std::uint32_t block_seen = 0, block_ex = 0;
     std::int32_t block_attack = 0, block_defense = 0, base_attack = 0, base_defense = 0, attack_gain = 0,
                  defense_gain = 0;
 };
@@ -1929,6 +2103,7 @@ void NoteBattleStats(std::uint8_t* unit, bool count) noexcept {
         auto* spec = Read<std::uint8_t*>(unit, 0x9C4);
         if (!spec) return;
         g_special.block_attack = Read<std::uint16_t>(unit, kUnitStatBlock + 0x0E);
+        g_special.block_ex = Read<std::uint8_t>(unit, kUnitStatBlock + 13);
         g_special.block_defense = Read<std::uint16_t>(unit, kUnitStatBlock + 0x10);
         g_special.base_attack = Read<std::uint16_t>(spec, kSpecAttack);
         g_special.base_defense = Read<std::uint16_t>(spec, kSpecDefense);
@@ -2154,8 +2329,6 @@ struct OcTab {
     void* unit_up = nullptr;
     void* status = nullptr;   // StatusRadio: the 强化部件 (custom-skill attribute) tab
     void* selected = nullptr; // the native tab radio the menu last selected
-    float top = 0.0f;         // the tab row's y; a selected tab stands 16 px higher
-    bool raised = false;
     bool mode = false;        // the upgrade page shows the OC tab content
     bool requested = false;   // entering OC mode once the upgrade page is active
 };
@@ -2239,6 +2412,16 @@ struct InventorySeen {
 };
 std::array<InventorySeen, 4> g_inventories{};
 
+// The native 0x2353 drag-start message bypasses dialog visibility and hit-tests
+// the inventory's eight cells directly. On the OC tab those coordinates belong
+// to our filtered holdings, not to the native inventory's different item order.
+using InventoryDragStart = void(__thiscall*)(void*, void*);
+InventoryDragStart g_inventory_drag_start_original = nullptr;
+void __fastcall InventoryDragStartHook(void* service, void*, void* message) {
+    if (g_oc_page_shown) return;
+    g_inventory_drag_start_original(service, message);
+}
+
 void __fastcall InventoryUpdateHook(void* service, void*) {
     g_inventory_update_original(service);
     __try {
@@ -2295,6 +2478,20 @@ void __fastcall HeaderUpdateHook(void* service, void*) {
 using FactoryUpdate = void(__thiscall*)(void*);
 FactoryUpdate g_factory_update_original = nullptr;
 void* g_factory_vtable = nullptr;
+FactoryUpdate g_factory_preview_input_original = nullptr;
+std::uint32_t g_preview_blocked = 0, g_preview_forwarded = 0;
+void __fastcall FactoryPreviewInputHook(void* service, void*) {
+    if (Read<void*>(service) == g_factory_vtable && g_ui.Alive() &&
+        (g_ui.Visible("challenge") || g_ui.Visible("confirm") || g_ui.Visible("ex"))) {
+        // This routine reads raw mouse input independently of native hit testing.
+        // Cancel an existing drag too: closing the modal must not resume it.
+        PutValue<std::uint32_t>(service, 0x3F4, 0);
+        ++g_preview_blocked;
+        return;
+    }
+    ++g_preview_forwarded;
+    g_factory_preview_input_original(service);
+}
 struct HiddenAction {
     void* control = nullptr;
     std::uint8_t visible = 0;
@@ -2576,6 +2773,11 @@ std::size_t OcAreas(bool oc_page, std::array<Rect, ui::window_count>& areas) noe
         const bool page_area = oc_page && (id == ui::window_over || id == ui::window_info);
         if ((!g_ui.window_shown(id) && !page_area) || !g_ui.window_dialog(id)) continue;
         auto rect = RectOf(g_ui.window_dialog(id));
+        // Native inventory suppression covers the final page columns even
+        // while the OC panels themselves are sliding in from the edges.
+        const float offset = g_ui.PageOffset(id);
+        rect.left -= offset;
+        rect.right -= offset;
         if (page_area && id == ui::window_over) rect.right = 1.0e6f;
         if (page_area && id == ui::window_info) rect.left = -1.0e6f;
         areas[count++] = rect;
@@ -2655,26 +2857,13 @@ void HideUnderWindows(bool oc_page, void* only_service) noexcept {
     }
 }
 
-// The OC tab looks selected like a native tab: the selected skin (sprs\8467,
-// its pressed state) and 16 px above the row; 经验值转换 shows unselected.
+// Selection is a native CUIRadio state; its own update selects and animates
+// all four skins, including their original origin offsets.
 void SetTabLook(bool oc) noexcept {
     __try {
-        if (g_tab.button) {
-            PutValue<std::uint16_t>(g_tab.button, 0x21C, oc ? 1 : 0);
-            if (g_tab.raised != oc) {
-                PutValue<float>(g_tab.button, 0x14C, oc ? g_tab.top - 16.0f : g_tab.top);
-                if (g_refresh_geometry) g_refresh_geometry(g_tab.button);
-                // Skin records (button +0x1A4..+0x1A8): normal, hover, selected.
-                // The raised tab draws the selected skin as its normal state.
-                auto** first = Read<void**>(g_tab.button, 0x1A4);
-                auto** last = Read<void**>(g_tab.button, 0x1A8);
-                if (first && last && last - first >= 3) std::swap(first[0], first[2]);
-                g_tab.raised = oc;
-            }
-        }
+        if (g_tab.button) PutValue<std::uint8_t>(g_tab.button, 0x21C, oc ? 1 : 0);
         if (g_tab.unit_up && oc) PutValue<std::uint8_t>(g_tab.unit_up, 0x21C, 0);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-    }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
 // The OC page takes the slot once the menu has really shown the 经验值转换
@@ -2727,7 +2916,7 @@ void ExitOcMode() {
 bool CreateTab(void* service) {
     void* component = static_cast<std::uint8_t*>(service) + kPageComponent;
     void* dialog = Read<void*>(component, 0x28);
-    if (!dialog || !g_bindings.add || !g_bindings.find || !g_bindings.skin || !g_bindings.text) return false;
+    if (!dialog || !g_bindings.add_radio || !g_bindings.find || !g_bindings.skin || !g_bindings.text) return false;
     std::array<void*, kTabRadioCount> radios{};
     for (std::size_t index = 0; index < kTabRadioCount; ++index) {
         radios[index] = Read<void*>(service, kTabRadios + index * sizeof(void*));
@@ -2763,41 +2952,47 @@ bool CreateTab(void* service) {
     }
     const std::wstring name = L"OverCustomRadio";
     const auto native_name = ui::ViewOf(name);
-    g_bindings.add(dialog, &native_name, static_cast<int>(oc_x), static_cast<int>(top), width, height, 0);
-    void* button = g_bindings.find(dialog, &native_name, 4);
+    g_bindings.add_radio(dialog, &native_name, Read<int>(unit_up, 0x27C),
+                         static_cast<int>(oc_x), static_cast<int>(top), width, height, 0, 0);
+    void* button = g_bindings.find(dialog, &native_name, 12);
     if (!button || Read<void*>(button, 0x15C) != dialog) return false;
     PutValue<std::uint8_t>(button, 0x168, 0);
-    // The native tab radios' skins: normal, hover and, as this button's pressed
-    // state, the radios' selected skin (their fourth), so the open OC tab looks
-    // selected; the caption style matches too.
+    // Own each sprite instance, preserving every native state's art and origin.
     auto** first = Read<std::uint8_t**>(unit_up, 0x1A4);
     auto** last = Read<std::uint8_t**>(unit_up, 0x1A8);
     const auto count = first && last && last >= first ? static_cast<std::size_t>(last - first) : 0;
     if (count >= 4) {
-        for (std::size_t index : {0u, 1u, 3u}) {
+        for (std::size_t index : {0u, 1u, 2u, 3u}) {
             if (!first[index] || !Read<void*>(first[index])) continue;
             g_bindings.skin(button, reinterpret_cast<const ui::NativeString*>(first[index] + 4), Read<std::uint8_t>(first[index], 0x44),
                             Read<std::uint32_t>(first[index], 0x3C), Read<std::uint32_t>(first[index], 0x40));
         }
     } else {
-        for (const wchar_t* path : {L"sprs\\8464.spr", L"sprs\\8465.spr", L"sprs\\8467.spr"}) {
+        for (const wchar_t* path : {L"sprs\\8464.spr", L"sprs\\8465.spr", L"sprs\\8466.spr", L"sprs\\8467.spr"}) {
             const std::wstring sprite = path;
             const auto native_sprite = ui::ViewOf(sprite);
             g_bindings.skin(button, &native_sprite, 0, 0, 0);
         }
     }
-    std::uint32_t font = 1, color = 0xFFFFFFFF, shadow = 0xFF000000;
-    auto** items = Read<std::uint8_t**>(unit_up, 0x190);
-    auto** items_end = Read<std::uint8_t**>(unit_up, 0x194);
-    if (items && items_end && items_end > items && *items) {
-        font = Read<std::uint32_t>(*items, 0x6C);
-        color = Read<std::uint32_t>(*items, 0x58);
-        shadow = Read<std::uint32_t>(*items, 0x5C);
-    }
     const auto caption = Text(126631, L"终极强化");
     const auto native_caption = ui::ViewOf(caption);
-    g_bindings.text(button, 0, &native_caption, 2, std::max(0, (height - 14) / 2), std::max(1, width - 4), 14, color, shadow,
-                    0, font, 2);
+    auto** items = Read<std::uint8_t**>(unit_up, 0x190);
+    auto** items_end = Read<std::uint8_t**>(unit_up, 0x194);
+    if (items && items_end && items_end > items) {
+        for (auto** item = items; item != items_end; ++item) {
+            if (!*item) continue;
+            g_bindings.text(button, static_cast<int>(item-items), &native_caption,
+                static_cast<int>(Read<float>(*item,0x48)), static_cast<int>(Read<float>(*item,0x4C)),
+                Read<int>(*item,0x50), Read<int>(*item,0x54), Read<unsigned>(*item,0x58),
+                Read<unsigned>(*item,0x5C), Read<std::uint8_t>(*item,0x64),
+                Read<unsigned>(*item,0x6C), Read<int>(*item,0x68));
+        }
+    }
+    PutValue<std::uint8_t>(button, 0x280, Read<std::uint8_t>(unit_up,0x280));
+    PutValue<std::uint8_t>(button, 0x210, Read<std::uint8_t>(unit_up,0x210));
+    // The radio has distinct hit rectangles for its raised and resting states.
+    std::memcpy(static_cast<std::uint8_t*>(button)+0x240,
+                static_cast<std::uint8_t*>(unit_up)+0x240, 0x20);
     PutValue<std::uint8_t>(button, 0x162, 1);
     PutValue<std::uint8_t>(button, 0x163, 1);
     PutValue<std::uint8_t>(button, 0x167, 1);
@@ -2812,8 +3007,6 @@ bool CreateTab(void* service) {
         void* status = g_bindings.find(dialog, &native_status, 12);
         g_tab.status = status && Read<void*>(status, 0x15C) == dialog ? status : nullptr;
     }
-    g_tab.top = top;
-    g_tab.raised = false;
     // The radio the menu shows checked is the page on screen.
     for (void* radio : radios)
         if (Read<std::uint8_t>(radio, 0x21C)) g_tab.selected = radio;
@@ -3020,7 +3213,7 @@ bool MenuAccepts(void* service, const char* when) noexcept {
 
 void __stdcall TabCallbackHook(void* service, std::uint32_t event, std::uintptr_t second, void* control) {
     if (control && control == g_tab.button && service == g_tab.service) {
-        if (event == kButtonClickEvent && MenuAccepts(service, "OC tab click")) {
+        if (event == kRadioEvent && MenuAccepts(service, "OC tab click")) {
             if (!g_tab.requested && !g_tab.mode) StartSwitchWatch();
             g_tab.requested = true;
             g_state_data.owned_wanted = true; // the ITEM box lists the current holdings
@@ -3036,6 +3229,10 @@ void __stdcall TabCallbackHook(void* service, std::uint32_t event, std::uintptr_
                 g_tab_callback_original(service, kRadioEvent, 0, g_tab.unit_up);
                 if (g_ui.Alive()) Render();
             }
+        }
+        if (event == kRadioEvent && !g_tab.requested && !g_tab.mode) {
+            SetTabLook(false);
+            if (g_tab.selected) PutValue<std::uint8_t>(g_tab.selected,0x21C,1);
         }
         return;
     }
@@ -3391,7 +3588,7 @@ int Click(const char* window, const wchar_t* name) {
     if (window && !std::strcmp(window, "tab")) {
         if (!g_tab.button || !g_tab.service || !g_tab.dialog || !name) return 0;
         if (!std::wcscmp(name, L"OverCustomRadio")) {
-            TabCallbackHook(g_tab.service, kButtonClickEvent, 0, g_tab.button);
+            TabCallbackHook(g_tab.service, kRadioEvent, 0, g_tab.button);
             return 1;
         }
         // A native factory tab (radio, type 12): the tab menu's own radio event.
@@ -3406,14 +3603,70 @@ int Click(const char* window, const wchar_t* name) {
     if (!control || !g_ui.Alive()) return 0;
     void* service = static_cast<std::uint8_t*>(g_ui.component()) - kPageComponent;
     const bool check = name && !std::wcsncmp(name, L"UseItemCheck", 12);
-    PageCallbackHook(service, check ? kCheckClickEvent : kButtonClickEvent, 0, control);
+    const bool inventory = window && !std::strcmp(window, "items") && name && !std::wcsncmp(name, L"Item3DRender", 12);
+    PageCallbackHook(service, inventory ? kInventoryClickEvent : check ? kCheckClickEvent : kButtonClickEvent, 0, control);
     return 1;
 }
 
 } // namespace
 
+extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientUiV1(SdgoOcCustomClientUiV1* out) {
+    if (!out || out->size != sizeof(*out) || out->version != 1) return 0;
+    __try {
+        out->tab=g_tab.button; out->reference_tab=g_tab.unit_up; out->factory=LiveFactory();
+        out->challenge=g_ui.window_dialog(ui::window_challenge);
+        out->confirm=g_ui.window_dialog(ui::window_confirm);
+        out->preview_blocked=g_preview_blocked; out->preview_forwarded=g_preview_forwarded;
+        return 1;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return 0;}
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientExV1(SdgoOcCustomClientExV1* output) {
+    if (!output || output->size != sizeof(*output) || output->version != 1) return 0;
+    __try {
+        output->available = g_state_data.ex_available;
+        output->visible = g_ui.Visible("ex");
+        output->known = g_state_data.ex_known;
+        output->ability = g_state_data.profile.extra_bonus;
+        output->remaining = g_state_data.ex_info.remaining;
+        output->cost = g_state_data.ex_info.cost;
+        output->battle_ability = g_special.block_ex;
+        output->last_ret_val = g_state_data.ex_info.ret_val;
+        output->enabled_choices = 0;
+        for (unsigned i = 0; i < 8; ++i) {
+            wchar_t name[16];swprintf_s(name, L"ExBtn%u", i);
+            auto* control = g_ui.Control("ex", name);
+            if (control && Read<std::uint8_t>(control, 0x167)) output->enabled_choices |= 1u << i;
+        }
+        return 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientItemsV1(SdgoOcCustomClientItemsV1* output) {
+    if (!output || output->size != sizeof(*output) || output->version != 1 || !g_ui.Alive()) return 0;
+    output->list_visible = g_ui.Visible("items");
+    output->ready = g_state_data.items_ready && g_state_data.owned_load == InventoryLoad::ready;
+    output->panel = g_ui.window_dialog(ui::window_items);
+    output->toggle = output->list_visible ? g_ui.Control("items", L"OcItemsRadarBtn") : g_ui.Control("over", L"OcItemListBtn");
+    std::fill(std::begin(output->placed), std::end(output->placed), 0);
+    for (std::size_t i = 0, slot = 0; i < g_state_data.items.count && slot < 3; ++i)
+        if (g_state_data.item_selected[i]) output->placed[slot++] = g_state_data.items.items[i].item;
+    for (std::size_t i = 0; i < 3; ++i)
+        output->remove[i] = g_ui.Control("info", (L"OcRemoveItem" + std::to_wstring(i)).c_str());
+    for (std::size_t i = 0; i < 10; ++i) {
+        output->rows[i] = i < ui::kInventoryCells ? g_ui.Control("items", (L"Item3DRender" + std::to_wstring(i)).c_str()) : nullptr;
+        output->owned[i] = i < g_state_data.owned.count ? g_state_data.owned.items[i].item : 0;
+        output->counts[i] = i < g_state_data.owned.count ? g_state_data.owned.items[i].count : 0;
+    }
+    return 1;
+}
+
 extern "C" __declspec(dllexport) int __cdecl SdgoOcCustomClientGetSnapshotV2(SdgoOcCustomClientSnapshotV2* output) {
     __try {
+        if (g_unit_manager && *g_unit_manager) {
+            auto* unit = Read<std::uint8_t*>(*g_unit_manager, kUnitManagerLocal);
+            if (unit) NoteBattleSkills(unit);
+        }
         return Snapshot(output);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return 0;
@@ -3518,6 +3771,7 @@ SDGO_MOD_ENTRY {
     g_mod = mod;
     if (!api->SettingInt(mod, "Enabled", 1)) return 0;
     if (!g_bindings.Bind(api, mod)) return 0;
+    if (!information::Bind(api, mod, &g_bindings)) return 0;
     g_bindings.log = [](const char* message) { Log(SDGO_LOG_INFO, message); };
     g_session =reinterpret_cast<NativeSession>(api->Symbol(mod, "storage.session"));
     g_native_send = reinterpret_cast<NativeSend>(api->Symbol(mod, "net.send_packet"));
@@ -3552,6 +3806,8 @@ SDGO_MOD_ENTRY {
                        reinterpret_cast<void**>(&g_update_original)))
         return 0;
     g_inventory_vtable = api->Symbol(mod, "oc_custom.client_inventory_vtable");
+    if (!api->HookCode(mod, "oc_custom.client_inventory_drag_start", reinterpret_cast<void*>(&InventoryDragStartHook),
+                       reinterpret_cast<void**>(&g_inventory_drag_start_original))) return 0;
     if (!g_inventory_vtable ||
         !api->HookCode(mod, "oc_custom.client_inventory_update", reinterpret_cast<void*>(&InventoryUpdateHook),
                        reinterpret_cast<void**>(&g_inventory_update_original)))
@@ -3561,6 +3817,8 @@ SDGO_MOD_ENTRY {
         !api->HookCode(mod, "oc_custom.client_factory_update", reinterpret_cast<void*>(&FactoryUpdateHook),
                        reinterpret_cast<void**>(&g_factory_update_original)))
         Log(SDGO_LOG_WARN, "oc: the factory main hook is unavailable; its page actions stay on the OC tab");
+    if (!api->HookCode(mod, "oc_custom.client_factory_preview_input", reinterpret_cast<void*>(&FactoryPreviewInputHook),
+                       reinterpret_cast<void**>(&g_factory_preview_input_original))) return 0;
     if (!api->HookCode(mod, "oc_custom.client_multi3d_draw", reinterpret_cast<void*>(&Multi3DDrawHook),
                        reinterpret_cast<void**>(&g_multi3d_draw_original)))
         Log(SDGO_LOG_WARN, "oc: the unit model draw hook is unavailable; the chart draws in the window's own turn");
@@ -3579,6 +3837,9 @@ SDGO_MOD_ENTRY {
         Log(SDGO_LOG_WARN, "oc: the factory tab menu hooks are unavailable; the OC tab is inactive");
         return 0;
     }
+    if (!api->HookSite || !api->HookSite(mod, "oc_custom.client_battle_loadout_copy",
+            reinterpret_cast<void*>(&BattleLoadoutDetour), &g_battle_loadout_original))
+        Log(SDGO_LOG_ERROR, "oc: native battle loadout selection unavailable; room systems cannot isolate attributes");
     if (api->SettingInt(mod, "BattleMobility", 1)) {
         g_derive = reinterpret_cast<DeriveFn>(api->Symbol(mod, "oc_custom.client_unit_derive"));
         if (!g_derive || !api->HookSite ||

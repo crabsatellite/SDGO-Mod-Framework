@@ -64,6 +64,25 @@ CREATE TABLE dbo.sdgo_mod_oc_CustomLog (
 );
 GO
 
+-- The current catalogue retains the OC protector and guaranteed-success chip
+-- as type-9 coupons, with zeroed legacy effect columns. Only these two native
+-- identities have challenge effects; EX kits and other type-9 coupons do not.
+-- Keep listing and upgrade validation on the same definition, without changing
+-- native item rows or translating inventory identities into catalogue IDs.
+IF OBJECT_ID(N'dbo.sdgo_mod_oc_ChallengeItemDefinition', N'V') IS NOT NULL DROP VIEW dbo.sdgo_mod_oc_ChallengeItemDefinition;
+GO
+CREATE VIEW dbo.sdgo_mod_oc_ChallengeItemDefinition AS
+SELECT EtcItemNumber, [Type] AS ItemType,
+    CASE WHEN [Type] = 9 AND EtcItemNumber = 3240004 THEN 10000
+         ELSE ISNULL(ProbabilityPlus,0) END AS ProbabilityPlus,
+    CASE WHEN [Type] = 9 AND EtcItemNumber = 3240003 THEN 1
+         ELSE ISNULL(LvPrevention,0) END AS LvPrevention,
+    ISNULL(UseMinLv,0) AS UseMinLv, ISNULL(UseMaxLv,255) AS UseMaxLv
+FROM dbo.tbl_EtcItems
+WHERE ([Type] = 3 AND (ISNULL(ProbabilityPlus,0) > 0 OR ISNULL(LvPrevention,0) = 1))
+   OR ([Type] = 9 AND EtcItemNumber IN (3240003,3240004));
+GO
+
 -- Resolve the native owned unit and keep the OC profile aligned with it.
 -- Return values: 0 ok, 1 unit not owned/not found, 2 catalogue row missing.
 IF OBJECT_ID(N'dbo.sdgo_mod_oc_EnsureProfile', N'P') IS NOT NULL DROP PROCEDURE dbo.sdgo_mod_oc_EnsureProfile;
@@ -140,20 +159,13 @@ WHERE UserUnitNumber = @v_UserUnitNum AND OcLevel < 9 AND OcLevel < @OcLevel
 RETURN
 GO
 
--- One row describing the unit's OC state, rule row, base stats and budgets.
-IF OBJECT_ID(N'dbo.sdgo_mod_oc_GetProfile', N'P') IS NOT NULL DROP PROCEDURE dbo.sdgo_mod_oc_GetProfile;
+-- Shared projection for owned editing and read-only unit information.
+IF OBJECT_ID(N'dbo.sdgo_mod_oc_UnitProfile', N'V') IS NOT NULL DROP VIEW dbo.sdgo_mod_oc_UnitProfile;
 GO
-CREATE PROCEDURE dbo.sdgo_mod_oc_GetProfile
-    @v_AccountNum INT,
-    @v_UserUnitNum BIGINT,
-    @v_RetVal INT OUTPUT
-AS
-SET NOCOUNT ON
-EXEC dbo.sdgo_mod_oc_EnsureProfile @v_AccountNum, @v_UserUnitNum, @v_RetVal OUTPUT
-IF @v_RetVal <> 0 RETURN
-SELECT P.UserUnitNumber, P.AccountNumber, P.UnitNumber, P.OcLevel, P.Normal_MaxLv, P.Revision, P.State, P.ExtraBonus,
-    P.Normal_CustomPnt, P.Normal_Speed, P.Normal_HP, P.Normal_Attack, P.Normal_Defense, P.Normal_Agility, P.Normal_Special,
-    P.Over_CustomPnt, P.Over_Speed, P.Over_HP, P.Over_Attack, P.Over_Defense, P.Over_Agility, P.Over_Special,
+CREATE VIEW dbo.sdgo_mod_oc_UnitProfile AS
+SELECT UU.UserUnitNumber, UU.AccountNumber, UU.UnitNumber, ISNULL(P.OcLevel, 0) AS OcLevel, ISNULL(P.Normal_MaxLv, UU.Normal_MaxLv) AS Normal_MaxLv, ISNULL(P.Revision, 0) AS Revision, ISNULL(P.State, 0) AS State, ISNULL(P.ExtraBonus, 0) AS ExtraBonus,
+    ISNULL(P.Normal_CustomPnt, 0) AS Normal_CustomPnt, ISNULL(P.Normal_Speed, 0) AS Normal_Speed, ISNULL(P.Normal_HP, 0) AS Normal_HP, ISNULL(P.Normal_Attack, 0) AS Normal_Attack, ISNULL(P.Normal_Defense, 0) AS Normal_Defense, ISNULL(P.Normal_Agility, 0) AS Normal_Agility, ISNULL(P.Normal_Special, 0) AS Normal_Special,
+    ISNULL(P.Over_CustomPnt, 0) AS Over_CustomPnt, ISNULL(P.Over_Speed, 0) AS Over_Speed, ISNULL(P.Over_HP, 0) AS Over_HP, ISNULL(P.Over_Attack, 0) AS Over_Attack, ISNULL(P.Over_Defense, 0) AS Over_Defense, ISNULL(P.Over_Agility, 0) AS Over_Agility, ISNULL(P.Over_Special, 0) AS Over_Special,
     UU.UnitLevelNumber, UU.LapUnitExp, UU.UnitBattle, TU.UnitGradeNumber, R.CustomNumber,
     TU.DashLevel AS Base_Speed, TU.HP AS Base_HP, TU.StrikingPower AS Base_Attack, TU.DefensivePower AS Base_Defense,
     TU.MotivePower AS Base_Agility, ISNULL(TWR.DamageSize, 0) AS Base_Special,
@@ -166,13 +178,29 @@ SELECT P.UserUnitNumber, P.AccountNumber, P.UnitNumber, P.OcLevel, P.Normal_MaxL
     ISNULL((SELECT TOP 1 GiveCustomPoint FROM dbo.tbl_CustomDice WHERE CustomLv = CASE WHEN P.OcLevel < 9 THEN 9 ELSE P.OcLevel + 1 END AND UnitGradeNumber = TU.UnitGradeNumber), 0) AS NextGivePoint,
     ISNULL((SELECT TOP 1 BattleCnt FROM dbo.tbl_CustomDice WHERE CustomLv = CASE WHEN P.OcLevel < 9 THEN 9 ELSE P.OcLevel + 1 END AND UnitGradeNumber = TU.UnitGradeNumber), 0) AS NextBattleCnt,
     ISNULL((SELECT TOP 1 LapUnitExp FROM dbo.tbl_UnitLevels WHERE UnitLevelIndex = TU.UnitGrowIndex AND UnitLevelNumber = P.OcLevel), 0) AS LevelMaxExp
-FROM dbo.sdgo_mod_oc_UserUnitCustom P
-INNER JOIN dbo.tbl_UserUnits UU ON UU.UserUnitNumber = P.UserUnitNumber
+FROM dbo.tbl_UserUnits UU
+LEFT JOIN dbo.sdgo_mod_oc_UserUnitCustom P ON UU.UserUnitNumber = P.UserUnitNumber
+    AND UU.AccountNumber = P.AccountNumber AND UU.UnitNumber = P.UnitNumber
 INNER JOIN dbo.tbl_Units TU ON TU.UnitNumber = UU.UnitNumber
 INNER JOIN dbo.sdgo_mod_oc_UnitRev R ON R.UnitNumber = TU.UnitNumber
 INNER JOIN dbo.tbl_CustomRev TCR ON TCR.CustomNumber = R.CustomNumber
 LEFT JOIN dbo.tbl_WeaponsRev TWR ON TWR.WeaponNo = TU.WeaponNumber_FatalAttack
-WHERE P.UserUnitNumber = @v_UserUnitNum AND P.AccountNumber = @v_AccountNum
+;
+GO
+
+-- One row describing the unit's OC state, rule row, base stats and budgets.
+IF OBJECT_ID(N'dbo.sdgo_mod_oc_GetProfile', N'P') IS NOT NULL DROP PROCEDURE dbo.sdgo_mod_oc_GetProfile;
+GO
+CREATE PROCEDURE dbo.sdgo_mod_oc_GetProfile
+    @v_AccountNum INT,
+    @v_UserUnitNum BIGINT,
+    @v_RetVal INT OUTPUT
+AS
+SET NOCOUNT ON
+EXEC dbo.sdgo_mod_oc_EnsureProfile @v_AccountNum, @v_UserUnitNum, @v_RetVal OUTPUT
+IF @v_RetVal <> 0 RETURN
+SELECT * FROM dbo.sdgo_mod_oc_UnitProfile
+WHERE UserUnitNumber = @v_UserUnitNum AND AccountNumber = @v_AccountNum
 IF @@ROWCOUNT = 0 SET @v_RetVal = 2
 RETURN
 GO
@@ -360,8 +388,8 @@ SET @ItemRemainCnt_3 = 0 SET @ProbabilityPlus_3 = 0 SET @LvPrevention_3 = 0
 IF @v_EtcItemNum_1 > 0 AND @v_EtcItemCnt_1 > 0
 BEGIN
     SELECT TOP 1 @ItemRemainCnt_1 = TUEV.RemainCount, @ProbabilityPlus_1 = TE.ProbabilityPlus, @LvPrevention_1 = TE.LvPrevention, @UseLvMin_1 = TE.UseMinLv, @UseLvMax_1 = TE.UseMaxLv
-    FROM dbo.tbl_UserEtcItemView TUEV INNER JOIN dbo.tbl_EtcItems TE ON TUEV.EtcItemNumber = TE.EtcItemNumber
-    WHERE TUEV.AccountNumber = @v_AccountID AND TUEV.EtcItemNumber = @v_EtcItemNum_1 AND TUEV.ItemType = 3
+    FROM dbo.tbl_UserEtcItemView TUEV INNER JOIN dbo.sdgo_mod_oc_ChallengeItemDefinition TE ON TUEV.EtcItemNumber = TE.EtcItemNumber AND TUEV.ItemType = TE.ItemType
+    WHERE TUEV.AccountNumber = @v_AccountID AND TUEV.EtcItemNumber = @v_EtcItemNum_1
     IF @@ROWCOUNT = 0 BEGIN SET @v_RetVal = 3 RETURN END
     IF @NowUnitLv < @UseLvMin_1 OR @NowUnitLv > @UseLvMax_1 BEGIN SET @v_RetVal = 4 RETURN END
     IF @v_EtcItemCnt_1 > @ItemRemainCnt_1 BEGIN SET @v_RetVal = 5 RETURN END
@@ -370,8 +398,8 @@ END
 IF @v_EtcItemNum_2 > 0 AND @v_EtcItemCnt_2 > 0
 BEGIN
     SELECT TOP 1 @ItemRemainCnt_2 = TUEV.RemainCount, @ProbabilityPlus_2 = TE.ProbabilityPlus, @LvPrevention_2 = TE.LvPrevention, @UseLvMin_2 = TE.UseMinLv, @UseLvMax_2 = TE.UseMaxLv
-    FROM dbo.tbl_UserEtcItemView TUEV INNER JOIN dbo.tbl_EtcItems TE ON TUEV.EtcItemNumber = TE.EtcItemNumber
-    WHERE TUEV.AccountNumber = @v_AccountID AND TUEV.EtcItemNumber = @v_EtcItemNum_2 AND TUEV.ItemType = 3
+    FROM dbo.tbl_UserEtcItemView TUEV INNER JOIN dbo.sdgo_mod_oc_ChallengeItemDefinition TE ON TUEV.EtcItemNumber = TE.EtcItemNumber AND TUEV.ItemType = TE.ItemType
+    WHERE TUEV.AccountNumber = @v_AccountID AND TUEV.EtcItemNumber = @v_EtcItemNum_2
     IF @@ROWCOUNT = 0 BEGIN SET @v_RetVal = 3 RETURN END
     IF @NowUnitLv < @UseLvMin_2 OR @NowUnitLv > @UseLvMax_2 BEGIN SET @v_RetVal = 4 RETURN END
     IF @v_EtcItemCnt_2 > @ItemRemainCnt_2 BEGIN SET @v_RetVal = 5 RETURN END
@@ -380,8 +408,8 @@ END
 IF @v_EtcItemNum_3 > 0 AND @v_EtcItemCnt_3 > 0
 BEGIN
     SELECT TOP 1 @ItemRemainCnt_3 = TUEV.RemainCount, @ProbabilityPlus_3 = TE.ProbabilityPlus, @LvPrevention_3 = TE.LvPrevention, @UseLvMin_3 = TE.UseMinLv, @UseLvMax_3 = TE.UseMaxLv
-    FROM dbo.tbl_UserEtcItemView TUEV INNER JOIN dbo.tbl_EtcItems TE ON TUEV.EtcItemNumber = TE.EtcItemNumber
-    WHERE TUEV.AccountNumber = @v_AccountID AND TUEV.EtcItemNumber = @v_EtcItemNum_3 AND TUEV.ItemType = 3
+    FROM dbo.tbl_UserEtcItemView TUEV INNER JOIN dbo.sdgo_mod_oc_ChallengeItemDefinition TE ON TUEV.EtcItemNumber = TE.EtcItemNumber AND TUEV.ItemType = TE.ItemType
+    WHERE TUEV.AccountNumber = @v_AccountID AND TUEV.EtcItemNumber = @v_EtcItemNum_3
     IF @@ROWCOUNT = 0 BEGIN SET @v_RetVal = 3 RETURN END
     IF @NowUnitLv < @UseLvMin_3 OR @NowUnitLv > @UseLvMax_3 BEGIN SET @v_RetVal = 4 RETURN END
     IF @v_EtcItemCnt_3 > @ItemRemainCnt_3 BEGIN SET @v_RetVal = 5 RETURN END
