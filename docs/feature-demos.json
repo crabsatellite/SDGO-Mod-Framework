@@ -378,18 +378,6 @@
       "guide_en": "docs/over-custom.md"
     },
     {
-      "id": "oc-unit-information",
-      "path": "docs/oc-unit-information-demo.webp",
-      "since": "1.16.63",
-      "mods": [
-        "oc_custom_client"
-      ],
-      "title_zh": "完整机体信息页与两套部件区",
-      "title_en": "Full unit inspection card and both parts sections",
-      "guide_zh": "docs/over-custom.zh-CN.md",
-      "guide_en": "docs/over-custom.md"
-    },
-    {
       "id": "oc-page-entry",
       "path": "docs/oc-page-entry-demo.webp",
       "since": "1.16.63",
