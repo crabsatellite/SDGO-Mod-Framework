@@ -938,6 +938,20 @@ int main() {
     CHECK(created==0 && g_botTable.empty());
     CHECK(AiStartPoint(um,0,0)==nullptr && AiStartPoint(um,1,-1)==nullptr && AiStartPoint(um,1,12)==nullptr);
 
+    SCENARIO("PvP playback keeps AI off native start points assigned to humans");
+    Reset();
+    Records(1, 3);
+    humans[kRecordColour] = 1;
+    SpawnAiPlayers(mode.data(), "respawn starts");
+    CHECK(!g_botTable.empty());
+    auto& first = g_botTable.front();
+    CHECK(first.colour == 1 && first.startIndex == 1);
+    CHECK(AssignedAiRespawnPoint(um, first, room.data(), 1, 0) == startPoints[1][1].data());
+    CHECK(AssignedAiRespawnPoint(um, first, room.data(), 1, 1) == nullptr);
+    CHECK(AssignedAiRespawnPoint(um, first, room.data(), 2, 0) == nullptr);
+    startPointCount[1] = 1;
+    CHECK(AssignedAiRespawnPoint(um, first, room.data(), 1, 0) == nullptr);
+
     SCENARIO("all five PvP modes freeze bots through waiting/countdown and release on the native player frame");
     const int nativeModes[] = {1, 3, 6, 9, 7};
     for (int i = 0; i < 5; ++i) {

@@ -74,8 +74,8 @@ DeathZone volumes. A blocking destructible can be attacked through normal weapon
 destroyed-but-still-solid objects remain obstacles.
 
 Space maps with an authored kill floor can use short, collision-checked routes through open air.
-The original movement controller still applies gravity and map limits. A failed recovery has a
-retry interval, and a search can keep expanding while it has no reachable waypoint yet.
+The original movement controller still applies gravity and map limits. A search gets time to
+find a reachable waypoint before the AI tries a collision-checked recovery move.
 
 These routes can select propulsion devices loaded in the actual map. When the entrance is reachable
 and the authored trajectory has a suitable supported exit, a bot approaches the entrance and uses

@@ -52,7 +52,7 @@
 
 | 功能 | 简介 |
 |---|---|
-| [对战 AI](docs/pvp-ai.zh-CN.md) <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，支持原版计分、坠落判死、扣命和复活，可设置补位方式和数量 |
+| [对战 AI](docs/pvp-ai.zh-CN.md) <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，支持原版计分、坠落判死、扣命及原版出生点复活，可设置补位方式和数量 |
 | [任务 AI 僚机](docs/coop-wingmen.zh-CN.md) <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai hard` 可选 Hard，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 |
 | [PvE AI TAB 队友列表](docs/pve-ai-scoreboard.zh-CN.md) <!-- catalog: `pve_ai_scoreboard` --> | 自动把已注册的 AI 队友加入原生 PvE TAB 列表；存活或等待复活时都显示名字、机体、击破、助攻和分数 |
 | [战斗 AI 难度](docs/battle-ai.zh-CN.md) <!-- catalog: `battle_ai`、`battle_ai_server` --> | 在房名中选择 Easy／Medium／Hard 三档对战 AI 难度 |

@@ -401,6 +401,7 @@ namespace
         bool ace = false;
         uint8_t team = 0;
         uint8_t colour = 0;
+        int startIndex = -1;
         battle_ai::Difficulty effectiveDifficulty = battle_ai::Difficulty::Medium;
         std::wstring acePilotName;
         ForcedPadState forcedPad{};
@@ -1048,6 +1049,7 @@ namespace
         bot.ace = aceOutcome.ace && !acePilotName.empty();
         bot.team = static_cast<uint8_t>(team);
         bot.colour = static_cast<uint8_t>(colour);
+        bot.startIndex = index;
         bot.effectiveDifficulty = aceOutcome.effective;
         bot.acePilotName = acePilotName;
         uint8_t* room = *reinterpret_cast<uint8_t**>(c.mode + kModeRoom);
@@ -3367,9 +3369,56 @@ namespace
         }
     }
 
+    FindStartPointFn g_originalFindStartPoint = nullptr;
+    const void* g_playbackFindStartReturn = nullptr;
+    thread_local const Bot* g_playbackBot = nullptr;
+
+    uint8_t* AssignedAiRespawnPoint(void* um, const Bot& bot, uint8_t* room, int colour, int index)
+    {
+        if (!room || colour != bot.colour || bot.startIndex < 0 || index < 0)
+            return nullptr;
+        auto* records = *reinterpret_cast<uint8_t**>(room + kRoomHumansBegin);
+        const int humans = RecordCount(room, kRoomHumansBegin, kRoomHumansEnd);
+        int humanStarts = 0;
+        for (int i = 0; i < humans; ++i)
+            if (records[i * kRecordSize + kRecordColour] == colour)
+                ++humanStarts;
+        // Playback can use a native human slot for the retained NPC. Every
+        // client already knows the bot's assigned authored point from Init.
+        if (index >= humanStarts || bot.startIndex < humanStarts)
+            return nullptr;
+        return g_game.findStartPoint(um, colour, bot.startIndex);
+    }
+
+    uint8_t* __fastcall FindPlaybackStartPoint(void* um, void*, int colour, int index)
+    {
+        if (_ReturnAddress() == g_playbackFindStartReturn && g_playbackBot && g_botMode) {
+            auto* room = *reinterpret_cast<uint8_t**>(g_botMode + kModeRoom);
+            if (auto* assigned = AssignedAiRespawnPoint(um, *g_playbackBot, room, colour, index)) {
+                if (g_logDiagnostics)
+                    g_api->Log(g_mod, SDGO_LOG_INFO, "AI object %u native playback start %d/%d uses assigned point %d",
+                               g_playbackBot->objectId, colour, index, g_playbackBot->startIndex);
+                return assigned;
+            }
+        }
+        return g_originalFindStartPoint(um, colour, index);
+    }
+
     int __fastcall PlaybackUnit(void* self, void* /*edx*/, uint8_t* packet)
     {
-        int result = g_originalPlaybackUnit(self, packet);
+        const Bot* previous = g_playbackBot;
+        g_playbackBot = nullptr;
+        int result = 0;
+        __try {
+            if (packet && g_botMode && CurrentPvpMode() == g_botMode && g_game.unitManager && *g_game.unitManager) {
+                uint32_t pilot = 0;
+                std::memcpy(&pilot, packet + 6, sizeof(pilot));
+                g_playbackBot = BotByPilot(*g_game.unitManager, pilot);
+            }
+            result = g_originalPlaybackUnit(self, packet);
+        } __finally {
+            g_playbackBot = previous;
+        }
         GuardedSwitchDecks();
         if (!g_missionRespawnPending.empty()) {
             const MissionRespawnPending pending = g_missionRespawnPending.front();
@@ -4259,6 +4308,11 @@ SDGO_MOD_ENTRY
                        reinterpret_cast<void*>(&NpcDeathZoneSite), &g_npcDeathZoneOriginal) ||
         !api->HookSite(mod, "match_ai.map_death_actor_gate",
                        reinterpret_cast<void*>(&MapDeathActorGate), &g_mapDeathActorOriginal))
+        return 0;
+    g_playbackFindStartReturn = api->Symbol(mod, "match_ai.playback_start_return");
+    if (!g_playbackFindStartReturn ||
+        !api->HookCode(mod, "um.find_start_point", reinterpret_cast<void*>(&FindPlaybackStartPoint),
+                       reinterpret_cast<void**>(&g_originalFindStartPoint)))
         return 0;
     if(!api->HookSite(mod,"match_ai.gate.countdown_authority",reinterpret_cast<void*>(&GateAuthoritySite),&g_gateAuthorityOriginal))
         return 0;

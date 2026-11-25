@@ -521,7 +521,7 @@ local function RouteMotion(o)
 end
 local function Move(npc,o,s,target,now,force)
   RouteMotion(o)
-  if Flag(o.routePlanning) then return true end
+  if Flag(o.routePlanning) and not force then return true end
   if now<s.repathAt and not force then return false end
   s.repathAt=now+C.RepathMs
   local status
@@ -712,7 +712,10 @@ local function Recover(npc,o,s,t,now)
     end
   end
   RecoveryMode(false)
-  local intended=s.movementIntent and now-(s.movementIntentAt or 0)<=C.StuckMs+C.RepathMs
+  local planning=Flag(o.routePlanning)
+  if planning then s.routePlanningAt=s.routePlanningAt or now
+  else s.routePlanningAt=nil end
+  local intended=planning or (s.movementIntent and now-(s.movementIntentAt or 0)<=C.StuckMs+C.RepathMs)
   local wanted=Flag(o.moving) or Flag(o.routeActive) or Flag(o.defenceMoving) or intended or s.cover or s.flanking
   if not wanted or (not intended and (not o.goal or Distance2(o.pos,o.goal)<=C.ArrivalDistance*C.ArrivalDistance)) then
     s.anchor=o.pos;s.progressAt=now;s.motionPos=o.pos;s.motionAt=now;return false
@@ -720,14 +723,16 @@ local function Recover(npc,o,s,t,now)
   local dx,dz=o.pos.x-s.anchor.x,o.pos.z-s.anchor.z
   -- Repeated vertical hopping against a wall is not horizontal path progress.
   if dx*dx+dz*dz>=C.ProgressDistance*C.ProgressDistance then
-    s.anchor=o.pos; s.progressAt=now; s.attempt=0; s.recoveryRetryAt=nil; return false
+    s.anchor=o.pos; s.progressAt=now; s.attempt=0; s.recoveryRetryAt=nil; s.routePlanningAt=nil; return false
   end
-  if Flag(o.routePlanning) or now<(s.recoveryRetryAt or 0) then return false end
-  if not stationary and (now-s.progressAt<C.StuckMs or now<s.recoveryAt) then return false end
+  local planningExpired=planning and now-s.routePlanningAt>=C.RepathMs
+  if (planning and not planningExpired) or now<(s.recoveryRetryAt or 0) then return false end
+  if not planningExpired and not stationary and (now-s.progressAt<C.StuckMs or now<s.recoveryAt) then return false end
   if not mayMove then return false end
   s.attempt=s.attempt+1;s.recoveryStartedAt=now;s.recoveryAt=now+C.RecoveryMs+C.RecoveryCooldownMs
   RecoveryMode(true)
   SDGO_BattleAI_CancelRoute(1)
+  s.routePlanningAt=nil
   -- CancelRoute already releases its owned native motor. A second MoveStop
   -- requeues stopping ahead of the replacement relative goal and can keep
   -- restarting the native stop/start animation while the watchdog retries.

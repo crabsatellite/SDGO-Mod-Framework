@@ -775,6 +775,9 @@ local pendingCancels=calls.cancelled
 Tick(1500);Tick(1600)
 Check(calls.cancelled==pendingCancels and calls.routes==pendingRoutes,
       'an incremental geometry search keeps its frontier while no steering waypoint is available')
+Tick(2250)
+Check((calls.cancelled or 0)>(pendingCancels or 0) and (calls.safeDirections or 0)>0,
+      'a search without a steering waypoint must not keep stationary pursuit from recovering')
 Reset();observation.moving=1;Tick(0)
 local stopsBeforeRecovery=calls.stop
 Tick(200)

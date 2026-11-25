@@ -54,7 +54,7 @@ Battle rules, AI, progression, rewards and interactions between players.
 
 | Feature | Overview |
 |---|---|
-| [PvP AI](docs/pvp-ai.md) <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds opponents and teammates with native scoring, map deaths, life costs and respawns. Choose which side to fill or set exact counts |
+| [PvP AI](docs/pvp-ai.md) <!-- catalog: `pvp_ai`, `match_ai` --> | `!ai` adds opponents and teammates with native scoring, map deaths, life costs and assigned respawn points. Choose which side to fill or set exact counts |
 | [Mission AI wingmen](docs/coop-wingmen.md) <!-- catalog: `coop_ai`, `mission_ai` --> | `!ai hard` selects Hard wingmen with the player life allowance; `!ai3 inf` allows unlimited AI respawns |
 | [PvE AI TAB roster](docs/pve-ai-scoreboard.md) <!-- catalog: `pve_ai_scoreboard` --> | Automatically shows registered AI teammates in the native PvE TAB roster, including names, units, kills, assists and points while alive or waiting to respawn |
 | [Battle AI difficulty](docs/battle-ai.md) <!-- catalog: `battle_ai`, `battle_ai_server` --> | Choose Easy, Medium or Hard PvP AI in the room title |
