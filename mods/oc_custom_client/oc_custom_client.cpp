@@ -231,6 +231,7 @@ std::wstring UnitName(std::uint32_t unit_number) {
 void Log(int level, const char* message);
 void LogF(int level, const char* format, ...);
 void ArmTimer();
+void PumpQueue();
 
 std::wstring ItemName(std::int32_t item) {
     // Item records carry their name at +5 like the other client tables.
@@ -933,6 +934,7 @@ void __cdecl OnReply(void*, std::uint16_t command, std::int32_t status, const st
         command <= static_cast<std::uint16_t>(Command::g1_reset)) {
         HandleG1Reply(static_cast<Command>(command), status, payload, bytes);
         Render();
+        PumpQueue();
         return;
     }
     // The owned-item refresh is background bookkeeping: it never replaces the

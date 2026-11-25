@@ -14,8 +14,13 @@ void __fastcall NativeDrag(void* service, void*, void* message) {
 int __cdecl CarrierState() { return carrier_state; }
 int __cdecl SendInventoryRequest(std::uint16_t command, const std::uint8_t* payload, std::uint32_t bytes,
                                 sdgo::friend_unit_gift::ClientExtensionCallbackFn, void*) {
-    UnitRequest request;
-    CHECK(ReadUnitRequest(payload, bytes, &request) && request.unit_uid == 42);
+    if (command == static_cast<std::uint16_t>(Command::g1_rules)) {
+        G1RulesRequest request;
+        CHECK(ReadG1RulesRequest(payload, bytes, &request) && request.page == 0);
+    } else {
+        UnitRequest request;
+        CHECK(ReadUnitRequest(payload, bytes, &request) && request.unit_uid == 42);
+    }
     if (!accept_send) return 0;
     sent.push_back(static_cast<Command>(command));
     return 1;
@@ -93,6 +98,23 @@ int main() {
     PumpQueue();
     CHECK(sent.size() == 1 && sent.back() == Command::owned_items);
 
+    ai_test::scenario = "G1 category reply advances to rule paging without a factory timer";
+    ResetInventoryFixture();
+    g_g1.available = true;
+    g_g1.want_rules = true;
+    g_g1.want_loadout = true;
+    s.outstanding = Pending::g1_categories;
+    G1CategoriesReply categories{};
+    categories.count = 1;
+    std::array<std::uint8_t, kG1CategoriesReplyBytes> category_payload{};
+    WriteG1CategoriesReply(category_payload.data(), categories);
+    OnReply(nullptr, static_cast<std::uint16_t>(Command::g1_categories),
+            static_cast<std::int32_t>(WireStatus::success), category_payload.data(),
+            static_cast<std::uint32_t>(category_payload.size()));
+    CHECK(g_g1.categories_done && sent.size() == 1 && sent.back() == Command::g1_rules);
+    CHECK(s.outstanding == Pending::g1_rules && g_g1.want_loadout);
+
+    ResetInventoryFixture();
     ai_test::scenario = "empty inventory differs from failed or malformed inventory";
     ChallengeItemsReply items{};
     ReplyInventory(items);
