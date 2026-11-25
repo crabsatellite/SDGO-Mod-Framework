@@ -386,5 +386,19 @@ class ServerReportTests(unittest.TestCase):
         wrong_source[2]['source']='battle_rewards_bridge'
         self.assertEqual(self.evaluate(wrong_source)['status'],'fail')
 
+    def test_ace_sample_is_bound_and_does_not_count_as_battle_end(self):
+        events=self.stream()
+        ready=events[0]
+        cookie=events[1]['room_cookie']
+        sample={'kind':'server','scope':'pvp','room_cookie':cookie,'mode':events[1]['mode']}
+        observation={'event':'observation','role':'server','suite':'pvp-ai',
+                     'run_id':ready['run_id'],'pid':ready['pid'],'nonce':ready['nonce'],
+                     'room_cookie':cookie,'message':'ace-v1 '+json.dumps(sample)}
+        events.insert(3,observation)
+        self.assertEqual(self.evaluate(events)['status'],'pass')
+        self.assertEqual(self.evaluate(events[:-1])['status'],'fail')
+        observation['pid']+=1
+        self.assertEqual(self.evaluate(events)['status'],'fail')
+
 
 if __name__=='__main__':unittest.main()

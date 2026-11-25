@@ -101,6 +101,22 @@ def damage_diagnostic(event, ready, pilot, modes):
     return True
 
 
+def ace_diagnostic(event, ready, battles):
+    message = event.get('message')
+    if event.get('event') != 'observation' or not isinstance(message, str) or not message.startswith('ace-v1 '):
+        return False
+    cookie = integer(event.get('room_cookie'), 'ace diagnostic room cookie', 1)
+    room = battles.get(cookie)
+    if (event.get('role') != 'server' or event.get('suite') != 'pvp-ai' or
+            any(event.get(key) != ready.get(key) for key in ('run_id', 'pid', 'nonce')) or not room):
+        raise ValueError('ace diagnostic is not bound to an observed native room')
+    sample = json.loads(message.removeprefix('ace-v1 '))
+    if (not isinstance(sample, dict) or sample.get('kind') != 'server' or sample.get('scope') != 'pvp' or
+            sample.get('room_cookie') != cookie or sample.get('mode') != room['mode']):
+        raise ValueError('ace diagnostic room or mode differs from observer state')
+    return True
+
+
 def sealed_mission_profile(metadata, profile, mission_id):
     client=metadata.get('client')
     if not isinstance(client,dict):
@@ -351,7 +367,7 @@ def evaluate(metadata: dict, paths: list[Path], pilot: int, *, expected_humans: 
                 # native log. The current sealed title contains a fresh nonce.
                 if session and event.get('title') not in titles:continue
                 name=event.get('event')
-                if damage_diagnostic(event,ready,pilot,modes):continue
+                if damage_diagnostic(event,ready,pilot,modes) or ace_diagnostic(event,ready,current):continue
                 if name not in STEPS:raise ValueError('unexpected or failed native observer event')
                 sequence=integer(event.get('sequence'),'native sequence',1)
                 qpc=integer(event.get('qpc'),'native timestamp',1)
