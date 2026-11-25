@@ -760,6 +760,22 @@ Check(not rejectedRecovery.recovering and rejectedRecovery.recoverUntil==nil and
       calls.recoveryMode==0 and calls.routes>routesBeforeRejected,
       'collision-rejected recovery steps replan in the same decision without owning an idle motor lease')
 Reset();observation.moving=1;Tick(0)
+calls.safeDirectionResult=-1;calls.routeResult=0
+Tick(350)
+local rejectedDirections=calls.safeDirections
+local failedRoutes=calls.routes
+for frame=1,12 do Tick(350+frame*16) end
+Check(calls.safeDirections==rejectedDirections and calls.routes==failedRoutes,
+      'a rejected route and recovery step do not restart on every stationary frame')
+Reset();observation.targets={Target(1,1000,3000)}
+calls.routeResult=2;calls.staticRouteObservation=true;Tick(0)
+observation.moving=0;observation.routeActive=0;observation.routePlanning=1
+local pendingRoutes=calls.routes
+local pendingCancels=calls.cancelled
+Tick(1500);Tick(1600)
+Check(calls.cancelled==pendingCancels and calls.routes==pendingRoutes,
+      'an incremental geometry search keeps its frontier while no steering waypoint is available')
+Reset();observation.moving=1;Tick(0)
 local stopsBeforeRecovery=calls.stop
 Tick(200)
 local boundedRecovery=SDGO_BattleAI_Universal.states[20]

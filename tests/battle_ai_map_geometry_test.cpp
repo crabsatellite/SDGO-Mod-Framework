@@ -125,6 +125,26 @@ int main() {
     check(geometry.Step({-1000,0,0},{-500,0,0},grounded)&&std::abs(grounded.y-50)<0.01f);
     groundY=0;groundSlopeX=0;
     missingGround=true;check(!geometry.Step({-1000,0,0},{-500,0,0},grounded));missingGround=false;
+    groundY=-6000;
+    check(!geometry.RouteStep({-200,50,0},{200,50,0},grounded));
+    geometry.spaceMap=true;
+    geometry.spaceBounds={{-210,-10000,-200},{260,10000,200}};
+    check(!geometry.Step({-200,50,0},{200,50,0},grounded)&&
+          geometry.RouteStep({-200,50,0},{200,900,0},grounded)&&grounded.y==50);
+    check(!geometry.RouteStep({-200,50,0},{270,50,0},grounded));
+    groundY=-3200;
+    check(!geometry.Ground({-200,0,0},80,-4096,grounded)&&
+          geometry.RouteStep({-200,50,0},{200,50,0},grounded)&&grounded.y==50);
+    haveObstacle=true;
+    check(!geometry.RouteStep({-200,50,0},{200,50,0},grounded));
+    haveObstacle=false;
+    haveHazard=true;
+    Put(hazardScene.data(),detail::kSceneAabb,Aabb{{-20,0,-100},{20,300,100}});
+    check(!geometry.RouteStep({-200,50,0},{200,50,0},grounded));
+    haveHazard=false;
+    missingGround=true;
+    check(!geometry.RouteStep({-200,50,0},{200,50,0},grounded));
+    missingGround=false;groundY=0;geometry.spaceMap=false;
     groundY=100;check(geometry.Step({-1000,0,0},{-500,0,0},grounded)&&grounded.y==100);groundY=-200;
     check(geometry.Step({-1000,0,0},{-500,0,0},grounded)&&grounded.y==-200);groundY=0;
     groundY=1000;groundSlopeX=1;

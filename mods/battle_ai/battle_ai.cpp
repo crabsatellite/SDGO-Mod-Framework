@@ -1006,6 +1006,23 @@ battle_ai::native::MapGeometry MapGeometryFor(uint8_t* unit) {
     geometry.shapeBounds=&g_shapeBounds;
     geometry.api=g_navigation;geometry.document=*g_document;geometry.api.supportContext=geometry.document;
     geometry.owner=unit;geometry.ownerPosition=Position(unit);
+    uint8_t* terrain=nullptr;
+    uint16_t version=0;
+    uint8_t space=0,killFloor=0;
+    float playX=0,playZ=0;
+    // CTerrain::LoadBinary reads the version-33 Space Map field at +0x138
+    // and the separate Terrain Kill field at +0xCE.
+    using battle_ai::native::detail::Read;
+    if(battle_ai::native::detail::ReadPointer(geometry.document,0x82C0,terrain)&&
+       Read(terrain,4,version)&&version>=33&&Read(terrain,0x138,space)&&space==1&&
+       Read(terrain,0xCE,killFloor)&&killFloor==1&&
+       Read(terrain,0x78,playX)&&Read(terrain,0x7C,playZ)&&
+       playX>0&&playX<=1&&playZ>0&&playZ<=1&&
+       g_terrainSupport.Bounds(geometry.document,geometry.spaceBounds)) {
+        geometry.spaceMap=true;
+        geometry.spaceBounds.min.x*=playX;geometry.spaceBounds.max.x*=playX;
+        geometry.spaceBounds.min.z*=playZ;geometry.spaceBounds.max.z*=playZ;
+    }
     const auto actor=g_actors.find(unit);
     geometry.deferDestroyables=actor!=g_actors.end()&&actor->second.breachAvailable;
     return geometry;
@@ -1019,7 +1036,7 @@ bool __fastcall IndexedTerrainRay(void* scene,void*,const Ray3* ray,float* dista
     return hit;
 }
 bool MapGeometryStep(void* context,Vec3 from,Vec3 desired,Vec3& grounded) {
-    __try {return static_cast<battle_ai::native::MapGeometry*>(context)->Step(from,desired,grounded);}
+    __try {return static_cast<battle_ai::native::MapGeometry*>(context)->RouteStep(from,desired,grounded);}
     __except(EXCEPTION_EXECUTE_HANDLER) {static_cast<battle_ai::native::MapGeometry*>(context)->lastReject=9;return false;}
 }
 bool ImmediateMotionClear(uint8_t* unit,Vec3 destination) {
@@ -1820,6 +1837,9 @@ bool InstallGeometryPath(uint8_t* unit,Actor& actor,battle_ai::native::MapGeomet
         if(distance<best&&distance<=800&&step(&walking,here,path[i],reached)&&std::abs(reached.y-path[i].y)<=5) {nearest=i;best=distance;}
     }
     if(best==1e30) {
+        // An open-set path can briefly advance beyond the motor's joinable
+        // prefix. Do not restart the same search each update from the same root.
+        if(!complete&&battle_ai::Length(here-actor.mapSearch.Start())<25)return false;
         if(!actor.path.empty()&&MovementAvailable(unit,actor.pathRanged))g_stop(unit);
         const Vec3 goal=actor.mapSearch.Goal();BeginGeometrySearch(unit,actor,geometry,goal);
         actor.geometryFinal=false;actor.path.clear();return false;
@@ -2493,11 +2513,13 @@ int __cdecl Observe(lua_State* L) {
     Number(L,"transportLanding",trip.active&&!trip.native&&trip.phase==5);
     Number(L,"transportMotorReserved",
         TransportMotorReserved(trip,GetTickCount64()));
-    Number(L,"routeActive",!ActorFor(g_current).path.empty()||trip.active);
+    const auto& observedActor=ActorFor(g_current);
+    Number(L,"routeActive",!observedActor.path.empty()||trip.active);
+    Number(L,"routePlanning",observedActor.geometryOwned&&observedActor.path.empty()&&
+        observedActor.mapSearch.State()==battle_ai::MapPathSearch::Status::Pending);
     Number(L,"transportCompleted",static_cast<double>(trip.completed));
     Number(L,"transportWaiting",trip.active&&!trip.native&&trip.phase==1&&
         TransportMotorReserved(trip,GetTickCount64()));
-    const auto& observedActor=ActorFor(g_current);
     const bool recovering=observedActor.recoveryControlled&&GetTickCount64()-observedActor.recoveryAt<250;
     Number(L,"movementRecovery",recovering);
     Number(L,"defenceMoving",!recovering&&((observedActor.defenceMoveOwned&&!observedActor.path.empty())||
@@ -2834,9 +2856,15 @@ bool EmptyNavigation(uint8_t* nav) {
 bool LoadGeometryRoute(uint8_t* unit,Actor& actor,Vec3 destination,bool force=false) {
     using Status=battle_ai::MapPathSearch::Status;
     auto geometry=MapGeometryFor(unit);Vec3 goal{};
-    // Authored spawns may be airborne; enemy roots may be on another floor.
-    // Resolve the destination's own support, never the floor below this bot.
-    if(!geometry.Ground(destination,destination.y+80,destination.y-4096,goal))return false;
+    const Vec3 here=Position(unit);
+    // A space chase can close horizontally at its own height. Ordinary paths
+    // still resolve the destination's own floor.
+    const float ceiling=geometry.spaceMap?here.y+60:destination.y+80;
+    const float floor=geometry.spaceMap?here.y-20:destination.y-4096;
+    if(!geometry.Ground(destination,ceiling,floor,goal)) {
+        if(geometry.lastReject!=3||!geometry.InsideSpace(here)||!geometry.InsideSpace(destination))return false;
+        goal={destination.x,here.y,destination.z};
+    }
     auto& trip=actor.transport;
     if(trip.active&&!trip.native&&
        TransportRouteProtected(trip,GetTickCount64()))
@@ -3144,9 +3172,9 @@ int SafeDirectionImpl(lua_State* L,bool adaptive) {
                     const auto safety=battle_ai::native::CheckMotionSafety(
                         g_navigation,*g_document,g_current,here,destination,g_runtime.logDecisions?&diagnostic:nullptr);
                     if(safety==battle_ai::native::MotionSafety::Unavailable) {unavailable=diagnostic;reason=100+static_cast<int>(diagnostic.stage);return false;}
-                    auto geometry=MapGeometryFor(g_current);geometry.deferDestroyables=false;Vec3 grounded{};
+                    auto geometry=MapGeometryFor(g_current);geometry.deferDestroyables=false;Vec3 reached{};
                     const bool clear=safety==battle_ai::native::MotionSafety::Safe&&
-                        (!PlayerBotRulesMode(g_current)||geometry.Step(here,destination,grounded));
+                        (!PlayerBotRulesMode(g_current)||geometry.RouteStep(here,destination,reached));
                     reason=safety!=battle_ai::native::MotionSafety::Safe?11:clear?0:static_cast<int>(geometry.lastReject);
                     if(!clear&&g_runtime.logDecisions)rejectedGeometry=geometry;
                     return clear;
@@ -3233,9 +3261,9 @@ bool DirectIntentUnsafe(double direction,int mode,int action) {
        !MovementAvailable(g_current,true)) {direct={};return false;}
     if(action==0&&(!direct.owned||direct.direction!=direction||direct.mode!=mode))return false;
     if(!active||!battle_ai::Finite(goal)||(action==0&&!echo())) {direct={};return false;}
-    auto geometry=MapGeometryFor(g_current);Vec3 grounded{};
+    auto geometry=MapGeometryFor(g_current);Vec3 reached{};
     if(MotionSafetyFor(g_current,goal)!=battle_ai::native::MotionSafety::Safe||
-       (PlayerBotRulesMode(g_current)&&!geometry.Step(Position(g_current),goal,grounded))) {
+       (PlayerBotRulesMode(g_current)&&!geometry.RouteStep(Position(g_current),goal,reached))) {
         if(action==1||direct.owned)g_stop(g_current);
         direct={};return false;
     }

@@ -123,6 +123,9 @@ mode's point and unit-count limits. The host runs the AI and other clients displ
 An AI waiting for transformation confirmation uses the native player acknowledgement path to continue
 its current action. Native one-way forms, new skill transitions, deferred special actions
 and respawn handling retain their original rules.
+When an AI falls into a native death zone, the room master's client uses the original death report.
+The server handles the life cost and respawn. After native respawn completes, the AI can move
+and report another fall in its new life.
 This includes the completion phase after the model changes while the same animation is still active;
 the native local receiver finishes that transition without replaying its start.
 Grid/Tag modes can use AI decks. The existing dead view can follow AI players. Respawn, life consumption and

@@ -79,6 +79,13 @@ int __fastcall Inbound(void*, void*, int, int, int, int, void*) {
 uint8_t* __cdecl App() { return app.data(); }
 bool __cdecl Network() { return network; }
 bool __fastcall Observer(void*, void*) { return observer; }
+bool __fastcall FallZoneType(void*, void*, int kind) { return kind == 0x22; }
+bool __fastcall FallZoneSceneType(void*, void*, int kind) { return kind == 7; }
+uint8_t __fastcall FallMovementState(uint8_t*, void*) { return 8; }
+bool __fastcall RecordQueuedFallState(uint8_t* fsm, void*, uint8_t* state) {
+    Put(fsm, 8, state);
+    return true;
+}
 uint8_t* __fastcall Start(void*, void*, int colour, int index) {
     starts.emplace_back(colour,index);
     return colour>=1 && colour<=2 && index>=0 && index<startPointCount[colour] ? startPoints[colour][index].data():nullptr;
@@ -1479,6 +1486,85 @@ int main() {
     GuardedSwitchDecks(); CHECK(switchCalls == 1);
     SetSlotColour(um, nullptr, static_cast<int>(b.objectId - 1), 4); CHECK(b.pendingForm == -1);
     Put<uint8_t*>(service.data(), kServiceMode, nullptr); CHECK(AiDeathCost(b.unit, 606) == 606);
+
+    SCENARIO("map death admission belongs to the registered local PvP bot controller");
+    Spawn(1, 3);
+    g_aiEnabled = true;
+    std::array<uint8_t, 0x230> fallMovement{};
+    auto& falling = g_botTable[0];
+    Put(fallMovement.data(), kMovementOwner, falling.unit);
+    Put(falling.unit, kUnitMovementController, fallMovement.data());
+    CHECK(OwnsMapDeathActor(fallMovement.data()) == 1);
+    void* zoneTable[] = {nullptr, reinterpret_cast<void*>(&FallZoneType)};
+    void** zone = zoneTable;
+    void* sceneTable[6]{};
+    sceneTable[5] = reinterpret_cast<void*>(&FallZoneSceneType);
+    std::array<uint8_t, 0xD4> zoneScene{};
+    using battle_ai::native::Aabb;
+    Put(zoneScene.data(), 0, static_cast<void**>(sceneTable));
+    Put(zoneScene.data(), battle_ai::native::detail::kSceneBackPointer, &zone);
+    Put(zoneScene.data(), battle_ai::native::detail::kSceneAabb, Aabb{{0, 0, 0}, {50, 50, 50}});
+    CHECK(IsDeathZone(zoneScene.data(), Aabb{{10, 10, 10}, {20, 20, 20}}));
+    CHECK(!IsDeathZone(zoneScene.data(), Aabb{{51, 10, 10}, {60, 20, 20}}));
+    CHECK(!IsDeathZone(nullptr, Aabb{}));
+    std::array<uint8_t, 0x60> fallHurt{};
+    std::array<uint8_t, 0x20> activeDocument{};
+    uint8_t* document = activeDocument.data();
+    uint8_t* fallScenes[] = {zoneScene.data()};
+    g_npcCollisionScenes = fallScenes;
+    g_mapDeathDocument = &document;
+    g_movementState = reinterpret_cast<NativeStateFn>(&FallMovementState);
+    g_mapDeathQueueState = reinterpret_cast<QueueStateFn>(&RecordQueuedFallState);
+    Put(falling.unit, kUnitHurtController, fallHurt.data());
+    Put<int32_t>(falling.unit, kUnitCurrentHp, 100);
+    const Aabb fallingBounds{{10, 10, 10}, {20, 20, 20}};
+    activeDocument[0x11] = 1;
+    CheckNpcDeathZones(falling.unit, &fallingBounds, 1);
+    CHECK(Get<uint8_t*>(fallMovement.data(), 8) == nullptr);
+    activeDocument[0x11] = 0;
+    CheckNpcDeathZones(falling.unit, &fallingBounds, 1);
+    CHECK(Get<uint8_t*>(fallMovement.data(), 8) == fallMovement.data() + kMapDeathState);
+    CHECK(Get<uint8_t*>(fallHurt.data(), 8) == fallHurt.data() + 0x20);
+    observer = true;
+    CHECK(OwnsMapDeathActor(fallMovement.data()) == 1);
+    falling.unit[kUnitRemote] = 1;
+    CHECK(OwnsMapDeathActor(fallMovement.data()) == 0);
+    Put<uint8_t*>(fallMovement.data(), 8, nullptr);
+    CheckNpcDeathZones(falling.unit, &fallingBounds, 1);
+    CHECK(Get<uint8_t*>(fallMovement.data(), 8) == nullptr);
+    falling.unit[kUnitRemote] = 0;
+    humans[kRecordMaster] = 0;
+    CHECK(OwnsMapDeathActor(fallMovement.data()) == 0);
+    humans[kRecordMaster] = 1;
+    Put<uint32_t>(falling.unit, kUnitServerId, falling.pilotId + 1);
+    CHECK(OwnsMapDeathActor(fallMovement.data()) == 0);
+    g_npcCollisionScenes = nullptr;
+    g_mapDeathDocument = nullptr;
+    g_mapDeathQueueState = nullptr;
+    g_movementState = nullptr;
+
+    SCENARIO("confirmed playback restores terminal control for a newly live retained bot");
+    Spawn(1, 3);
+    auto& revived = g_botTable[0];
+    Put<uint16_t>(revived.unit, 0x1C, 0x0100);
+    Put<uint32_t>(revived.unit, kUnitCurrentHp, 12000);
+    Put<uint32_t>(revived.unit, kUnitControlWord, 6);
+    Put(revived.unit, kUnitMovementController, fallMovement.data());
+    Put(fallMovement.data(), kMovementOwner, revived.unit);
+    fallMovement[kMapDeathRequested] = 1;
+    PlaybackUnit(nullptr, nullptr, nullptr);
+    CHECK(Get<uint32_t>(revived.unit, kUnitControlWord) == 6);
+    CHECK(fallMovement[kMapDeathRequested] == 1);
+    const auto lifeBefore = revived.generation;
+    SetSlotColour(um, nullptr, static_cast<int>(revived.objectId - 1), 0);
+    PlaybackUnit(nullptr, nullptr, nullptr);
+    CHECK(Get<uint32_t>(revived.unit, kUnitControlWord) == 1 && revived.generation != lifeBefore);
+    CHECK(Get<uint32_t>(revived.unit, kUnitCurrentHp) == 12000);
+    CHECK(fallMovement[kMapDeathRequested] == 0);
+    Put<uint32_t>(revived.unit, kUnitControlWord, 4);
+    SetSlotColour(um, nullptr, static_cast<int>(revived.objectId - 1), 0);
+    PlaybackUnit(nullptr, nullptr, nullptr);
+    CHECK(Get<uint32_t>(revived.unit, kUnitControlWord) == 4);
 
     SCENARIO("UDP temporarily hides bots; solo NAT exception is scoped");
     Spawn(); std::vector<uint8_t> wait(0xA00 + 12 * kWaitRoomSlotStride);

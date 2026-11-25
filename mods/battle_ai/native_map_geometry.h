@@ -27,6 +27,8 @@ struct MapGeometry {
     MapSphereObbContactFn sphereObbContact=nullptr;
     NativeShapeBounds* shapeBounds=nullptr;
     bool deferDestroyables=true;
+    bool spaceMap=false;
+    Aabb spaceBounds{};
     mutable uint32_t projections=0,groundMisses=0,blocked=0,lastReject=0;
     mutable uint8_t* rejectedScene=nullptr;
     mutable uint8_t* rejectedObject=nullptr;
@@ -94,7 +96,9 @@ struct MapGeometry {
         TerrainSupportSample support{};
         const auto status=api.support?api.support(api.supportContext,desired,support):TerrainSupportStatus::Missing;
         if(status==TerrainSupportStatus::Outside||status==TerrainSupportStatus::Invalid){lastReject=10;return false;}
-        bool hit=status==TerrainSupportStatus::Valid&&support.height>=floor&&(terrainRise||support.height<=ceiling);
+        // On space maps with a kill floor, only solid platforms are support.
+        bool hit=!spaceMap&&status==TerrainSupportStatus::Valid&&support.height>=floor&&
+            (terrainRise||support.height<=ceiling);
         float best=hit?support.height:floor;
         const Aabb bounds={{desired.x-1,floor,desired.z-1},{desired.x+1,ceiling,desired.z+1}};
         void* scenes[detail::kSceneCapacity]{};int count=0;
@@ -295,6 +299,36 @@ struct MapGeometry {
         }
         if(dropping&&!ClearBody(previous,landing))return false;
         grounded=landing;return true;
+    }
+    bool InsideSpace(Vec3 point)const {
+        return spaceMap&&point.x>=spaceBounds.min.x&&point.x<spaceBounds.max.x&&
+            point.z>=spaceBounds.min.z&&point.z<spaceBounds.max.z;
+    }
+    bool RouteStep(Vec3 from,Vec3 desired,Vec3& reached)const {
+        lastReject=0;
+        if(spaceMap&&(!InsideSpace(from)||!InsideSpace(desired)))return false;
+        if(Step(from,desired,reached))return true;
+        if(lastReject!=3||!spaceMap||!api.support)return false;
+        // Preserve the native motor's altitude across the open part of a
+        // space map. The hidden terrain is still a lower collision bound.
+        const Vec3 endpoint{desired.x,from.y,desired.z};
+        const Vec3 delta=endpoint-from;
+        const double length=Length(delta);
+        if(!std::isfinite(length)||length>1000)return false;
+        TerrainSupportSample support{};
+        if(api.support(api.supportContext,from,support)!=TerrainSupportStatus::Valid||
+           !std::isfinite(support.spacing))return false;
+        const int samples=(std::max)(1,static_cast<int>(std::ceil(length/(std::max)(1.0f,support.spacing))));
+        const float bottom=bodyBounds.min.y-ownerPosition.y+from.y;
+        for(int sample=0;sample<=samples;++sample) {
+            const Vec3 point=from+delta*(static_cast<float>(sample)/samples);
+            if(api.support(api.supportContext,point,support)!=TerrainSupportStatus::Valid||
+               !std::isfinite(support.height)||support.height>=bottom)return false;
+        }
+        if(!ClearBody(from,endpoint))return false;
+        reached=endpoint;
+        lastReject=0;
+        return true;
     }
 };
 }

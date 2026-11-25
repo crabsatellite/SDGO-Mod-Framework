@@ -521,6 +521,7 @@ local function RouteMotion(o)
 end
 local function Move(npc,o,s,target,now,force)
   RouteMotion(o)
+  if Flag(o.routePlanning) then return true end
   if now<s.repathAt and not force then return false end
   s.repathAt=now+C.RepathMs
   local status
@@ -719,8 +720,9 @@ local function Recover(npc,o,s,t,now)
   local dx,dz=o.pos.x-s.anchor.x,o.pos.z-s.anchor.z
   -- Repeated vertical hopping against a wall is not horizontal path progress.
   if dx*dx+dz*dz>=C.ProgressDistance*C.ProgressDistance then
-    s.anchor=o.pos; s.progressAt=now; s.attempt=0; return false
+    s.anchor=o.pos; s.progressAt=now; s.attempt=0; s.recoveryRetryAt=nil; return false
   end
+  if Flag(o.routePlanning) or now<(s.recoveryRetryAt or 0) then return false end
   if not stationary and (now-s.progressAt<C.StuckMs or now<s.recoveryAt) then return false end
   if not mayMove then return false end
   s.attempt=s.attempt+1;s.recoveryStartedAt=now;s.recoveryAt=now+C.RecoveryMs+C.RecoveryCooldownMs
@@ -754,6 +756,7 @@ local function Recover(npc,o,s,t,now)
       s.movementIntent=true;s.movementIntentAt=now
     end
     s.routeRecoveryUntil=planned and now+200 or nil
+    s.recoveryRetryAt=not planned and now+C.RepathMs or nil
     s.attempt=0;s.anchor=o.pos;s.progressAt=now;s.recoverUntil=nil;s.recovering=nil
   end
   Log(s,'stuck recovery',now)

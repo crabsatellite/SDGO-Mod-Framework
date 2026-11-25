@@ -2643,6 +2643,158 @@ namespace
         }
     }
 
+    bool OwnsMapDeathUnit(const uint8_t* unit)
+    {
+        if (!unit || !g_aiEnabled || !g_botMode || CurrentPvpMode() != g_botMode ||
+            !g_game.isNetwork || !g_game.isNetwork() || !g_game.unitManager)
+            return false;
+        void* um = *g_game.unitManager;
+        auto* room = *reinterpret_cast<uint8_t**>(g_botMode + kModeRoom);
+        if (!um || !room || !LocalIsRoomMaster(room))
+            return false;
+        const uint32_t objectId = *reinterpret_cast<const uint32_t*>(unit + kUnitObjectId);
+        const Bot* bot = BotByObject(um, objectId);
+        return bot && bot->unit == unit && bot->generation != 0 &&
+            g_findObject(um, objectId) == unit &&
+            *reinterpret_cast<const uint32_t*>(unit + kUnitServerId) == bot->pilotId &&
+            unit[kUnitLocalControl] != 0 && unit[kUnitRemote] == 0 && unit[kUnitMasterNpc] != 0;
+    }
+
+    using QueueStateFn = bool(__thiscall*)(uint8_t*, uint8_t*);
+    constexpr size_t kUnitHurtController = 0x9D4;
+    constexpr size_t kMapDeathRequested = 0x218;
+    constexpr size_t kMovementOwner = 0x21C;
+    constexpr size_t kMapDeathState = 0x138;
+    constexpr uint8_t kMapDeathStateId = 15;
+    QueueStateFn g_mapDeathQueueState = nullptr;
+    uint8_t** g_mapDeathDocument = nullptr;
+    uint8_t* const* g_npcCollisionScenes = nullptr;
+
+    bool IsDeathZone(const uint8_t* scene, const battle_ai::native::Aabb& body)
+    {
+        using namespace battle_ai::native;
+        using IsKind = bool(__thiscall*)(const void*, int);
+        if (!scene)
+            return false;
+        auto* sceneVtable = *reinterpret_cast<void* const* const*>(scene);
+        if (!sceneVtable || !sceneVtable[5] ||
+            !reinterpret_cast<IsKind>(sceneVtable[5])(scene, 7))
+            return false;
+        auto* object = *reinterpret_cast<uint8_t* const*>(scene + detail::kSceneBackPointer);
+        if (!object)
+            return false;
+        auto* objectVtable = *reinterpret_cast<void* const* const*>(object);
+        return objectVtable && objectVtable[1] &&
+            reinterpret_cast<IsKind>(objectVtable[1])(object, 0x22) &&
+            detail::Intersects(body, *reinterpret_cast<const Aabb*>(scene + detail::kSceneAabb));
+    }
+
+    // CNPC and CPlayer use separate collision dispatchers. Apply the player's
+    // death-zone test to the candidates already collected by the CNPC query.
+    void __stdcall CheckNpcDeathZones(uint8_t* unit, const battle_ai::native::Aabb* body, int count)
+    {
+        const DWORD incomingError = GetLastError();
+        __try {
+            if (count > 0 && count <= 128 && body && g_npcCollisionScenes && g_mapDeathDocument &&
+                *g_mapDeathDocument && !(*g_mapDeathDocument)[0x11] && OwnsMapDeathUnit(unit) &&
+                *reinterpret_cast<const int32_t*>(unit + kUnitCurrentHp) > 0) {
+                auto* movement = *reinterpret_cast<uint8_t**>(unit + kUnitMovementController);
+                auto* hurt = *reinterpret_cast<uint8_t**>(unit + kUnitHurtController);
+                if (movement && hurt && movement[kMapDeathRequested] == 0 &&
+                    g_movementState(movement) != kMapDeathStateId) {
+                    for (int i = 0; i < count; ++i) {
+                        if (IsDeathZone(g_npcCollisionScenes[i], *body)) {
+                            g_mapDeathQueueState(hurt, hurt + 0x20);
+                            g_mapDeathQueueState(movement, movement + kMapDeathState);
+                            break;
+                        }
+                    }
+                }
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        SetLastError(incomingError);
+    }
+
+    void* g_npcDeathZoneOriginal = nullptr;
+
+    __declspec(naked) void NpcDeathZoneSite()
+    {
+        __asm {
+            pushfd
+            cmp dword ptr [ebp-210h], 0
+            jle resume_native
+            pushad
+            mov eax, esp
+            sub esp, 210h
+            and esp, 0FFFFFFF0h
+            mov [esp+200h], eax
+            fxsave [esp]
+            fninit
+            ldmxcsr dword ptr [g_teleportDefaultMxcsr]
+            cld
+            push dword ptr [ebp-210h]
+            push edi
+            push ebx
+            call CheckNpcDeathZones
+            fxrstor [esp]
+            mov esp, [esp+200h]
+            popad
+        resume_native:
+            popfd
+            jmp dword ptr [g_npcDeathZoneOriginal]
+        }
+    }
+
+    // Retain the native death state's one-shot request latch for every life.
+    int __stdcall OwnsMapDeathActor(const uint8_t* movement)
+    {
+        const DWORD incomingError = GetLastError();
+        int admitted = 0;
+        __try {
+            if (movement) {
+                const auto* unit = *reinterpret_cast<const uint8_t* const*>(movement + kMovementOwner);
+                admitted = OwnsMapDeathUnit(unit) &&
+                    *reinterpret_cast<const uint8_t* const*>(unit + kUnitMovementController) == movement;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {}
+        SetLastError(incomingError);
+        return admitted;
+    }
+
+    void* g_mapDeathActorOriginal = nullptr;
+
+    __declspec(naked) void MapDeathActorGate()
+    {
+        __asm {
+            pushfd
+            test al, al
+            jnz native_actor
+            pushad
+            mov eax, esp
+            sub esp, 210h
+            and esp, 0FFFFFFF0h
+            mov [esp+200h], eax
+            fxsave [esp]
+            fninit
+            ldmxcsr dword ptr [g_teleportDefaultMxcsr]
+            cld
+            push esi
+            call OwnsMapDeathActor
+            mov [esp+204h], eax
+            fxrstor [esp]
+            mov eax, [esp+204h]
+            mov esp, [esp+200h]
+            test eax, eax
+            jz restore_registers
+            mov byte ptr [esp+28], 1
+        restore_registers:
+            popad
+        native_actor:
+            popfd
+            jmp dword ptr [g_mapDeathActorOriginal]
+        }
+    }
+
     // Observe the actual native TAB kill/assist/points renderer, rather than infer
     // visibility from unit registration or from the separate teammate HUD.
     void __fastcall ScoreboardRow(uint8_t* panel, void*, uint8_t* slot, int row)
@@ -2881,8 +3033,33 @@ namespace
         return unit;
     }
 
-    // After the respawn packet (message 7 placed the unit): the deck switch of an AI player
-    // whose deck entry changed, as CPlayer's message 7 handler switches a player's.
+    void CompleteRetainedRespawn(Bot& bot)
+    {
+        void* um = g_game.unitManager ? *g_game.unitManager : nullptr;
+        if (!um || !g_botMode || CurrentPvpMode() != g_botMode || !bot.unit ||
+            !SlotHolds(um, bot) || g_findObject(um, bot.objectId) != bot.unit ||
+            *reinterpret_cast<const uint32_t*>(bot.unit + kUnitServerId) != bot.pilotId)
+            return;
+        if (*reinterpret_cast<const uint16_t*>(bot.unit + 0x1C) != 0x0100 ||
+            *reinterpret_cast<const int32_t*>(bot.unit + kUnitCurrentHp) <= 0)
+            return;
+        // Playback has reinserted this retained unit and restored its HP.
+        // Start the new life with the native live hurt value and a clear
+        // movement death-request latch.
+        auto& control = *reinterpret_cast<uint32_t*>(bot.unit + kUnitControlWord);
+        if (control == 6) {
+            control = 1;
+            g_api->Log(g_mod, SDGO_LOG_INFO,
+                       "retained AI object %u reset terminal control after native respawn",
+                       bot.objectId);
+        }
+        auto* movement = *reinterpret_cast<uint8_t**>(bot.unit + kUnitMovementController);
+        if (movement && *reinterpret_cast<uint8_t**>(movement + kMovementOwner) == bot.unit)
+            movement[kMapDeathRequested] = 0;
+    }
+
+    // Apply any pending deck switch after the native respawn packet has placed
+    // the AI, matching the order used by the player's message 7 handler.
     void SwitchPendingDecks()
     {
         for (Bot& bot : g_botTable) {
@@ -2909,6 +3086,7 @@ namespace
             }
             if (bot.pendingInitialize) {
                 bot.pendingInitialize = false;
+                CompleteRetainedRespawn(bot);
                 bot.generation = NextUnitGeneration();
                 ApplyAcePilotName(g_game.unitManager ? *g_game.unitManager : nullptr, bot);
                 InitializeBattleAiUnit(bot);
@@ -4073,6 +4251,14 @@ SDGO_MOD_ENTRY
     if (!api->HookSite(mod, "game.teleport_relocation_npc_gate",
                        reinterpret_cast<void*>(&TeleportNpcGate),
                        &g_teleportNpcGateOriginal))
+        return 0;
+    if (!Bind(g_mapDeathQueueState, "fsm.queue_state") ||
+        !Bind(g_mapDeathDocument, "game.document") ||
+        !Bind(g_npcCollisionScenes, "match_ai.npc_collision_scenes") ||
+        !api->HookSite(mod, "match_ai.npc_death_zone",
+                       reinterpret_cast<void*>(&NpcDeathZoneSite), &g_npcDeathZoneOriginal) ||
+        !api->HookSite(mod, "match_ai.map_death_actor_gate",
+                       reinterpret_cast<void*>(&MapDeathActorGate), &g_mapDeathActorOriginal))
         return 0;
     if(!api->HookSite(mod,"match_ai.gate.countdown_authority",reinterpret_cast<void*>(&GateAuthoritySite),&g_gateAuthorityOriginal))
         return 0;

@@ -73,6 +73,10 @@ when no teammate has a current contact. Paths account for platforms, safe drops,
 DeathZone volumes. A blocking destructible can be attacked through normal weapons; indestructible and
 destroyed-but-still-solid objects remain obstacles.
 
+Space maps with an authored kill floor can use short, collision-checked routes through open air.
+The original movement controller still applies gravity and map limits. A failed recovery has a
+retry interval, and a search can keep expanding while it has no reachable waypoint yet.
+
 These routes can select propulsion devices loaded in the actual map. When the entrance is reachable
 and the authored trajectory has a suitable supported exit, a bot approaches the entrance and uses
 the original request and notification flow. Native movement owns the trip; the bot replans from its
