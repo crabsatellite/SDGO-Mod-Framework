@@ -120,6 +120,9 @@ transfers its queued payload to the native cleanup owner, and returns control to
 which retires and frees that one request normally without sending another room-view RPC. It keeps a
 private packet copy and resumes the original parser once after the waiting-room manager has processed
 the remaining queues.
+In Grid and Tag rooms, the active-unit notice still updates the unit data. The battleship notice
+supplies the room's 3D battleship preview, so a randomized mobile-suit model ID cannot be sent to
+the battleship loader during start or settlement.
 Late notices update the pending records; the packet dispatcher does not reenter the start parser.
 The server advances a per-room marker from 1 through 15, wrapping to 1. The native start packet's
 byte at `+0x1F` remains a 0..12 participant count in its low nibble; its high nibble and the unused

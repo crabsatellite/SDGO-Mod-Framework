@@ -15,6 +15,9 @@ const SdgoApi* g_api=nullptr;
 SdgoMod* g_mod=nullptr;
 room_random_client::Bindings g_bindings;
 void* g_original=nullptr;
+void* g_unitModelEnqueueOriginal=nullptr;
+const uint8_t* g_unitModelEnqueueContinue=nullptr;
+const void* g_shipObjectManagerVtable=nullptr;
 const DWORD g_defaultMxcsr=0x1F80;
 room_random_client::CacheSync g_sync;
 room_random_client::PendingStart g_pending;
@@ -242,6 +245,28 @@ void __fastcall UnitNotice(void* self,void*,const uint8_t* packet) {
 }
 void __fastcall ShipNotice(void* self,void*,const uint8_t* packet) {
     CallNotice(g_shipNotice,self,packet,room_random_sync::kShipOpcode);
+}
+// The native active-unit task already copied the full unit record. Its 3D
+// request carries a mobile-suit grid ID, which a battleship object cannot
+// load. Keep the task and its notifications; the ship task owns the preview.
+__declspec(naked) void UnitModelEnqueueSite() {
+    __asm {
+        pushfd
+        push eax
+        test ecx,ecx
+        jz forward
+        mov eax,dword ptr [g_shipObjectManagerVtable]
+        cmp dword ptr [ecx],eax
+        jne forward
+        pop eax
+        popfd
+        lea esp,[esp+8]
+        jmp dword ptr [g_unitModelEnqueueContinue]
+    forward:
+        pop eax
+        popfd
+        jmp dword ptr [g_unitModelEnqueueOriginal]
+    }
 }
 void __fastcall RoomViewRequest(void* self,void*,uint16_t view) {
     NativeFpState fp;
@@ -490,10 +515,15 @@ SDGO_MOD_ENTRY {
         reinterpret_cast<room_random_client::ChangeRoomViewFn>(
             api->Symbol(mod,"room_random.client_change_room_view"));
     g_userInfoVtable=api->Symbol(mod,"room_random.client_user_info_vtable");
+    const auto* unitModelEnqueue=static_cast<const uint8_t*>(
+        api->Symbol(mod,"room_random.client_unit_model_enqueue"));
+    g_shipObjectManagerVtable=api->Symbol(mod,"room_random.client_ship_object_manager_vtable");
     if(!g_bindings.profile || !g_bindings.app || !g_bindings.waitRoomVtable ||
        !g_bindings.changeRoomViewVtable || !g_bindings.changeRoomView ||
        !g_bindings.roomInfo || !g_bindings.managerUpdate ||
-       !g_bindings.userHasState || !g_userInfoVtable) return 0;
+       !g_bindings.userHasState || !g_userInfoVtable ||
+       !unitModelEnqueue || !g_shipObjectManagerVtable) return 0;
+    g_unitModelEnqueueContinue=unitModelEnqueue+5;
     auto bindSlots=[&](room_random_client::SlotAccess& s,const char* prefix) {
         char name[96];
         auto symbol=[&](const char* key) {sprintf_s(name,"room_random.client_%s_%s",prefix,key);return api->Symbol(mod,name);};
@@ -506,6 +536,9 @@ SDGO_MOD_ENTRY {
     };
     if(!bindSlots(g_bindings.normal,"normal") || !bindSlots(g_bindings.mission,"mission"))return 0;
     InitializeCriticalSection(&g_lock);
+    if(!api->HookSite(mod,"room_random.client_unit_model_enqueue",
+                      reinterpret_cast<void*>(&UnitModelEnqueueSite),
+                      &g_unitModelEnqueueOriginal)) return 0;
     if(!api->HookSite(mod,"room_random.client_dispatch",reinterpret_cast<void*>(&DispatchSite),&g_original)) return 0;
     if(!api->HookCode(mod,"room_random.client_fill_human",reinterpret_cast<void*>(&FillHuman),reinterpret_cast<void**>(&g_fill))) return 0;
     if(!api->HookCode(mod,"room_random.client_begin_start",reinterpret_cast<void*>(&BeginStart),reinterpret_cast<void**>(&g_beginStart))) return 0;

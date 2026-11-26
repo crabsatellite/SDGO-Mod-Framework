@@ -60,7 +60,7 @@
 | [任务行为版本](docs/mission-behavior.zh-CN.md) <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 统一选择任务 AI 与刷怪使用 OC 原版行为或现有行为，客户端与全部 Battle 频道同步 |
 | [新手保护](docs/newcomer-protection.zh-CN.md) <!-- catalog: `newcomer_protection` --> | 为服主指定玩家配置任务和对战的生命、普通武器伤害倍率；必杀维持原规则，名单仅留服务端 |
 | [AI 机师互动台词（可选）](docs/ai-dialogue.zh-CN.md) <!-- catalog: `ai_dialogue` --> | AI 机师按战况和机体人设说台词、给队友建议；需自填 DeepSeek 密钥，默认关闭 |
-| [每局随机机体](docs/room-random.zh-CN.md) <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机选择出击机体或卡组 |
+| [每局随机机体](docs/room-random.zh-CN.md) <!-- catalog: `room_random`、`room_random_client` --> | 房名写 `!rand`，每局从各自机库随机选择出击机体或战舰编队 |
 | [完整对战 All Map](docs/all-maps.zh-CN.md) <!-- catalog: `all_maps` --> | 房间选择 All Map 时从完整原生对战地图目录抽取，任务专用图仍留在任务模式 |
 | [三种强化体系，一个客户端](docs/over-custom.zh-CN.md) <!-- catalog: `oc_custom_client`、`oc_custom_server`、`oc_custom_battle` --> | 房间可选 OC、G改 1.0 或 G改 2.0，战斗按所选体系计算属性，各套配装分别保存。工厂支持 OC 加点、挑战和 EX 技能选择。本人和其他玩家查看机体时可看到一致的六维图和两套部件。 OC 道具格子兼容保留的成功卡与保护卡，显示读取状态，页面平滑滑入，Ex 入口可直接用鼠标打开。 |
 | [好友机体赠送（可选）](docs/friend-unit-gift.zh-CN.md) <!-- catalog: `friend_unit_gift_client`、`friend_unit_gift_server` --> | 右键好友（在线或离线均可），在机体管理中选机赠送，对方在保管库接受或退还；只读功能探测在暂时超时后自动恢复；默认关闭，由服主开启 |

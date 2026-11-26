@@ -47,6 +47,8 @@ bool managerStateProbe=false;
 bool roomViewStateProbe=false;
 int rootStateRuns=0,roomViewRuns=0,roomViewRequests=0,managerTicks=0;
 int nativeUnitNoticeCalls=0,nativeShipNoticeCalls=0;
+unsigned visualEnqueues=0,visualModel=0;
+std::array<void*,3> shipObjectManagerVtable{},unitObjectManagerVtable{};
 int nativeRoomViewRequestCalls=0;
 uint32_t activeNoticeSlot=0;
 constexpr DWORD kManagerUpdateLastError=0x5A17;
@@ -58,6 +60,21 @@ std::array<uint8_t,0x344> lastOutput{};
 std::array<int,12> startedModels{};
 std::unique_ptr<room_random_native_test::ClientCopies> nativeCopies;
 template<class T> void Put(uint8_t* p,size_t n,T v){std::memcpy(p+n,&v,sizeof(v));}
+__declspec(noinline) void __fastcall NativeModelEnqueue(void*,void*,
+                                                        const unsigned* modelId,unsigned) {
+    ++visualEnqueues;
+    visualModel=*modelId;
+}
+__declspec(naked) unsigned __fastcall NativeUnitModelVisual(void*,void*,const unsigned*) {
+    __asm {
+        mov eax,[esp+4]
+        push 0
+        push eax
+        call NativeModelEnqueue
+        mov eax,0ACEDh
+        ret 4
+    }
+}
 __declspec(noinline) int __fastcall NativeUserInfoBegin(uint8_t* self,void*) {
     if(room_random_client::Read<uint16_t>(self,0x18)==0x16)
         Put<int32_t>(self,0x14,room_random_client::Read<int32_t>(profile.data(),0x1FB));
@@ -383,6 +400,9 @@ void Symbols() {
     Symbol(f,"room_random.client_fill_human",reinterpret_cast<void*>(&NativeFill),"code");
     Symbol(f,"room_random.client_begin_start",reinterpret_cast<void*>(&FakeStartParser),"code");
     Symbol(f,"room_random.client_unit_notice",reinterpret_cast<void*>(&NativeUnitNotice),"code");
+    Symbol(f,"room_random.client_unit_model_enqueue",
+           reinterpret_cast<const uint8_t*>(&NativeUnitModelVisual)+7,"site");
+    Symbol(f,"room_random.client_ship_object_manager_vtable",shipObjectManagerVtable.data(),"data");
     Symbol(f,"room_random.client_ship_notice",reinterpret_cast<void*>(&NativeShipNotice),"code");
     Symbol(f,"room_random.client_room_view_request",reinterpret_cast<void*>(&NativeRoomViewRequest),"code");
     Symbol(f,"room_random.client_app",&appPointer,"data");
@@ -451,6 +471,20 @@ int wmain(int argc,wchar_t** argv) {
     auto init=reinterpret_cast<SdgoCoreInitFn>(GetProcAddress(core,"SdgoCoreInit"));
     SdgoBoot boot{sizeof(SdgoBoot),"room_random_client_runtime_test",GetModuleHandleW(nullptr)};
     Check(init && init(&boot),"real core initializes both entry and interior hook owners");
+    const unsigned unitGrid=11032,shipGrid=50001;
+    void* shipManager=shipObjectManagerVtable.data();
+    void* unitManager=unitObjectManagerVtable.data();
+    Check(NativeUnitModelVisual(&shipManager,nullptr,&unitGrid)==0xACED,
+          "suppressed ship preview call resumes at the original continuation with a balanced stack");
+    Check(visualEnqueues==(enabled ? 0u : 1u),
+          "an active mobile-suit update cannot enqueue a mobile-suit model into a battleship object manager");
+    const auto priorEnqueues=visualEnqueues;
+    Check(NativeUnitModelVisual(&unitManager,nullptr,&unitGrid)==0xACED &&
+          visualEnqueues==priorEnqueues+1 && visualModel==unitGrid,
+          "ordinary mobile-suit model updates retain the original native call");
+    NativeModelEnqueue(&shipManager,nullptr,&shipGrid,0);
+    Check(visualEnqueues==priorEnqueues+2 && visualModel==shipGrid,
+          "the separate battleship model update retains the original native call");
     startedModel=0;factoryCalls=0;nativeNoticeRoute=0;
     nativeParserParticipantCount=0;
     SetTitle("fixture !rand");
