@@ -64,6 +64,7 @@ void ObserveOptionalDialogue(const SdgoGameTestContextV1* context,bool finish=fa
 #include "../mission_behavior/observer.h"
 #include "gift_actions.h"
 #include "room_actions.h"
+#include "room_join_actions.h"
 #include "room_title_actions.h"
 #include "room_style_preview_actions.h"
 #include "tutorial_actions.h"
@@ -136,6 +137,7 @@ LoadingNavigationActions loadingNavigation;
 LoadingNavigationActions::Target earlyNavigationTarget =
     LoadingNavigationActions::kOff;
 bool earlyNavigationBeforeInventory = false;
+char earlyRoomJoinTitle[21] = {};
 LoadingNavigationActions::Destination earlyManagementDestination = LoadingNavigationActions::Destination::None;
 bool earlyManagementBeforeFirstPage = false;
 BlueprintActions blueprint;
@@ -522,6 +524,22 @@ bool LoadPlan() {
         blueprintIni.c_str());
     if(earlyNavigationTiming<0 || earlyNavigationTiming>1)return false;
     earlyNavigationBeforeInventory=earlyNavigationTiming==1;
+    wchar_t earlyRoomJoinTitleWide[22]{};
+    const DWORD earlyRoomJoinTitleLength=GetPrivateProfileStringW(
+        L"settings",L"EarlyRoomJoinTitle",L"",
+        earlyRoomJoinTitleWide,
+        static_cast<DWORD>(std::size(earlyRoomJoinTitleWide)),
+        blueprintIni.c_str());
+    if(earlyRoomJoinTitleLength>20)return false;
+    memset(earlyRoomJoinTitle,0,sizeof(earlyRoomJoinTitle));
+    for(DWORD index=0;index<earlyRoomJoinTitleLength;++index) {
+        const wchar_t character=earlyRoomJoinTitleWide[index];
+        if(character<0x20 || character>0x7E)return false;
+        earlyRoomJoinTitle[index]=static_cast<char>(character);
+    }
+    if(earlyRoomJoinTitle[0] &&
+       (!earlyNavigationBeforeInventory ||
+        earlyNavigationTarget!=LoadingNavigationActions::kRoom))return false;
     const int crossManagement=GetPrivateProfileIntW(L"settings",L"EarlyManagementToHangar",0,blueprintIni.c_str());
     if(crossManagement<0 || crossManagement>1)return false;
     wchar_t destinationName[16]{};
@@ -1980,6 +1998,8 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
     enum EarlyInventoryNavigationPhase : uint32_t {
         kEarlyAwaitingClick,
         kEarlyAwaitingTarget,
+        kEarlyRoomJoinObserve,
+        kEarlyRoomJoinLeave,
         kEarlyRecovering,
         kEarlyRoomCreate,
         kEarlyRoomObserve,
@@ -2005,6 +2025,9 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
     static uint32_t earlyRoomReadyTick=UINT32_MAX;
     static uint32_t earlyRoomLeaveBaseline=0;
     static bool earlyRoomLeaveIssued=false;
+    static bool earlyRoomSendDeferred=false;
+    static RoomJoinActions::JoinObservation previousEarlyRoomJoin{};
+    static bool havePreviousEarlyRoomJoin=false;
     if(!context->tick && earlyNavigationBeforeInventory) {
         earlyPhase=kEarlyAwaitingClick;
         previousEarlyObservation={};
@@ -2024,9 +2047,13 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
         earlyRoomReadyTick=UINT32_MAX;
         earlyRoomLeaveBaseline=0;
         earlyRoomLeaveIssued=false;
+        earlyRoomSendDeferred=false;
+        previousEarlyRoomJoin={};
+        havePreviousEarlyRoomJoin=false;
         if(earlyNavigationTarget==LoadingNavigationActions::kRoom) {
             roomRequested=startRequested=leaveRequested=endObserved=false;
             activeBattleStartSequence=0;
+            if(earlyRoomJoinTitle[0])roomJoin.ResetObservations();
         }
         loadingNavigation.Reset();
     }
@@ -2383,29 +2410,152 @@ int __cdecl Onboarding(const SdgoGameTestContextV1* context) {
             }
         }
         if(earlyPhase==kEarlyAwaitingClick) {
-            loadingNavigation.RepeatManagementClicks(earlyManagementDestination==LoadingNavigationActions::Destination::None);
-            if(inventory.initialized) {
-                context->Assert(0,
-                    "the genuine UnitInfo +0x20 ready flag became set before the enabled navigation control could be invoked; this run missed the pre-inventory timing window");
-                return SDGO_GAME_TEST_FAIL;
-            }
-            const auto result=loadingNavigation.Poll(
-                earlyNavigationTarget,
-                context->elapsed_ms,
-                inventory.initialized!=0,
-                inventory.initialized && inventory.scan_complete);
-            reportEarly();
-            if(failEarly(result))return SDGO_GAME_TEST_FAIL;
-            if(loadingNavigation.State().clicked) {
-                const auto& clicked=loadingNavigation.State();
+            if(earlyRoomJoinTitle[0]) {
+                if(inventory.initialized) {
+                    context->Assert(0,
+                        "the live advertised room row did not become joinable before the genuine UnitInfo +0x20 ready flag; this run missed the pre-inventory room-entry window");
+                    return SDGO_GAME_TEST_FAIL;
+                }
+                if(!actions.InventoryPageRequestSeen() ||
+                   actions.AppState()!=6 ||
+                   !roomJoin.TitleVisible(earlyRoomJoinTitle))
+                    return SDGO_GAME_TEST_WAIT;
+                const auto before=actions.TransportState();
+                if(!roomJoin.JoinExactTitleAllowDeferred(
+                       earlyRoomJoinTitle)) {
+                    context->Assert(0,
+                        "the exact live advertised GameRoom row invoked its original room-join business while inventory was incomplete");
+                    return SDGO_GAME_TEST_FAIL;
+                }
+                const auto join=roomJoin.JoinState();
+                const auto after=actions.TransportState();
                 const bool beforeReady=
                     !inventory.initialized &&
-                    !clicked.inventory_initialized_at_click &&
-                    !clicked.inventory_complete_at_click;
+                    !inventory.scan_complete &&
+                    join.result==RoomJoinActions::kJoinPending &&
+                    join.requested_room_id!=0;
                 context->Assert(beforeReady,
-                    "the real enabled navigation callback was invoked before the native UnitInfo +0x20 ready flag and complete inventory scan");
+                    "the exact live room row was activated before inventory readiness");
                 if(!beforeReady)return SDGO_GAME_TEST_FAIL;
-                earlyPhase=kEarlyAwaitingTarget;
+                earlyRoomSendDeferred=after.send_sequence==before.send_sequence;
+                char message[384]{};
+                sprintf_s(message,
+                    "pre-inventory room join title=%s selected_room=%u selection_stage=%u controls=0x%X inventory=%u/%u pages=%u tail=%u cursor=%u:%u transport=%u->%u opcode=%04X bytes=%u",
+                    earlyRoomJoinTitle,join.requested_room_id,
+                    roomJoin.SelectionStage(),
+                    roomJoin.SelectionControlFlags(),
+                    inventory.initialized,inventory.scan_complete,
+                    inventory.page_count,inventory.tail_count,
+                    inventory.last_uid_cursor_high,
+                    inventory.last_uid_cursor_low,
+                    before.send_sequence,after.send_sequence,
+                    after.opcode,after.packet_size);
+                context->Observe(message);
+                earlyPhase=kEarlyRoomJoinObserve;
+            } else {
+                loadingNavigation.RepeatManagementClicks(earlyManagementDestination==LoadingNavigationActions::Destination::None);
+                if(inventory.initialized) {
+                    context->Assert(0,
+                        "the genuine UnitInfo +0x20 ready flag became set before the enabled navigation control could be invoked; this run missed the pre-inventory timing window");
+                    return SDGO_GAME_TEST_FAIL;
+                }
+                const auto result=loadingNavigation.Poll(
+                    earlyNavigationTarget,
+                    context->elapsed_ms,
+                    inventory.initialized!=0,
+                    inventory.initialized && inventory.scan_complete);
+                reportEarly();
+                if(failEarly(result))return SDGO_GAME_TEST_FAIL;
+                if(loadingNavigation.State().clicked) {
+                    const auto& clicked=loadingNavigation.State();
+                    const bool beforeReady=
+                        !inventory.initialized &&
+                        !clicked.inventory_initialized_at_click &&
+                        !clicked.inventory_complete_at_click;
+                    context->Assert(beforeReady,
+                        "the real enabled navigation callback was invoked before the native UnitInfo +0x20 ready flag and complete inventory scan");
+                    if(!beforeReady)return SDGO_GAME_TEST_FAIL;
+                    earlyPhase=kEarlyAwaitingTarget;
+                }
+            }
+        }
+        if(earlyPhase==kEarlyRoomJoinObserve) {
+            const auto join=roomJoin.JoinState();
+            if(!havePreviousEarlyRoomJoin ||
+               memcmp(&previousEarlyRoomJoin,&join,sizeof(join))) {
+                char message[320]{};
+                sprintf_s(message,
+                    "pre-inventory room join result=%u sequence=%u app=%u requested=%u acknowledged=%u model=%u reply=%04X variant=%u original=%u guest=%u inventory=%u/%u pages=%u tail=%u",
+                    join.result,join.sequence,join.native_app_state,
+                    join.requested_room_id,join.acknowledged_room_id,
+                    join.model_room_id,join.reply_opcode,
+                    join.room_variant,join.original_handler_completed,
+                    join.local_is_guest,inventory.initialized,
+                    inventory.scan_complete,inventory.page_count,
+                    inventory.tail_count);
+                context->Observe(message);
+                previousEarlyRoomJoin=join;
+                havePreviousEarlyRoomJoin=true;
+            }
+            if(join.result==RoomJoinActions::kJoinRejected) {
+                context->Assert(0,
+                    "the original server rejected the deferred exact-room join");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            if(join.result==RoomJoinActions::kJoinAccepted) {
+                const bool accepted=
+                    join.requested_room_id!=0 &&
+                    join.requested_room_id==join.acknowledged_room_id &&
+                    join.requested_room_id==join.model_room_id &&
+                    join.reply_opcode==0x0550 &&
+                    join.original_handler_completed &&
+                    join.local_is_guest &&
+                    join.native_app_state==18;
+                context->Assert(accepted,
+                    "the original 0x0550 reply installed the exact advertised room as a real app18 guest model");
+                if(!accepted)return SDGO_GAME_TEST_FAIL;
+                context->Assert(earlyRoomSendDeferred,
+                    "the early room-row business deferred its original join request instead of sending while inventory was incomplete");
+                if(!earlyRoomSendDeferred)return SDGO_GAME_TEST_FAIL;
+                context->Assert(inventory.initialized,
+                    "the deferred room-row business resumed only after the original inventory ready flag was set");
+                if(!inventory.initialized)return SDGO_GAME_TEST_FAIL;
+                if(!inventory.scan_complete)return SDGO_GAME_TEST_WAIT;
+                context->Assert(1,
+                    "the original paginated inventory stream completed after the deferred room-row click");
+                if(!rooms.LeaveReady())return SDGO_GAME_TEST_WAIT;
+                if(earlyRoomReadyTick==UINT32_MAX) {
+                    earlyRoomReadyTick=context->tick;
+                    context->Observe(
+                        "the deferred guest join reached the real app18 room; retaining one normal client update before native leave");
+                    return SDGO_GAME_TEST_WAIT;
+                }
+                if(context->tick==earlyRoomReadyTick)
+                    return SDGO_GAME_TEST_WAIT;
+                earlyRoomLeaveBaseline=rooms.LeaveState().reply_sequence;
+                if(!rooms.Leave())return SDGO_GAME_TEST_WAIT;
+                earlyRoomLeaveIssued=true;
+                earlyPhase=kEarlyRoomJoinLeave;
+                context->Observe(
+                    "queued the original guest leave business after the validated deferred room entry");
+            }
+        }
+        if(earlyPhase==kEarlyRoomJoinLeave) {
+            const auto left=rooms.LeaveState();
+            if(left.reply_sequence>earlyRoomLeaveBaseline &&
+               left.result==RoomActions::kLeaveRejected) {
+                context->Assert(0,
+                    "the backend rejected recovery from the deferred guest join");
+                return SDGO_GAME_TEST_FAIL;
+            }
+            if(earlyRoomLeaveIssued &&
+               left.reply_sequence>earlyRoomLeaveBaseline &&
+               left.result==RoomActions::kLeaveAccepted &&
+               actions.AppState()==6) {
+                channels.Reset();
+                earlyPhase=kEarlyComplete;
+                context->Observe(
+                    "the original leave reply returned the deferred guest join to the native room list");
             }
         }
         if(earlyPhase==kEarlyAwaitingTarget) {
@@ -7459,6 +7609,7 @@ SDGO_MOD_ENTRY {
             shopCatalog.VisualOnly()!=shopVisualOnly || (shopPurchase && !shopPurchaseActions.Bind(api,mod,&actions,&shopCatalog)))) ||
          (testOperatorFlow && !BindOperatorSession(api,mod)) ||
         (roomTitlesOnly && !roomTitles.Bind(api,mod,&actions)) ||
+        (earlyRoomJoinTitle[0] && !roomJoin.Bind(api,mod,&actions)) ||
         (!missionMode && !rooms.Bind(api, mod, &actions, config)) ||
         (missionMode && friendsOnly && !rooms.BindMissionObserver(api, mod, &actions)) ||
         ((missionRespawns || (missionGameModeId && !missionBehaviorProfile)) && !friendsOnly && !rooms.BindBattleEndObserver(api,mod,&actions)) ||

@@ -94,6 +94,9 @@ bool g_roomPacketFreed = false;
 uint32_t g_joinSequenceInsideOriginal = UINT32_MAX;
 uint32_t g_joinResultInsideOriginal = UINT32_MAX;
 unsigned g_joinCallbackCalls = 0;
+bool g_deferRoomJoinBusiness = false;
+void* g_deferredRoomJoinService = nullptr;
+uint32_t g_deferredRoomJoinIndex = 0;
 const char* g_rejectedHookSlot = nullptr;
 const char* g_rejectedHookCode = nullptr;
 
@@ -417,8 +420,22 @@ uint32_t __stdcall FakeRoomJoinCallback(
 
 void __fastcall FakeRoomJoinBusiness(void* service,void*,uint32_t index) {
     if(index>=10)return;
+    if(g_deferRoomJoinBusiness) {
+        g_deferredRoomJoinService=service;
+        g_deferredRoomJoinIndex=index;
+        return;
+    }
     auto* control=Get<uint8_t*>(service,0x94+index*0x0C);
     FakeRoomJoinCallback(service,0x303,control?control+0x118:nullptr,control);
+}
+
+void ResumeDeferredRoomJoinBusiness() {
+    void* service=g_deferredRoomJoinService;
+    const uint32_t index=g_deferredRoomJoinIndex;
+    g_deferredRoomJoinService=nullptr;
+    g_deferredRoomJoinIndex=0;
+    g_deferRoomJoinBusiness=false;
+    FakeRoomJoinBusiness(service,nullptr,index);
 }
 
 
@@ -758,6 +775,9 @@ void SetupRoomList(
     g_networkAccepts = true;
     g_localIsHost = false;
     g_joinCallbackCalls = 0;
+    g_deferRoomJoinBusiness = false;
+    g_deferredRoomJoinService = nullptr;
+    g_deferredRoomJoinIndex = 0;
     ResetPublicationReceipts();
 }
 
@@ -936,6 +956,38 @@ void TestRoomSelectionGuards(
         "transport rejection is not exposed as a pending or accepted join");
 }
 
+void TestDeferredJoinBusiness(
+    RoomJoinActions& actions)
+{
+    actions.ResetObservations();
+    SetupRoomList();
+    g_deferRoomJoinBusiness=true;
+    Check(
+        actions.JoinExactTitleAllowDeferred(kTitle),
+        "inventory-boundary scenario permits the genuine room-row business to remain deferred");
+    auto pending=actions.JoinState();
+    Check(
+        pending.result==RoomJoinActions::kJoinPending &&
+            pending.requested_room_id==kRoomId &&
+            g_joinCallbackCalls==0 &&
+            g_deferredRoomJoinService==g_roomList,
+        "deferred room entry retains the exact live selection without manufacturing a transport receipt");
+    ResumeDeferredRoomJoinBusiness();
+    pending=actions.JoinState();
+    Check(
+        pending.result==RoomJoinActions::kJoinPending &&
+            g_joinCallbackCalls==1,
+        "resuming the saved original business emits the genuine join request once");
+    DeliverJoinReply(kRoomId,kRoomVariant);
+    InstallGuestRoom(kRoomId);
+    const auto accepted=actions.JoinState();
+    Check(
+        accepted.result==RoomJoinActions::kJoinAccepted &&
+            accepted.original_handler_completed &&
+            accepted.local_is_guest,
+        "a deferred original business still requires the real reply and app18 guest model");
+}
+
 void TestJoinReplyAndModel(
     RoomJoinActions& actions)
 {
@@ -1089,6 +1141,8 @@ int main()
         native,
         actions);
     TestRoomSelectionGuards(
+        actions);
+    TestDeferredJoinBusiness(
         actions);
     TestJoinReplyAndModel(
         actions);

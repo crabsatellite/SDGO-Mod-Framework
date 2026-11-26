@@ -70,6 +70,37 @@ class UnitScenarioTests(unittest.TestCase):
                 'early_navigation_before_inventory':'capsule',
             },context)
 
+    def test_pre_inventory_room_join_title_is_exact_and_sealed(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        value={
+            'schema':1,
+            'early_navigation_before_inventory':'room',
+            'room_join_title':'GT-ROOM-NONCE',
+        }
+        bound=scope.bind(value,context)['unit_scenario']
+        self.assertEqual(bound['room_join_title'],'GT-ROOM-NONCE')
+        settings=scope.settings(bound)
+        self.assertEqual(settings['EarlyNavigationTarget'],'room')
+        self.assertEqual(settings['EarlyNavigationBeforeInventory'],'1')
+        self.assertEqual(settings['EarlyRoomJoinTitle'],'GT-ROOM-NONCE')
+        self.assertNotIn('pages.loading_navigation',scope.cases(bound))
+
+    def test_pre_inventory_room_join_rejects_nonexact_or_unrelated_titles(self):
+        context={'pages_only':True,'play_unit_uid':17}
+        for title in ('','x'*21,'bad\nroom','房间'):
+            with self.subTest(title=title),self.assertRaises(ValueError):
+                scope.bind({
+                    'schema':1,
+                    'early_navigation_before_inventory':'room',
+                    'room_join_title':title,
+                },context)
+        for timing in (
+                {'early_navigation_before_inventory':'capsule'},
+                {'early_navigation':'room'},
+                {}):
+            with self.subTest(timing=timing),self.assertRaises(ValueError):
+                scope.bind({'schema':1,'room_join_title':'GT-ROOM',**timing},context)
+
     def test_mid_inventory_management_hangar_scope_is_explicit_and_sealed(self):
         context={'pages_only':True,'play_unit_uid':17}
         value={'schema':1,'early_navigation_before_inventory':'management','management_to_hangar':True}
@@ -271,7 +302,7 @@ class SealedUnitScenarioTests(unittest.TestCase):
     def test_historical_non_probe_capsules_keep_their_original_sealed_defaults(self):
         from unittest.mock import patch
         previous={key:value for key,value in scope.SETTINGS.items()
-            if key not in ('EarlyNavigationTarget','EarlyNavigationBeforeInventory',
+            if key not in ('EarlyNavigationTarget','EarlyNavigationBeforeInventory','EarlyRoomJoinTitle',
                            'UnitAcquisitionUiPreviewOnly') and
             not key.startswith(('NativeIdProbe','NativeRecordLifecycle'))}
         with patch.dict(scope.SETTINGS,previous,clear=True):
@@ -378,6 +409,28 @@ class SealedUnitScenarioTests(unittest.TestCase):
         self.assertEqual(
             config['settings']['EarlyNavigationBeforeInventory'],'1')
         config['settings']['EarlyNavigationBeforeInventory']='0'
+        game_test.write_ini(path,config)
+        with self.assertRaises(game_test.GameTestError):
+            game_test.validate_metadata(run)
+
+    def test_prepares_and_seals_pre_inventory_exact_room_join(self):
+        run=self.prepare(
+            'pre-inventory-room-join',
+            pages_only=True,
+            play_unit_uid=17,
+            unit_scenario={
+                'schema':1,
+                'early_navigation_before_inventory':'room',
+                'room_join_title':'GT-ROOM-NONCE',
+            })
+        meta=game_test.validate_metadata(run)
+        self.assertEqual(
+            meta['plan']['unit_scenario']['room_join_title'],
+            'GT-ROOM-NONCE')
+        path=run/'client/sdgo/mods/game_test_client/mod.ini'
+        config=game_test.read_ini(path)
+        self.assertEqual(config['settings']['EarlyRoomJoinTitle'],'GT-ROOM-NONCE')
+        config['settings']['EarlyRoomJoinTitle']='GT-OTHER'
         game_test.write_ini(path,config)
         with self.assertRaises(game_test.GameTestError):
             game_test.validate_metadata(run)

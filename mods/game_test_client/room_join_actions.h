@@ -137,63 +137,17 @@ public:
 
     bool JoinExactTitle(const char* exactTitle)
     {
-        if (!bound_ || !native_ ||
-            !ValidExactTitle(exactTitle) ||
-            InterlockedCompareExchange(
-                &joinPending_,
-                0,
-                0) != 0)
-            return false;
-        if (native_->AppState() != kRoomListAppState)
-            return false;
+        return BeginJoinExactTitle(exactTitle, false);
+    }
 
-        __try {
-            RoomSelection selection = {};
-            if (!ResolveRoomSelection(
-                    exactTitle,
-                    selection))
-                return false;
-
-            ResetJoinObservation();
-            std::memcpy(
-                expectedTitle_,
-                exactTitle,
-                std::strlen(exactTitle) + 1);
-            InterlockedExchange(
-                &expectedRoomId_,
-                static_cast<LONG>(
-                    selection.room_id));
-            InterlockedExchangePointer(
-                &pendingRoomList_,
-                selection.service);
-            InterlockedExchange(
-                &joinResult_,
-                kJoinPending);
-            InterlockedExchange(
-                &joinPending_,
-                1);
-
-            const NativeActions::TransportObservation before =
-                native_->TransportState();
-            // 008DFAAF dispatches the selected live row to 008CEDD0. Invoke
-            // that original business directly; a desktop mouse activation
-            // byte is not an input to a tick-driven GameTest.
-            roomJoinBusiness_(selection.service,selection.index);
-            const NativeActions::TransportObservation after =
-                native_->TransportState();
-
-            if (after.send_sequence == before.send_sequence ||
-                after.opcode != kJoinRequestOpcode ||
-                after.packet_size != kJoinRequestSize ||
-                after.result == 0) {
-                RejectPendingJoin(0, 0, 0);
-                return false;
-            }
-            return true;
-        } __except (EXCEPTION_EXECUTE_HANDLER) {
-            RejectPendingJoin(0, 0, 0);
-            return false;
-        }
+    // Inventory-boundary regression scenarios use the same genuine row
+    // business, but permit the candidate guard to defer that business until
+    // the original inventory stream is complete. A changed, non-join
+    // transport still fails closed; only an unchanged transport receipt may
+    // remain pending for the guard to resume.
+    bool JoinExactTitleAllowDeferred(const char* exactTitle)
+    {
+        return BeginJoinExactTitle(exactTitle, true);
     }
 
     // The room list shows the exact title as a joinable row (nothing is sent).
@@ -412,6 +366,74 @@ private:
             address,
             sizeof(value));
         return value;
+    }
+
+    bool BeginJoinExactTitle(
+        const char* exactTitle,
+        bool allowDeferred)
+    {
+        if (!bound_ || !native_ ||
+            !ValidExactTitle(exactTitle) ||
+            InterlockedCompareExchange(
+                &joinPending_,
+                0,
+                0) != 0)
+            return false;
+        if (native_->AppState() != kRoomListAppState)
+            return false;
+
+        __try {
+            RoomSelection selection = {};
+            if (!ResolveRoomSelection(
+                    exactTitle,
+                    selection))
+                return false;
+
+            ResetJoinObservation();
+            std::memcpy(
+                expectedTitle_,
+                exactTitle,
+                std::strlen(exactTitle) + 1);
+            InterlockedExchange(
+                &expectedRoomId_,
+                static_cast<LONG>(
+                    selection.room_id));
+            InterlockedExchangePointer(
+                &pendingRoomList_,
+                selection.service);
+            InterlockedExchange(
+                &joinResult_,
+                kJoinPending);
+            InterlockedExchange(
+                &joinPending_,
+                1);
+
+            const NativeActions::TransportObservation before =
+                native_->TransportState();
+            // 008DFAAF dispatches the selected live row to 008CEDD0. Invoke
+            // that original business directly; a desktop mouse activation
+            // byte is not an input to a tick-driven GameTest.
+            roomJoinBusiness_(selection.service,selection.index);
+            const NativeActions::TransportObservation after =
+                native_->TransportState();
+
+            if (after.send_sequence == before.send_sequence) {
+                if (allowDeferred)
+                    return true;
+                RejectPendingJoin(0, 0, 0);
+                return false;
+            }
+            if (after.opcode != kJoinRequestOpcode ||
+                after.packet_size != kJoinRequestSize ||
+                after.result == 0) {
+                RejectPendingJoin(0, 0, 0);
+                return false;
+            }
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            RejectPendingJoin(0, 0, 0);
+            return false;
+        }
     }
 
     static bool ValidExactTitle(

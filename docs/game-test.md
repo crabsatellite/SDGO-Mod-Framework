@@ -557,6 +557,18 @@ packet/error observations, then requires real inventory completion, target
 readiness and native recovery before normal onboarding can pass. It neither
 creates an incomplete inventory nor substitutes a fixed delay.
 
+To cover entry into another player's room during that window, also set
+`room_join_title` to the exact 1–20 byte ASCII title of a real room that a
+separate Host client has created and continues to advertise, while keeping
+`early_navigation_before_inventory: "room"`. Host and Guest use different
+isolated accounts. The Guest resolves the live `RoomList` entry and enabled
+`GameRoomN` control, then invokes the original row business before
+`CUnitInfo+0x20` is ready. The candidate guard must defer `0x0734` until genuine
+pagination completes. Acceptance requires the original `0x0550` handler,
+matching requested, acknowledged and model room IDs, a real app-18 guest model,
+and the native leave reply returning to app 6. A title match or an open room
+list alone does not pass.
+
 While inventory is incomplete, `management` retries its still-visible and enabled
 native button every 100 ms, up to 200 callbacks. It records accepted callback
 counts, native errors and the rendered management page before normal recovery.

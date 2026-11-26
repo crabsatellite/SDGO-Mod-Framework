@@ -9,6 +9,7 @@ namespace sdgo::native_inventory_guard {
 using CatalogOpen = void(__cdecl*)();
 using MenuBusiness = void(__thiscall*)(void*, const void*, void*);
 using MenuCallback = uint32_t(__stdcall*)(void*, uint32_t, const void*, void*);
+using RoomJoinBusiness = void(__thiscall*)(void*, uint32_t);
 inline const SdgoApi* api = nullptr;
 inline SdgoMod* mod = nullptr;
 inline uint8_t** inventoryPointer = nullptr;
@@ -23,6 +24,8 @@ struct Menu {
 inline Menu bottomMenu{nullptr, nullptr, nullptr, 0x301};
 inline Menu channelMenu{nullptr, nullptr, nullptr, 0x101};
 inline CatalogOpen originalCatalogOpen = nullptr;
+inline RoomJoinBusiness originalRoomJoin = nullptr;
+inline void* roomListVtable = nullptr;
 inline bool replayingMenu = false;
 inline void* frameTailTrampoline = nullptr;
 inline volatile LONG deferredCalls = 0, resumedTransitions = 0;
@@ -34,6 +37,7 @@ struct State {
     uint64_t cursor = 0;
     uint8_t ready = 0xff;
     uint8_t* inventory = nullptr;
+    void* owner = nullptr;
 };
 struct Pending {
     void* app = nullptr;
@@ -42,12 +46,21 @@ struct Pending {
     size_t controlOffset = 0;
     const Menu* menu = nullptr;
 };
+struct PendingRoom {
+    void* app = nullptr;
+    void* inventory = nullptr;
+    void* owner = nullptr;
+    uint32_t state = 0;
+    uint32_t roomId = 0;
+};
 inline Pending pendingMenu{}, pendingCatalog{};
+inline PendingRoom pendingRoom{};
 inline bool Read(void* app, State& state) {
     __try {
         if (app) {
             const auto* bytes = static_cast<const uint8_t*>(app);
             std::memcpy(&state.current, bytes + 0x4a0, 4);
+            std::memcpy(&state.owner, bytes + 0x4a4, sizeof(state.owner));
             std::memcpy(&state.target, bytes + 0x4b0, 4);
         }
         state.inventory = inventoryPointer ? *inventoryPointer : nullptr;
@@ -119,6 +132,69 @@ inline bool ResolveControl(const Pending& request, void*& menu, void*& control) 
         return false;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+inline constexpr size_t roomListVectorBegin = 0x124;
+inline constexpr size_t roomListVectorEnd = 0x128;
+inline constexpr size_t roomEntryStride = 0x90;
+inline constexpr uint32_t maximumRoomRows = 10;
+inline constexpr uint32_t maximumServiceNodes = 512;
+
+inline bool RoomIdAtIndex(void* service, uint32_t index, uint32_t& roomId) {
+    roomId = 0;
+    __try {
+        if (!service || *static_cast<void**>(service) != roomListVtable) return false;
+        const auto* bytes = static_cast<const uint8_t*>(service);
+        auto* begin = *reinterpret_cast<uint8_t* const*>(bytes + roomListVectorBegin);
+        auto* end = *reinterpret_cast<uint8_t* const*>(bytes + roomListVectorEnd);
+        if (!begin || !end || reinterpret_cast<uintptr_t>(end) < reinterpret_cast<uintptr_t>(begin)) return false;
+        const size_t size = static_cast<size_t>(reinterpret_cast<uintptr_t>(end) - reinterpret_cast<uintptr_t>(begin));
+        if (!size || size % roomEntryStride) return false;
+        const size_t count = size / roomEntryStride;
+        if (count > maximumRoomRows || index >= count) return false;
+        std::memcpy(&roomId, begin + static_cast<size_t>(index) * roomEntryStride, sizeof(roomId));
+        return roomId != 0;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+enum class RoomResolution { Unavailable, Stale, Ready };
+inline RoomResolution ResolveRoomJoin(uint32_t roomId, void*& service, uint32_t& index) {
+    service = nullptr; index = 0;
+    __try {
+        auto* manager = serviceManagerPointer ? *serviceManagerPointer : nullptr;
+        auto* head = manager ? *reinterpret_cast<uint8_t**>(manager + 0x44) : nullptr;
+        auto* node = head ? *reinterpret_cast<uint8_t**>(head) : nullptr;
+        if (!head || !node) return RoomResolution::Unavailable;
+        unsigned visited = 0;
+        while (node != head && visited < maximumServiceNodes) {
+            auto* candidate = *reinterpret_cast<uint8_t**>(node + 8);
+            if (candidate && *reinterpret_cast<void**>(candidate) == roomListVtable) {
+                if (service) return RoomResolution::Stale;
+                service = candidate;
+            }
+            node = *reinterpret_cast<uint8_t**>(node);
+            ++visited;
+        }
+        if (node != head) return RoomResolution::Stale;
+        if (!service) return RoomResolution::Unavailable;
+        const auto* bytes = static_cast<const uint8_t*>(service);
+        auto* begin = *reinterpret_cast<uint8_t* const*>(bytes + roomListVectorBegin);
+        auto* end = *reinterpret_cast<uint8_t* const*>(bytes + roomListVectorEnd);
+        if (!begin || !end || reinterpret_cast<uintptr_t>(end) < reinterpret_cast<uintptr_t>(begin)) return RoomResolution::Stale;
+        const size_t size = static_cast<size_t>(reinterpret_cast<uintptr_t>(end) - reinterpret_cast<uintptr_t>(begin));
+        if (!size || size % roomEntryStride) return RoomResolution::Stale;
+        const size_t count = size / roomEntryStride;
+        if (count > maximumRoomRows) return RoomResolution::Stale;
+        bool found = false;
+        for (size_t item = 0; item < count; ++item) {
+            uint32_t candidate = 0;
+            std::memcpy(&candidate, begin + item * roomEntryStride, sizeof(candidate));
+            if (candidate != roomId) continue;
+            if (found) return RoomResolution::Stale;
+            found = true; index = static_cast<uint32_t>(item);
+        }
+        return found ? RoomResolution::Ready : RoomResolution::Stale;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return RoomResolution::Stale; }
+}
+
 inline void CancelCatalog() {
     if (pendingCatalog.app) InterlockedIncrement(&cancelledCatalog);
     pendingCatalog = {};
@@ -132,6 +208,7 @@ inline void GuardNavigation(const Menu& kind, void* menu, const void* payload, v
     const bool navigation = IdentifyControl(kind, menu, control, offset);
     const bool bootstrap = &kind == &bottomMenu && offset == myRoomRadio && phase == InventoryPhase::SlotCount;
     if (navigation && phase != InventoryPhase::OutsideLoginLoad && !bootstrap) {
+        pendingRoom = {};
         CancelCatalog();
         const bool changed = pendingMenu.app != app || pendingMenu.inventory != state.inventory ||
             pendingMenu.menu != &kind || pendingMenu.controlOffset != offset;
@@ -143,6 +220,7 @@ inline void GuardNavigation(const Menu& kind, void* menu, const void* payload, v
         SetLastError(error); return;
     }
     if (navigation) {
+        pendingRoom = {};
         if (replayingMenu) { replayingMenu = false; InterlockedIncrement(&resumedTransitions); }
         pendingMenu = {}; CancelCatalog();
     }
@@ -154,10 +232,30 @@ inline void __fastcall GuardMenuBusiness(void* menu, void*, const void* payload,
 inline void __fastcall GuardChannelBusiness(void* menu, void*, const void* payload, void* control) {
     GuardNavigation(channelMenu, menu, payload, control);
 }
+inline void __fastcall GuardRoomJoin(void* service, void*, uint32_t index) {
+    const DWORD error = GetLastError();
+    State state; void* app = CurrentApp(); uint32_t roomId = 0;
+    const auto phase = Read(app, state) ? LoginInventoryPhase(state) : InventoryPhase::OutsideLoginLoad;
+    const bool identified = RoomIdAtIndex(service, index, roomId);
+    if (identified && state.owner && phase != InventoryPhase::OutsideLoginLoad) {
+        pendingMenu = {};
+        CancelCatalog();
+        const bool changed = pendingRoom.app != app || pendingRoom.inventory != state.inventory ||
+            pendingRoom.owner != state.owner || pendingRoom.state != state.current || pendingRoom.roomId != roomId;
+        // Keep the stable room identity, never the mutable list index or service pointer.
+        pendingRoom = {app, state.inventory, state.owner, state.current, roomId};
+        InterlockedIncrement(&deferredCalls);
+        if (changed) LogWaiting(state, "room join");
+        SetLastError(error); return;
+    }
+    pendingRoom = {};
+    if (identified) { pendingMenu = {}; CancelCatalog(); }
+    SetLastError(error); originalRoomJoin(service, index);
+}
 inline void __cdecl GuardCatalogOpen() {
     const DWORD error = GetLastError();
     State state; void* app = CurrentApp();
-    pendingMenu = {};
+    pendingMenu = {}; pendingRoom = {};
     if (Read(app, state) && LoginInventoryPhase(state) != InventoryPhase::OutsideLoginLoad) {
         if (pendingCatalog.app != app || pendingCatalog.inventory != state.inventory || pendingCatalog.state != state.current) {
             CancelCatalog();
@@ -174,11 +272,15 @@ inline bool SameOwner(const Pending& pending, void* app, const State& state) {
     return app == pending.app && state.inventory == pending.inventory &&
         state.current == pending.state && state.target == 0;
 }
+inline bool SameOwner(const PendingRoom& pending, void* app, const State& state) {
+    return app == pending.app && state.inventory == pending.inventory && state.owner == pending.owner &&
+        state.current == pending.state && state.target == 0;
+}
 inline void __stdcall ResumeRequests() {
-    if (!pendingMenu.app && !pendingCatalog.app) return;
+    if (!pendingMenu.app && !pendingCatalog.app && !pendingRoom.app) return;
     const DWORD error = GetLastError();
     void* app = CurrentApp(); State state;
-    if (!Read(app, state)) { pendingMenu = {}; CancelCatalog(); SetLastError(error); return; }
+    if (!Read(app, state)) { pendingMenu = {}; pendingRoom = {}; CancelCatalog(); SetLastError(error); return; }
     if (pendingMenu.app) {
         if (!SameOwner(pendingMenu, app, state)) pendingMenu = {};
         else if (state.ready == 1) {
@@ -200,6 +302,19 @@ inline void __stdcall ResumeRequests() {
             pendingCatalog = {};
             InterlockedIncrement(&resumedCatalog);
             originalCatalogOpen();
+        }
+    } else if (pendingRoom.app) {
+        if (!SameOwner(pendingRoom, app, state)) pendingRoom = {};
+        else if (state.ready == 1) {
+            void* service = nullptr; uint32_t index = 0;
+            const auto resolution = ResolveRoomJoin(pendingRoom.roomId, service, index);
+            if (resolution == RoomResolution::Stale) pendingRoom = {};
+            else if (resolution == RoomResolution::Ready) {
+                pendingRoom = {};
+                InterlockedIncrement(&resumedTransitions);
+                SetLastError(error);
+                originalRoomJoin(service, index);
+            }
         }
     }
     SetLastError(error);
@@ -233,13 +348,16 @@ inline bool Attach(const SdgoApi* ownerApi, SdgoMod* ownerMod) {
     bottomMenu.callback = reinterpret_cast<MenuCallback>(api->Symbol(mod, "native_data_guard.menu_callback"));
     channelMenu.vtable = api->Symbol(mod, "flow.lobby_ui_vtable");
     channelMenu.callback = reinterpret_cast<MenuCallback>(api->Symbol(mod, "flow.lobby_ui_callback"));
+    roomListVtable = api->Symbol(mod, "flow.native_room_list_vtable");
     return inventoryPointer && appPointer && serviceManagerPointer && bottomMenu.vtable && bottomMenu.callback &&
-        channelMenu.vtable && channelMenu.callback &&
+        channelMenu.vtable && channelMenu.callback && roomListVtable &&
         api->HookSite(mod, "native_data_guard.frame_tail", reinterpret_cast<void*>(&FrameTailSite), &frameTailTrampoline) &&
         api->HookCode(mod, "native_data_guard.menu_business", reinterpret_cast<void*>(&GuardMenuBusiness),
             reinterpret_cast<void**>(&bottomMenu.business)) &&
         api->HookCode(mod, "native_data_guard.channel_business", reinterpret_cast<void*>(&GuardChannelBusiness),
             reinterpret_cast<void**>(&channelMenu.business)) &&
+        api->HookCode(mod, "flow.room_join_business", reinterpret_cast<void*>(&GuardRoomJoin),
+            reinterpret_cast<void**>(&originalRoomJoin)) &&
         api->HookCode(mod, "native_data_guard.catalog_open", reinterpret_cast<void*>(&GuardCatalogOpen),
             reinterpret_cast<void**>(&originalCatalogOpen));
 }

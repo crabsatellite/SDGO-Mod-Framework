@@ -8,7 +8,7 @@ INPUT = 'inputs/unit-scenario.json'
 SETTINGS = {'UnitPagesOnly':'0','UnitPresentations':'0','UnitPortraits':'0','UnitPresentationTarget':'0',
     'UnitPresentationDetailOnly':'0',
     'CaptureNativeFrames':'0','CollectionPreviewOnly':'0','EarlyNavigationTarget':'off',
-    'EarlyNavigationBeforeInventory':'0','EarlyManagementToHangar':'0','EarlyManagementDestination':'off',
+    'EarlyNavigationBeforeInventory':'0','EarlyRoomJoinTitle':'','EarlyManagementToHangar':'0','EarlyManagementDestination':'off',
     'EarlyManagementBeforeFirstPage':'0',
     'UnitAcquisitionKind':'0','UnitAcquisitionMachine':'0','UnitAcquisitionUnit':'0',
     'UnitAcquisitionUiPreviewOnly':'0',
@@ -23,7 +23,7 @@ INDEX_CASES = ('pages.unit_index.list','pages.unit_index.detail',
 PORTRAIT_CASES = ('pages.unit_index.pose_wait','pages.unit_index.pose_ready')
 
 def validate(value, plan):
-    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','presentation_target','detail_only','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe','native_record_lifecycle','early_navigation','early_navigation_before_inventory','management_to_hangar','management_destination','before_first_inventory_page'}:
+    if not isinstance(value,dict) or set(value)-{'schema','capture_frames','portraits','presentation_target','detail_only','acquisition','collection_preview','activity_target','activity_draw','reward_pairs','blueprint','native_id_probe','native_record_lifecycle','early_navigation','early_navigation_before_inventory','room_join_title','management_to_hangar','management_destination','before_first_inventory_page'}:
         raise ValueError('invalid native unit scenario fields')
     if type(value.get('schema')) is not int or value['schema']!=1:
         raise ValueError('unsupported native unit scenario schema')
@@ -62,6 +62,13 @@ def validate(value, plan):
                  'native_id_probe','native_record_lifecycle'))):
             raise ValueError('early navigation is a separate basic unit-page loading scope')
         result[field]=target
+    if 'room_join_title' in value:
+        title=value['room_join_title']
+        if (value.get('early_navigation_before_inventory')!='room' or
+                type(title) is not str or not 0<len(title)<=20 or
+                any(ord(character)<0x20 or ord(character)>0x7e for character in title)):
+            raise ValueError('early room join requires a 1..20 byte printable ASCII title and the pre-inventory room scope')
+        result['room_join_title']=title
     if 'management_to_hangar' in value:
         if value['management_to_hangar'] is not True or value.get('early_navigation_before_inventory')!='management':
             raise ValueError('mid-inventory hangar transition requires the sealed early management scope')
@@ -186,6 +193,7 @@ def settings(value=None):
             value.get('early_navigation_before_inventory','off')),
         EarlyNavigationBeforeInventory=str(
             int('early_navigation_before_inventory' in value)),
+        EarlyRoomJoinTitle=value.get('room_join_title',''),
         EarlyManagementToHangar=str(int(value.get('management_to_hangar',False))),
         EarlyManagementDestination=value.get('management_destination','off'),
         EarlyManagementBeforeFirstPage=str(int(value.get('before_first_inventory_page',False))))
@@ -268,6 +276,7 @@ def read(root, digest, plan, read_ini):
                  'early_navigation_before_inventory' not in value) or
                 (key=='EarlyNavigationBeforeInventory' and
                  'early_navigation_before_inventory' not in value) or
+                (key=='EarlyRoomJoinTitle' and 'room_join_title' not in value) or
                 (key=='EarlyManagementToHangar' and not value.get('management_to_hangar')) or
                 (key=='EarlyManagementDestination' and 'management_destination' not in value) or
                 (key=='EarlyManagementBeforeFirstPage' and not value.get('before_first_inventory_page')) or

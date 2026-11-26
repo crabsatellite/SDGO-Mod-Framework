@@ -4,11 +4,15 @@ std::array<uint8_t, 0x28> pendingInventory{};
 std::array<uint8_t, 0xb0> inventoryServices{};
 std::array<uint8_t, 0x64> inventoryMenu{};
 std::array<uint8_t, 0x74> inventoryChannelMenu{};
+std::array<uint8_t, 0x130> inventoryRoomService{}, replacementRoomService{};
+std::array<uint8_t, 0x90 * 3> inventoryRooms{}, replacementRooms{};
+std::array<uint8_t, 8> inventoryStateOwner{}, replacementStateOwner{};
 std::array<uint8_t, 0x180> inventoryMenuRoot{};
 std::array<std::array<uint8_t, 0x180>, 6> inventoryControls{};
-std::array<uintptr_t, 3> inventoryServiceHead{}, inventoryServiceNode{};
+std::array<uintptr_t, 3> inventoryServiceHead{}, inventoryServiceNode{}, inventoryRoomNode{};
 std::array<void*, 16> inventoryMenuVtable{};
 std::array<void*, 16> inventoryChannelVtable{};
+std::array<void*, 16> inventoryRoomVtable{};
 uint8_t* inventoryObject = pendingInventory.data();
 uint8_t* inventoryAppObject = inventoryApp.data();
 uint8_t* inventoryServiceObject = inventoryServices.data();
@@ -16,11 +20,15 @@ void* inventoryMenuHook = nullptr;
 void* inventoryChannelHook = nullptr;
 void* inventoryTailHook = nullptr;
 void* inventoryCatalogHook = nullptr;
-unsigned inventoryMenuCalls = 0, inventoryCatalogCalls = 0;
+void* inventoryRoomHook = nullptr;
+unsigned inventoryMenuCalls = 0, inventoryCatalogCalls = 0, inventoryRoomCalls = 0;
 void* observedInventoryMenu = nullptr;
 void* observedInventoryControl = nullptr;
 const void* observedInventoryPayload = nullptr;
 DWORD originalInventoryLastError = 0;
+DWORD originalRoomLastError = 0;
+void* observedRoomService = nullptr;
+uint32_t observedRoomIndex = UINT32_MAX;
 bool inventoryStarterBusy = false;
 using InventoryMenuHook = void(__fastcall*)(void*, void*, const void*, void*);
 uint32_t __stdcall InventoryNativeMenuCallback(void* menu, uint32_t event, const void* payload, void* control) {
@@ -39,6 +47,13 @@ void __fastcall OriginalInventoryMenu(void* menu, void*, const void* payload, vo
     SetLastError(0x1234ABCD);
 }
 void __cdecl OriginalInventoryCatalog() { ++inventoryCatalogCalls; SetLastError(0xAAAABBBB); }
+void __fastcall OriginalInventoryRoomJoin(void* service, void*, uint32_t index) {
+    ++inventoryRoomCalls;
+    observedRoomService = service;
+    observedRoomIndex = index;
+    originalRoomLastError = GetLastError();
+    SetLastError(0xCCCCDDDD);
+}
 __declspec(naked) void InventoryTailOriginal() {
     __asm { pop esi }
     __asm { mov esp, ebp }
@@ -59,6 +74,7 @@ void* InventoryGuardSymbol(const char* key) {
     if (!std::strcmp(key, "native_data_guard.menu_callback")) return reinterpret_cast<void*>(&InventoryNativeMenuCallback);
     if (!std::strcmp(key, "flow.lobby_ui_vtable")) return inventoryChannelVtable.data();
     if (!std::strcmp(key, "flow.lobby_ui_callback")) return reinterpret_cast<void*>(&InventoryChannelCallback);
+    if (!std::strcmp(key, "flow.native_room_list_vtable")) return inventoryRoomVtable.data();
     return nullptr;
 }
 bool InventoryGuardCodeHook(const char* key, void* detour, void** original) {
@@ -74,6 +90,10 @@ bool InventoryGuardCodeHook(const char* key, void* detour, void** original) {
         inventoryChannelHook = detour;
         *original = reinterpret_cast<void*>(&OriginalInventoryMenu); return true;
     }
+    if (!std::strcmp(key, "flow.room_join_business")) {
+        inventoryRoomHook = detour;
+        *original = reinterpret_cast<void*>(&OriginalInventoryRoomJoin); return true;
+    }
     return false;
 }
 bool InventoryGuardSiteHook(const char* key, void* detour, void** original) {
@@ -82,8 +102,8 @@ bool InventoryGuardSiteHook(const char* key, void* detour, void** original) {
     *original = reinterpret_cast<void*>(&InventoryTailOriginal); return true;
 }
 void RunInventoryGuardCases(HMODULE dll) {
-    Check(inventoryMenuHook && inventoryChannelHook && inventoryTailHook && inventoryCatalogHook,
-          "actual DLL guards bottom navigation, channel navigation and the catalog at the native frame tail");
+    Check(inventoryMenuHook && inventoryChannelHook && inventoryTailHook && inventoryCatalogHook && inventoryRoomHook,
+          "actual DLL guards bottom navigation, channel navigation, room join and the catalog at the native frame tail");
     Put(inventoryServices.data(), 0x44, inventoryServiceHead.data());
     inventoryServiceHead[0] = reinterpret_cast<uintptr_t>(inventoryServiceNode.data());
     inventoryServiceNode[0] = reinterpret_cast<uintptr_t>(inventoryServiceHead.data());
@@ -100,6 +120,7 @@ void RunInventoryGuardCases(HMODULE dll) {
     const auto open = reinterpret_cast<void(__cdecl*)()>(inventoryCatalogHook);
     const auto stage = [&](uint32_t state, uint32_t capacity, uint8_t ready) {
         Put(inventoryApp.data(), 0x4a0, state);
+        Put(inventoryApp.data(), 0x4a4, inventoryStateOwner.data());
         Put(inventoryApp.data(), 0x4b0, uint32_t{0});
         Put(pendingInventory.data(), 0x0c, capacity);
         Put(pendingInventory.data(), 0x18, uint64_t{0x1234567812345678});
@@ -213,6 +234,124 @@ void RunInventoryGuardCases(HMODULE dll) {
     Check(inventoryMenuCalls == beforeFirstSwitch + 1 &&
           observedInventoryControl == inventoryControls[3].data(),
           "the first-page transition resumes once when native inventory is complete");
+    using RoomHook = void(__fastcall*)(void*, void*, uint32_t);
+    const auto room = reinterpret_cast<RoomHook>(inventoryRoomHook);
+    const auto setRoomRows = [&](std::array<uint8_t, 0x90 * 3>& rows, uint8_t* service,
+                                 std::initializer_list<uint32_t> ids) {
+        rows.fill(0);
+        size_t item = 0;
+        for (const uint32_t id : ids) {
+            Put(rows.data(), item * 0x90, id);
+            ++item;
+        }
+        Put(service, 0, inventoryRoomVtable.data());
+        Put(service, 0x124, rows.data());
+        Put(service, 0x128, rows.data() + item * 0x90);
+    };
+    const auto useRoomService = [&](uint8_t* service) {
+        inventoryServiceHead[0] = reinterpret_cast<uintptr_t>(inventoryRoomNode.data());
+        inventoryRoomNode[0] = reinterpret_cast<uintptr_t>(inventoryServiceHead.data());
+        inventoryRoomNode[2] = reinterpret_cast<uintptr_t>(service);
+    };
+    setRoomRows(inventoryRooms, inventoryRoomService.data(), {1001, 2002});
+    useRoomService(inventoryRoomService.data());
+    stage(4, 1200, 0);
+    const unsigned roomNativeBefore = inventoryRoomCalls;
+    room(inventoryRoomService.data(), nullptr, 1);
+    Check(inventoryRoomCalls == roomNativeBefore + 1 && observedRoomIndex == 1,
+          "room join outside login inventory loading preserves the original business call");
+    stage(6, 1200, 2);
+    room(inventoryRoomService.data(), nullptr, 0);
+    Check(inventoryRoomCalls == roomNativeBefore + 2 && observedRoomIndex == 0,
+          "unknown inventory readiness preserves the original room join call");
+
+    stage(6, 1200, 0);
+    Put(pendingInventory.data(), 0x18, uint64_t{0});
+    const auto roomAppBefore = inventoryApp;
+    const auto roomInventoryBefore = pendingInventory;
+    const auto roomRowsBefore = inventoryRooms;
+    const auto roomServiceBefore = inventoryRoomService;
+    SetLastError(0x99112233);
+    room(inventoryRoomService.data(), nullptr, 1);
+    Check(inventoryRoomCalls == roomNativeBefore + 2 && inventoryApp == roomAppBefore &&
+          pendingInventory == roomInventoryBefore && inventoryRooms == roomRowsBefore &&
+          inventoryRoomService == roomServiceBefore && GetLastError() == 0x99112233,
+          "early room join retains only the stable room id without issuing a command or mutating native data");
+    setRoomRows(inventoryRooms, inventoryRoomService.data(), {2002, 1001});
+    pendingInventory[0x20] = 1; InvokeInventoryTail(); InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 3 && observedRoomService == inventoryRoomService.data() &&
+          observedRoomIndex == 0 && originalRoomLastError == 0x99112233 && GetLastError() == 0x99112233,
+          "a ready frame remaps the saved room id after row reordering and invokes the original thiscall once");
+
+    setRoomRows(inventoryRooms, inventoryRoomService.data(), {1001, 2002});
+    stage(6, 1200, 0);
+    room(inventoryRoomService.data(), nullptr, 1);
+    setRoomRows(replacementRooms, replacementRoomService.data(), {2002});
+    useRoomService(replacementRoomService.data());
+    pendingInventory[0x20] = 1; InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 4 && observedRoomService == replacementRoomService.data() &&
+          observedRoomIndex == 0,
+          "a replacement live room-list service is re-resolved by room id instead of replaying a stale pointer or index");
+
+    useRoomService(inventoryRoomService.data());
+    setRoomRows(inventoryRooms, inventoryRoomService.data(), {1001, 2002});
+    stage(6, 1200, 0); room(inventoryRoomService.data(), nullptr, 1);
+    setRoomRows(inventoryRooms, inventoryRoomService.data(), {1001});
+    pendingInventory[0x20] = 1; InvokeInventoryTail();
+    setRoomRows(inventoryRooms, inventoryRoomService.data(), {1001, 2002}); InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 4,
+          "a disappeared room cancels the deferred join instead of entering whichever row later reuses its index");
+
+    stage(6, 1200, 0); room(inventoryRoomService.data(), nullptr, 1);
+    setRoomRows(inventoryRooms, inventoryRoomService.data(), {2002, 2002});
+    pendingInventory[0x20] = 1; InvokeInventoryTail();
+    setRoomRows(inventoryRooms, inventoryRoomService.data(), {1001, 2002}); InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 4,
+          "ambiguous duplicate room ids cancel the deferred join rather than choosing a row");
+
+    stage(6, 1200, 0); room(inventoryRoomService.data(), nullptr, 1);
+    Put(inventoryApp.data(), 0x4a4, replacementStateOwner.data());
+    pendingInventory[0x20] = 1; InvokeInventoryTail();
+    Put(inventoryApp.data(), 0x4a4, inventoryStateOwner.data()); InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 4,
+          "a changed app-state owner cancels the old room-session intent");
+
+    stage(6, 1200, 0); room(inventoryRoomService.data(), nullptr, 1);
+    Put(inventoryApp.data(), 0x4a0, uint32_t{8}); pendingInventory[0x20] = 1; InvokeInventoryTail();
+    stage(6, 1200, 1); InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 4,
+          "leaving the room-list page cancels a deferred room join");
+
+    stage(6, 1200, 0); room(inventoryRoomService.data(), nullptr, 1);
+    pendingInventory[0x20] = 1;
+    inventoryServiceHead[0] = reinterpret_cast<uintptr_t>(inventoryServiceHead.data()); InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 4,
+          "a temporarily absent room-list service does not replay through the retained service pointer");
+    useRoomService(inventoryRoomService.data()); InvokeInventoryTail(); InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 5 && observedRoomService == inventoryRoomService.data() &&
+          observedRoomIndex == 1,
+          "the deferred room id resumes once after the live registered room-list service returns");
+
+    stage(6, 1200, 0);
+    inventoryServiceNode[0] = reinterpret_cast<uintptr_t>(inventoryRoomNode.data());
+    inventoryServiceNode[2] = reinterpret_cast<uintptr_t>(inventoryMenu.data());
+    inventoryRoomNode[0] = reinterpret_cast<uintptr_t>(inventoryServiceHead.data());
+    inventoryRoomNode[2] = reinterpret_cast<uintptr_t>(inventoryRoomService.data());
+    inventoryServiceHead[0] = reinterpret_cast<uintptr_t>(inventoryServiceNode.data());
+    menu(inventoryMenu.data(), nullptr, nullptr, inventoryControls[1].data());
+    room(inventoryRoomService.data(), nullptr, 1);
+    pendingInventory[0x20] = 1; InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 6 && observedRoomIndex == 1 &&
+          inventoryMenuCalls == beforeFirstSwitch + 1,
+          "the latest room-row intent supersedes an earlier deferred page navigation");
+    stage(6, 1200, 0);
+    room(inventoryRoomService.data(), nullptr, 1);
+    menu(inventoryMenu.data(), nullptr, nullptr, inventoryControls[1].data());
+    pendingInventory[0x20] = 1; InvokeInventoryTail();
+    Check(inventoryRoomCalls == roomNativeBefore + 6 && inventoryMenuCalls == beforeFirstSwitch + 2,
+          "the latest page navigation supersedes an earlier deferred room join");
+    inventoryServiceNode[0] = reinterpret_cast<uintptr_t>(inventoryServiceHead.data());
+
     Put(inventoryChannelMenu.data(), 0, inventoryChannelVtable.data());
     Put(inventoryChannelMenu.data(), 0x44, inventoryMenuRoot.data());
     Put(inventoryChannelMenu.data(), 0x48, inventoryControls[0].data());
@@ -244,8 +383,9 @@ void RunInventoryGuardCases(HMODULE dll) {
     using Status = int(__cdecl*)(SdgoNativeDataGuardStatusV6*);
     auto status = reinterpret_cast<Status>(GetProcAddress(dll, "SdgoNativeDataGuardGetStatusV6"));
     SdgoNativeDataGuardStatusV6 observed{sizeof(observed), 6};
-    Check(status && status(&observed) && observed.deferred_inventory_transition_calls >= 14 &&
-          observed.resumed_inventory_transitions == 12 && observed.deferred_inventory_catalog_requests == 5 &&
+    const bool statusOk = status && status(&observed);
+    Check(statusOk && observed.deferred_inventory_transition_calls >= 14 &&
+          observed.resumed_inventory_transitions == 17 && observed.deferred_inventory_catalog_requests == 5 &&
           observed.resumed_inventory_catalog_requests == 2 && observed.cancelled_inventory_catalog_requests == 3,
           "additive read-only observer reports actual deferred actions, resumes and cancellations");
 }

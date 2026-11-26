@@ -339,6 +339,13 @@ Grid（`6`）和 Tag（`7`）会通过原生业务切换 VS 频道，并要求�
 若错过这个窗口则明确失败，不把加载完成后的点击算作通过。随后观察真实分页、原生错误、目标页面就绪及正常返回，
 再继续常规 onboarding 检查；不改写库存状态、不伪造回包，也不用固定等待秒数代替收包证据。
 
+覆盖“库存未完成时点入其他玩家房间”时，另设 `room_join_title` 为 Host 已创建并持续广告的精确
+1–20 字节 ASCII 房名，并保持 `early_navigation_before_inventory: "room"`。Host 与 Guest 使用不同的
+隔离账号；Host 留在真实三维等候室，Guest 从实时 `RoomList` 向量和可用 `GameRoomN` 控件解析该房间，
+在 `CUnitInfo+0x20` 未置位时调用原生房间行 business。候选 guard 必须先延后 `0x0734`，等真实库存
+分页完成后恢复；验收要求原始 `0x0550` 处理器、请求／确认／模型房间 ID 一致、Guest 身份、app18
+等候室模型，以及原生 leave 回包返回 app6。仅匹配房名、打开房间列表或写入房间 ID 均不算通过。
+
 `management` 在原生库存未完成期间，每 100 毫秒尝试一次仍可见且启用的原按钮，最多 200 次；
 它记录实际接受的回调次数、原生错误码和页面画面，并等待真实库存分页完成后返回。
 同一封存场景中可把 `management_destination` 设为 `my_room`、`capsule`、`shop` 或 `mission`。
