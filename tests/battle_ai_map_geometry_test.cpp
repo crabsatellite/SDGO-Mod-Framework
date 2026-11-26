@@ -4,6 +4,7 @@
 #include <cstring>
 #include <memory>
 #include "../mods/battle_ai/native_map_geometry.h"
+#include "../mods/battle_ai/fall_escape.h"
 #include "../mods/battle_ai/map_path_search.h"
 namespace {
 using namespace battle_ai;
@@ -20,6 +21,7 @@ std::array<void*,12> objectVtable{};
 std::array<void*,12> hazardVtable{};
 bool missingGround=false,terrainWall=false,haveObstacle=false;
 bool haveHazard=false;
+bool escapeLedge=false;
 float groundY=0,groundSlopeX=0,renderOffset=0;int objectKind=0;
 bool destroyableAttackable=true;
 template<class T>void Put(void* at,size_t offset,const T& value){memcpy(static_cast<uint8_t*>(at)+offset,&value,sizeof(value));}
@@ -59,6 +61,7 @@ bool __cdecl ShapeRay(const Ray3*,const void*,float*){return false;}
 TerrainSupportStatus PhysicsSupport(void*,Vec3 point,TerrainSupportSample& out) {
     if(missingGround)return TerrainSupportStatus::Missing;
     out.height=groundY+groundSlopeX*point.x;
+    if(escapeLedge&&point.x>=-945)out.height=-25;
     out.normal=Normalize(Vec3{-groundSlopeX,1,0});out.spacing=25;
     if(terrainWall&&std::abs(point.x)<100)out.normal={1,0,0};
     return TerrainSupportStatus::Valid;
@@ -145,6 +148,33 @@ int main() {
     missingGround=true;
     check(!geometry.RouteStep({-200,50,0},{200,50,0},grounded));
     missingGround=false;groundY=0;geometry.spaceMap=false;
+    {
+        const Vec3 here{-1000,-4,0}, footing{-1000,0,0};
+        const Aabb tile{{-1090,-24,-60},{-960,0,60}};
+        const Aabb zone{{-1090,-140,-100},{-940,-75,100}};
+        Put(obstacle.data(),detail::kSceneAabb,tile);
+        Put(obstacleObb.data(),0,tile);
+        Put(hazardScene.data(),detail::kSceneAabb,zone);
+        Put(object.data(),detail::kObjectId,uint32_t(23));
+        Put(object.data(),0x38,int32_t(0));
+        haveObstacle=true;objectKind=0x12;haveHazard=true;escapeLedge=true;groundY=-300;
+        Vec3 support{},landing{},steering{};uint32_t block=0;
+        check(geometry.Ground(footing,16,-24,support,false,&block)&&block==23);
+        check(!FindFallEscape(geometry,here,footing,landing,steering));
+        haveObstacle=false;
+        check(FindFallEscape(geometry,here,footing,landing,steering)&&landing.x>=-945&&landing.y==-25);
+        haveHazard=false;
+        check(!FindFallEscape(geometry,here,footing,landing,steering));
+        haveHazard=true;groundY=-50;
+        check(!FindFallEscape(geometry,here,footing,landing,steering));
+        groundY=-300;escapeLedge=false;missingGround=true;
+        check(!FindFallEscape(geometry,here,footing,landing,steering));
+        missingGround=false;haveHazard=false;groundY=0;
+        const Aabb original{{-10,0,-1000},{10,300,1000}};
+        Put(obstacle.data(),detail::kSceneAabb,original);
+        Put(obstacleObb.data(),0,original);
+        Put(object.data(),0x38,int32_t(1000));
+    }
     groundY=100;check(geometry.Step({-1000,0,0},{-500,0,0},grounded)&&grounded.y==100);groundY=-200;
     check(geometry.Step({-1000,0,0},{-500,0,0},grounded)&&grounded.y==-200);groundY=0;
     groundY=1000;groundSlopeX=1;

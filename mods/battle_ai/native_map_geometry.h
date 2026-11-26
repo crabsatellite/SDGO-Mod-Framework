@@ -87,9 +87,11 @@ struct MapGeometry {
         const Vec3 nearest=offset+delta*static_cast<float>(factor);
         return Dot(nearest,nearest)>=radius*radius;
     }
-    bool Ground(Vec3 desired,float ceiling,float floor,Vec3& grounded,bool terrainRise=false)const {
+    bool Ground(Vec3 desired,float ceiling,float floor,Vec3& grounded,bool terrainRise=false,
+                uint32_t* destructibleSupport=nullptr)const {
         profile::Timer cost(profile::Work::Ground);
         ++projections;
+        if(destructibleSupport)*destructibleSupport=0;
         if(!Valid()||!Finite(desired)||!std::isfinite(ceiling)||!std::isfinite(floor)||ceiling<=floor)return false;
         auto tree=*reinterpret_cast<void**>(document+detail::kDocumentQuadTree);
         if(!tree)return false;
@@ -105,9 +107,12 @@ struct MapGeometry {
         api.query(tree,scenes,&count,detail::kSceneCapacity,&bounds);
         if(count<0||count>=detail::kSceneCapacity)return false;
         const Ray3 ray={{desired.x,ceiling,desired.z},{0,-1,0}};
-        const auto recordHit=[&](bool contact,float distance) {
+        const auto recordHit=[&](bool contact,float distance,uint32_t block) {
             const float y=ceiling-distance;
-            if(contact&&std::isfinite(distance)&&distance>=0&&y>=floor&&y<=ceiling&&(!hit||y>best)){best=y;hit=true;}
+            if(contact&&std::isfinite(distance)&&distance>=0&&y>=floor&&y<=ceiling&&(!hit||y>best)){
+                best=y;hit=true;
+                if(destructibleSupport)*destructibleSupport=block;
+            }
         };
         for(int i=0;i<count;++i) {
             auto scene=static_cast<uint8_t*>(scenes[i]);if(!scene)return false;
@@ -119,10 +124,13 @@ struct MapGeometry {
             if(!isScene(scene,2))continue;
             auto object=*reinterpret_cast<uint8_t**>(scene+detail::kSceneBackPointer);
             if(object==owner)continue;
+            uint32_t block=0;
             if(object) {
                 auto objectTable=*reinterpret_cast<void***>(object);if(!objectTable||!objectTable[1])return false;
                 const auto isObject=reinterpret_cast<detail::ObjectIsAFn>(objectTable[1]);
                 if(object[0x1C]||isObject(object,7)||isObject(object,0x15)||isObject(object,9)||isObject(object,0x21)||isObject(object,0x22))continue;
+                if(destructibleSupport&&isObject(object,kDestroyableBlockKind))
+                    block=*reinterpret_cast<uint32_t*>(object+detail::kObjectId);
             }
             const int obbCount=*reinterpret_cast<int*>(scene+detail::kObbCount);
             auto obbs=*reinterpret_cast<uint8_t**>(scene+detail::kObbArray);
@@ -135,11 +143,11 @@ struct MapGeometry {
                 const bool culled=shapeBounds&&!shapeBounds->MayAffect(obb,ray.origin,{desired.x,floor,desired.z});
                 if(culled&&!shapeBounds->Audit())continue;
                 if(profile::active)++profile::active->groundObbs;
-                distance=0;contact=api.rayObb(&ray,obb,&distance);recordHit(contact,distance);
+                distance=0;contact=api.rayObb(&ray,obb,&distance);recordHit(contact,distance,block);
                 if(culled)shapeBounds->Audited(contact&&std::isfinite(distance)&&distance>=0&&distance<=ceiling-floor);
             }
             for(int shape=0;shape<sphereCount;++shape) {
-                distance=0;contact=api.raySphere(&ray,spheres+size_t(shape)*detail::kSphereStride,&distance);recordHit(contact,distance);
+                distance=0;contact=api.raySphere(&ray,spheres+size_t(shape)*detail::kSphereStride,&distance);recordHit(contact,distance,block);
             }
         }
         if(!hit){++groundMisses;lastReject=3;return false;}

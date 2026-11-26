@@ -1176,6 +1176,14 @@ local function Tick(npc)
     SDGO_BattleAI_Native(1)
     SDGO_BattleAI_EnableNavigationJump()
   end
+  if SDGO_BattleAI_FallEscape then
+    local escape=SDGO_BattleAI_FallEscape(C.BoostReservePercent/100)
+    if escape==2 then
+      npc:SetJumpTime(Min(C.JumpMs,300)/1000)
+      s.repathAt=0;s.exploring=nil;s.movementIntent=false
+    end
+    if escape and escape>0 then return 123 end
+  end
   local protected=ProtectedTarget(o,s)
   local protectedHeld=protected and Flag(o.meleeBusy) and
     (protected.id==s.target or protected.id==o.nativeTarget)

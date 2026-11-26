@@ -77,6 +77,11 @@ Space maps with an authored kill floor can use short, collision-checked routes t
 The original movement controller still applies gravity and map limits. A search gets time to
 find a reachable waypoint before the AI tries a collision-checked recovery move.
 
+When a destructible platform loses its collision and a PvP bot begins falling toward a DeathZone,
+the bot can try to reach a nearby supported landing with its remaining boost. This uses the native
+movement controller and checks the path and landing for collisions. On landing, the bot resumes its
+ordinary navigation and combat. Falls into a DeathZone still follow the match's usual death and life rules.
+
 These routes can select propulsion devices loaded in the actual map. When the entrance is reachable
 and the authored trajectory has a suitable supported exit, a bot approaches the entrance and uses
 the original request and notification flow. Native movement owns the trip; the bot replans from its

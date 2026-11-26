@@ -112,6 +112,16 @@ local function Tick(time)
   assert(SDGO_BattleAI_Universal.faults==0,calls.error or 'controller fault')
 end
 local function Check(ok,text) assert(ok,text);checks=checks+1;print('PASS '..text) end
+Reset()
+local fallEscape=2
+SDGO_BattleAI_FallEscape=function() return fallEscape end
+Tick(0)
+Check(calls.positiveJumps==1 and not calls.target,'an admitted fall escape issues one native boost pulse')
+fallEscape=1;Tick(125)
+Check(calls.positiveJumps==1 and not calls.target,'the brief escape does not retrigger thrust or overwrite its steering')
+fallEscape=0;Tick(300)
+Check(calls.target==2 and calls.fire==true,'fall escape hands targeting and ordinary fire back promptly')
+SDGO_BattleAI_FallEscape=nil
 Reset();Tick(0)
 Check(calls.target==2,'focus lower remaining HP within comparable effective weapon range')
 Reset();observation.targets[2].distance=5000;Tick(0)

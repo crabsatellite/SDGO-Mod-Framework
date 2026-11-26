@@ -55,7 +55,7 @@
 | [对战 AI](docs/pvp-ai.zh-CN.md) <!-- catalog: `pvp_ai`、`match_ai` --> | 房名写 `!ai` 加入 AI 对手和队友，支持原版计分、坠落判死、扣命及原版出生点复活，可设置补位方式和数量 |
 | [任务 AI 僚机](docs/coop-wingmen.zh-CN.md) <!-- catalog: `coop_ai`、`mission_ai` --> | 任务房名写 `!ai hard` 可选 Hard，AI 按玩家生命额度复活；`!ai3 inf` 开启 AI 无限复活 |
 | [PvE AI TAB 队友列表](docs/pve-ai-scoreboard.zh-CN.md) <!-- catalog: `pve_ai_scoreboard` --> | 自动把已注册的 AI 队友加入原生 PvE TAB 列表；存活或等待复活时都显示名字、机体、击破、助攻和分数 |
-| [战斗 AI 难度](docs/battle-ai.zh-CN.md) <!-- catalog: `battle_ai`、`battle_ai_server` --> | 在房名中选择 Easy／Medium／Hard 三档对战 AI 难度 |
+| [战斗 AI 难度](docs/battle-ai.zh-CN.md) <!-- catalog: `battle_ai`、`battle_ai_server` --> | 在房名中选择 Easy／Medium／Hard 三档对战 AI 难度。地板塌陷时，AI 可尝试用原版推进脱险 |
 | [王牌驾驶员 AI](docs/ace-ai.zh-CN.md) <!-- catalog: `ace_ai`、`ace_ai_server` --> | 对战 AI 与我方任务僚机可按服主配置成为有姓名的王牌驾驶员，难度、HP 与普通攻击倍率由服务端统一决定 |
 | [任务行为版本](docs/mission-behavior.zh-CN.md) <!-- catalog: `mission_behavior`、`mission_behavior_server` --> | 统一选择任务 AI 与刷怪使用 OC 原版行为或现有行为，客户端与全部 Battle 频道同步 |
 | [新手保护](docs/newcomer-protection.zh-CN.md) <!-- catalog: `newcomer_protection` --> | 为服主指定玩家配置任务和对战的生命、普通武器伤害倍率；必杀维持原规则，名单仅留服务端 |

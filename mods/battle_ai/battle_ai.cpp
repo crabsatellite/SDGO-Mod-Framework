@@ -21,6 +21,7 @@
 #include "native_navigation.h"
 #include "native_map_gate.h"
 #include "native_map_geometry.h"
+#include "fall_escape.h"
 #include "native_terrain_ray.h"
 #include "native_terrain_support.h"
 #include "native_transport_catalog.h"
@@ -36,6 +37,7 @@
 #include "sdgo/room_titles_current.h"
 #include "sdgo/ai_catalog_provider.h"
 #include "sdgo/battle_ai_observer.h"
+#include "sdgo/pvp_ai_client_observer.h"
 #include "sdgo/mission_ai_client_observer.h"
 #include "sdgo/mission_ai_forced_pad_observer.h"
 
@@ -217,6 +219,12 @@ struct Actor {
     std::vector<Vec3> path;
     battle_ai::MapPathSearch mapSearch;
     bool geometryOwned=false,geometryFinal=false,pathGeometry=false;
+    struct FallEscape {
+        const uint8_t* document=nullptr;
+        uint32_t support=0;
+        Vec3 footing{}, landing{};
+        ULONGLONG sampled=0,supportedAt=0,until=0;
+    } fallEscape;
     struct PlannedTransport {
         battle_ai::MapPathSearch::Transport edge;
         battle_ai::native::TransportVolume volume;
@@ -895,6 +903,7 @@ void RestoreIntent(uint8_t* unit,Actor& a) {
     a.transport.request={};
     a.defenceMoveOwned=false;a.defence={};
     a.recoveryControlled=false;
+    a.fallEscape={};
 }
 bool TransportRouteProtected(const Actor::TransportRoute& trip,ULONGLONG now) {
     if(!trip.active)return false;
@@ -3065,6 +3074,113 @@ int __cdecl EnableNavigationJump(lua_State* L) {
     }
     g_lua.pushnumber(L,valid?1:0);return 1;
 }
+bool IsLocalPvpParticipant(uint32_t object, uint32_t pilot) {
+    const auto module=GetModuleHandleW(L"match_ai.dll");
+    const auto query=module?reinterpret_cast<SdgoPvpAiClientGetSnapshotV1Fn>(
+        GetProcAddress(module,SDGO_PVP_AI_CLIENT_SNAPSHOT_EXPORT)):nullptr;
+    SdgoPvpAiClientSnapshotV1 snapshot{};
+    snapshot.size=sizeof(snapshot);snapshot.version=SDGO_PVP_AI_CLIENT_OBSERVER_VERSION;
+    if(!query||!query(&snapshot)||snapshot.native_app_state!=22)return false;
+    for(uint32_t i=0;i<snapshot.bot_count&&i<12;++i) {
+        const auto& bot=snapshot.bots[i];
+        if(bot.object_id==object&&bot.pilot_id==pilot)
+            return bot.valid_registered_object&&bot.ai_enabled&&bot.local_control&&
+                !bot.remote_copy&&bot.master_npc;
+    }
+    return false;
+}
+
+int FallEscapeFor(uint8_t* unit,double reserve) {
+    using namespace battle_ai::native;
+    constexpr size_t kCollisionSupportId=0x28;
+    constexpr size_t kCollisionGrounded=0xD8C;
+    if(GetCurrentThreadId()!=g_gameThread||!g_document||!*g_document||!Owned(unit)||
+       !PvpPlayerBotRulesMode())return 0;
+    const uint32_t pilot=*reinterpret_cast<uint32_t*>(unit+0x2B68);
+    if(!IsNpcPilot(pilot)||!unit[0x2B64]||!unit[0x3074])return 0;
+    auto& actor=ActorFor(unit);auto& escape=actor.fallEscape;
+    const auto now=GetTickCount64();
+    if(escape.document!=*g_document) {
+        escape={};escape.document=*g_document;
+    }
+    const int32_t hp=*reinterpret_cast<int32_t*>(unit+0x38);
+    if(hp<=0||ControlBlocked(unit)||NativeTransportMoving(unit)||
+       TransportRouteProtected(actor.transport,now)) {
+        escape.support=0;escape.until=0;
+        return 0;
+    }
+    const bool grounded=unit[kCollisionGrounded]!=0;
+    if(escape.until) {
+        const bool canContinue=MovementAvailable(unit,true);
+        if(!grounded&&canContinue&&now<escape.until)return 1;
+        if(g_runtime.logDecisions&&grounded) {
+            const Vec3 here=Position(unit);
+            g_api->Log(g_mod,SDGO_LOG_INFO,"AI fall escape grounded object=%u pos=%.1f,%.1f,%.1f goal=%.1f,%.1f,%.1f",
+                       *reinterpret_cast<uint32_t*>(unit+4),here.x,here.y,here.z,
+                       escape.landing.x,escape.landing.y,escape.landing.z);
+        }
+        escape.until=0;
+    }
+    if(grounded) {
+        if(now-escape.sampled<50)return 0;
+        escape.sampled=now;
+        const uint32_t previous=escape.support;
+        escape.support=0;
+        const uint32_t contact=*reinterpret_cast<uint32_t*>(unit+kCollisionSupportId);
+        if(!contact)return 0;
+        auto* platform=FindObject(contact);
+        if(!ObjectIsA(platform,kDestroyableBlockKind))return 0;
+        auto geometry=MapGeometryFor(unit);Vec3 support{};uint32_t block=0;
+        const Vec3 here=geometry.ownerPosition;
+        if(geometry.Ground(here,here.y+16,here.y-24,support,false,&block)&&block==contact) {
+            escape.support=contact;escape.footing=support;escape.supportedAt=now;
+            if(g_runtime.logDecisions&&previous!=block)
+                g_api->Log(g_mod,SDGO_LOG_INFO,"AI footing observed object=%u block=%u height=%.1f",
+                           *reinterpret_cast<uint32_t*>(unit+4),block,support.y);
+        }
+        return 0;
+    }
+    if(!escape.support||now-escape.supportedAt>350||!MovementAvailable(unit,true))
+        return 0;
+    const Vec3 here=Position(unit);
+    if(here.y>=escape.footing.y-1)return 0;
+    // The motor can report Idle while gravity translates a bot downward.
+    // Use the measured descent from its recorded physical contact.
+    auto geometry=MapGeometryFor(unit);
+    geometry.deferDestroyables=false;
+    Vec3 landing{},goal{};
+    bool lost=false;
+    const bool hasLanding=FindFallEscape(geometry,here,escape.footing,landing,goal,&lost);
+    if(!lost)return 0;
+    const uint32_t object=*reinterpret_cast<uint32_t*>(unit+4);
+    const uint32_t block=escape.support;
+    escape.support=0;
+    float boost=0;
+    const bool available=unit[0x3291]&&detail::ReadBoostFraction(unit,boost)&&boost>reserve;
+    if(g_runtime.logDecisions)
+        g_api->Log(g_mod,SDGO_LOG_INFO,"AI floor lost object=%u block=%u landing=%u boost=%.3f available=%u",
+                   object,block,hasLanding?1u:0u,boost,available?1u:0u);
+    if(!hasLanding||!available||!IsLocalPvpParticipant(object,pilot)||
+       !g_setGoal(unit,&goal,1))return 0;
+    g_setMoveType(unit,3);
+    actor.path.clear();actor.geometryOwned=false;actor.geometryFinal=false;
+    actor.hasIssuedGoal=false;actor.direct={};actor.explorationOwned=false;actor.defenceMoveOwned=false;
+    actor.recoveryControlled=false;
+    escape.until=now+1000;escape.landing=landing;
+    if(g_runtime.logDecisions)
+        g_api->Log(g_mod,SDGO_LOG_INFO,"AI fall escape started object=%u boost=%.3f landing=%.1f,%.1f,%.1f",
+                   object,boost,landing.x,landing.y,landing.z);
+    return 2;
+}
+int __cdecl FallEscape(lua_State* L) {
+    int result=0;
+    const double reserve=g_lua.tonumber(L,1);
+    if(std::isfinite(reserve)&&reserve>=0&&reserve<=1) {
+        __try {result=FallEscapeFor(g_current,reserve);}
+        __except(EXCEPTION_EXECUTE_HANDLER) {result=0;}
+    }
+    g_lua.pushnumber(L,result);return 1;
+}
 int __cdecl RouteMotion(lua_State* L) {
     const double mode=g_lua.tonumber(L,1);
     const bool valid=GetCurrentThreadId()==g_gameThread&&Owned(g_current)&&(mode==2||mode==3);
@@ -4372,6 +4488,7 @@ void Prepare() {
     Register(L,"SDGO_BattleAI_Route",Route);
     Register(L,"SDGO_BattleAI_RouteMotion",RouteMotion);
     Register(L,"SDGO_BattleAI_EnableNavigationJump",EnableNavigationJump);
+    Register(L,"SDGO_BattleAI_FallEscape",FallEscape);
     Register(L,"SDGO_BattleAI_ExploreMap",ExploreMap);
     Register(L,"SDGO_BattleAI_AdvancePoint",AdvancePoint);
     Register(L,"SDGO_BattleAI_SafeDirection",SafeDirection);
